@@ -1,0 +1,12 @@
+# Keep GitHub Actions and Go modules up to date, like the companion repos.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly

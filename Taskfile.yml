@@ -1,0 +1,131 @@
+version: '3'
+
+env:
+  GOWORK: 'off'
+
+vars:
+  GOVULNCHECK_VERSION: v1.8.0
+  BOOBA_DIR: '{{.ROOT_DIR}}/../go-booba'
+
+tasks:
+  default:
+    cmds: [{task: build}]
+  list:
+    desc: List available tasks
+    cmds: ['task --list-all']
+  fmt:
+    desc: Format Go source
+    cmds: ['gofmt -w .']
+  fmt-check:
+    desc: Check Go formatting without changing files
+    cmds:
+      - |
+        files="$(gofmt -l .)"
+        if [ -n "$files" ]; then printf '%s\n' "$files"; exit 1; fi
+  go-tidy:
+    desc: Update native module metadata
+    cmds: ['go mod tidy']
+  go-tidy-check:
+    aliases: [tidy-check]
+    desc: Check native module metadata without changing files
+    cmds: ['go mod tidy -diff']
+  go-verify:
+    desc: Verify downloaded module contents
+    cmds: ['go mod verify']
+  test:
+    desc: Run native tests (requires POSIX shared memory on macOS/Linux)
+    cmds: ['go test -mod=readonly ./...']
+  test-race:
+    desc: Run native tests with the race detector
+    cmds: ['go test -mod=readonly -race ./...']
+  test-no-cgo:
+    desc: Test direct transport fallback without CGO
+    env: {CGO_ENABLED: '0'}
+    cmds: ['go test -mod=readonly ./...']
+  vet:
+    desc: Run Go vet
+    cmds: ['go vet -mod=readonly ./...']
+  build:
+    desc: Build library and native example
+    cmds:
+      - go build -mod=readonly ./...
+      - task: build-ex-still
+  build-ex-still:
+    desc: Build bin/ntpicture-still
+    cmds:
+      - mkdir -p bin
+      - go build -mod=readonly -o bin/ntpicture-still ./examples/still
+  run-still:
+    desc: Run the still-image example
+    cmds: ['go run -mod=readonly ./examples/still {{.CLI_ARGS}}']
+  cross-windows:
+    desc: Check Windows compilation
+    env: {GOOS: windows, GOARCH: amd64, CGO_ENABLED: '0'}
+    cmds: ['go build -mod=readonly ./...']
+  build-wasm:
+    desc: Build the example with the browser Bubble Tea fork
+    env:
+      GOWORK: '{{.ROOT_DIR}}/wasm.work'
+      GOOS: js
+      GOARCH: wasm
+      CGO_ENABLED: '0'
+    cmds:
+      - mkdir -p dist
+      - go build -mod=readonly -o dist/still.wasm ./examples/still
+  test-wasm:
+    aliases: [wasm-test]
+    desc: Test WASM and browser registry lifecycle under Node
+    env:
+      GOWORK: '{{.ROOT_DIR}}/wasm.work'
+      GOOS: js
+      GOARCH: wasm
+      CGO_ENABLED: '0'
+    cmds:
+      - 'go test -mod=readonly -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./...'
+  vulncheck-install:
+    internal: true
+    run: once
+    env: {GOOS: '', GOARCH: '', GOBIN: '{{.ROOT_DIR}}/.task/bin'}
+    cmds: ['go install golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}}']
+  vulncheck:
+    desc: Scan native and browser dependencies (requires network)
+    cmds:
+      - task: vulncheck-install
+      - '"{{.ROOT_DIR}}/.task/bin/govulncheck" -test ./...'
+      - task: vulncheck-wasm
+  vulncheck-wasm:
+    desc: Scan dependencies with the browser fork (requires network)
+    cmds:
+      - task: vulncheck-install
+      - cmd: '"{{.ROOT_DIR}}/.task/bin/govulncheck" ./...'
+        env:
+          GOWORK: '{{.ROOT_DIR}}/wasm.work'
+          GOOS: js
+          GOARCH: wasm
+          CGO_ENABLED: '0'
+  consumers:
+    desc: Check temporary copies of local sibling consumers
+    cmds: ['python3 scripts/check-consumers.py {{.CLI_ARGS}}']
+  browser-check:
+    desc: Check the actual bundled booba registry (requires a local checkout)
+    cmds:
+      - mkdir -p dist
+      - go run -mod=readonly ./testdata/browser > dist/browser-frames.json
+      - 'node scripts/check-browser.mjs "{{.BOOBA_DIR}}" dist/browser-frames.json'
+  ci:
+    desc: Full portable CI gate; no sibling repositories required
+    cmds:
+      - task: fmt-check
+      - task: go-tidy-check
+      - task: go-verify
+      - task: test-race
+      - task: test-no-cgo
+      - task: vet
+      - task: cross-windows
+      - task: build
+      - task: build-wasm
+      - task: test-wasm
+      - task: vulncheck
+  clean:
+    desc: Remove generated binaries and task tools
+    cmds: ['rm -rf bin dist .task']
