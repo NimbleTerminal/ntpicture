@@ -10,7 +10,7 @@ header { display: flex; justify-content: space-between; align-items: center; bor
 .eyebrow { font-size: 12px; letter-spacing: .18em; color: #8de3b6; }
 h1 { font-size: clamp(30px, 5vw, 52px); margin: 10px 0; letter-spacing: -.04em; }
 .intro > p:last-child { color: #a9b5c5; max-width: 640px; line-height: 1.6; }
-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 26px 0; }
+nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 26px 0; }
 nav a { text-decoration: none; padding: 20px; border: 1px solid #333c4b; border-radius: 12px; background: #1a202a; }
 nav a:hover, nav a[aria-current="page"] { border-color: #8de3b6; }
 nav span { display: block; font-size: 14px; color: #a9b5c5; margin-top: 12px; line-height: 1.5; }

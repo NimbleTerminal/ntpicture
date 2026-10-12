@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 const demo = process.argv[2];
-assert.ok(['still', 'simple', 'grid'].includes(demo));
+assert.ok(['still', 'simple', 'grid', 'animation'].includes(demo));
 vm.runInThisContext(await readFile('web/wasm_exec.js', 'utf8'));
 const go = new Go();
 let exitCode;
@@ -42,6 +42,22 @@ try {
     }
     const right = snapshot.actions.find(action => action.label === 'Right');
     assert.equal(right.keys[right.preferred].key, 'right');
+  }
+  if (demo === 'animation') {
+    for (const label of ['Pause', 'Previous frame', 'Next frame', 'First frame']) {
+      assert.ok(snapshot.actions.some(action => action.label === label && action.enabled), `${label} action`);
+    }
+    bubbletea_write(' ');
+    let paused = '';
+    for (let n = 0; n < 100 && !paused.includes('paused'); n++) {
+      await delay(25);
+      paused += bubbletea_read();
+    }
+    assert.ok(paused.includes('paused'), 'animation pauses through input bridge');
+    bubbletea_write('.');
+    await delay(100);
+    assert.ok(bubbletea_read().length > 0, 'paused animation can step frames');
+    bubbletea_write(' ');
   }
   bubbletea_resize(44, 18);
   if (demo === 'grid') bubbletea_write('d');

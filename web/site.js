@@ -4,6 +4,7 @@ const demos = {
   still: 'Still image',
   simple: 'Embedded image',
   grid: 'Interactive grid',
+  animation: 'GIF & WebP playback',
 };
 const requested = new URLSearchParams(location.search).get('demo');
 const demo = Object.hasOwn(demos, requested) ? requested : 'still';
@@ -18,6 +19,9 @@ for (const link of document.querySelectorAll('[data-demo]')) {
 }
 if (demo === 'grid') {
   document.querySelector('#help').textContent = 'Arrows / WASD / HJKL move · g toggles glyph/Kitty · q quits. Click the terminal to focus.';
+}
+if (demo === 'animation') {
+  document.querySelector('#help').textContent = 'Space pauses/plays both clips · comma/period steps · Home returns to frame one · q quits. Buttons above send the same controls.';
 }
 function failed(error) {
   status.dataset.error = '';

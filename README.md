@@ -3,9 +3,9 @@
 A reusable terminal image component for Bubble Tea v2. Module:
 `nimbleterminal.dev/ntpicture`.
 
-This is the first extraction milestone, not a released replacement for NTCharts.
-`Picture` handles still images and continuously supplied frames. GIF/WebP
-playback and explicit terminal sessions are the next migration steps.
+This is an unreleased extraction from NTCharts and Gloss. `Picture` handles
+still images and continuously supplied frames. `animation` decodes GIF/WebP
+and composes playback positions; `playback` schedules them through a Picture.
 
 ```go
 pic := ntpicture.New(ntpicture.Options{
@@ -109,20 +109,45 @@ See [DEVELOP.md](DEVELOP.md) for checks and [MIGRATION.md](MIGRATION.md) for
 remaining milestones. The extracted rendering code and tests originate in
 NTCharts; its MIT copyright notice is preserved in [LICENSE](LICENSE).
 
+## GIF and WebP playback
+
+```go
+img, player, err := animation.DecodeContext(ctx, data, animation.Options{Animate: true})
+if err != nil { return err }
+// A single-frame image has no player: submit img to Picture and return.
+if player == nil { return showStill(img) }
+ctrl := playback.New(player, playback.Options{})
+cmd := tea.Batch(ctrl.Init(), ctrl.SetSize(60, 20))
+cmd = ctrl.Update(msg) // forward every message to each controller
+content := ctrl.View()
+cmd = ctrl.Pause(true)
+cmd = ctrl.Seek(12)    // one-based; pauses and resets loop counting
+cmd = ctrl.SetRate(2)  // 0.25x–4x
+cmd = ctrl.Close()    // cancel work and retire placements; execute this command
+```
+
+GIF frames stay paletted; WebP frames decode lazily. Both honor frame delays,
+rectangles, transparency, disposal, and loop counts. Decoding defaults to
+128 MiB input, 32 Mi canvas pixels, 1,000 frames, and 64 MiB GIF frame storage.
+`animation.Options.Limits` can tighten these ceilings; zero selects defaults.
+Lazy failures identify the frame and pause playback through `ctrl.Status().Err`.
+Hosts still own controls, visibility decisions, and aggregate resource budgets.
+
 ## Examples and browser demo
 
 ```sh
-task build-examples       # bin/ntpicture-{still,simple,grid}
+task build-examples       # bin/ntpicture-{still,simple,grid,animation}
 task serve-wasm-site      # http://localhost:8000/web/
 ```
 
-The site runs three examples locally in the browser through booba: a generated
-still image, the embedded-image viewer ported from NTCharts, and its interactive
-`GridImage` board. The same programs run natively. Use arrows/WASD/HJKL in the
+The site runs four examples locally in the browser through booba: a generated
+still image, the embedded-image viewer ported from NTCharts, its interactive
+`GridImage` board, and side-by-side GIF/WebP playback from Gloss. The same programs run natively. Use arrows/WASD/HJKL in the
 grid, `g` to switch rendering modes, and `q` to quit. Restart reloads a fresh
 browser session. Booba action buttons above the terminal come from the same Go
 help bindings as the keyboard controls; the grid exposes movement and, when
-Kitty is available, rendering mode. More includes Quit.
+Kitty is available, rendering mode. Animation exposes play/pause, frame stepping,
+and first-frame seeking. More includes Quit.
 
 Examples have their own Go module; booba stays out of the library's dependency
 graph. The NTCharts URL, heatmap, and chart adapters remain NTCharts examples.

@@ -16,3 +16,10 @@ THIRD_PARTY_NOTICES.md, generated with `task notices` and copied into the site.
 The browser licenses in `web/licenses/` were copied from go-booba's local
 vendored ghostty-web, Ghostty, and pako sources; review them when updating the
 pinned booba runtime. `wasm_exec.js` retains its Go BSD license header.
+
+`examples/animation/motion.gif` and `motion.webp` are original orbit fixtures
+copied unchanged from Gloss (Neomantra Corp, MIT). Their generator is
+Gloss's `scripts/gen-assets/gif.go`; its `task gen-assets` builds the GIF and
+converts it to animated WebP with `gif2webp`. No external artwork is used in
+these two fixtures. Animation decoder/player source and baseline tests are
+also adapted from Gloss under the same MIT license.

@@ -16,6 +16,8 @@ import (
 
 type Keys struct {
 	Quit, Up, Down, Left, Right, Toggle key.Binding
+	Play, Previous, Next, Restart       key.Binding
+	animation                           bool
 	grid                                bool
 }
 
@@ -32,14 +34,30 @@ func New(grid, kitty bool) Keys {
 	k.Toggle.SetEnabled(kitty)
 	return k
 }
+func Animation(paused bool) Keys {
+	k := New(false, false)
+	k.animation = true
+	label := "Pause"
+	if paused {
+		label = "Play"
+	}
+	k.Play = key.NewBinding(key.WithKeys("space"), key.WithHelp("space", label))
+	k.Previous = key.NewBinding(key.WithKeys(","), key.WithHelp(",", "Previous frame"))
+	k.Next = key.NewBinding(key.WithKeys("."), key.WithHelp(".", "Next frame"))
+	k.Restart = key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "First frame"))
+	return k
+}
 func (k Keys) ShortHelp() []key.Binding {
+	if k.animation {
+		return []key.Binding{k.Play, k.Previous, k.Next, k.Restart}
+	}
 	if k.grid {
 		return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Toggle}
 	}
 	return []key.Binding{k.Quit}
 }
 func (k Keys) FullHelp() [][]key.Binding {
-	if k.grid {
+	if k.grid || k.animation {
 		return [][]key.Binding{k.ShortHelp(), {k.Quit}}
 	}
 	return [][]key.Binding{{k.Quit}}
@@ -48,7 +66,7 @@ func (k Keys) View() string {
 	h := help.New()
 	// Keep quit visible in the terminal even when the browser puts it under More.
 	bindings := k.ShortHelp()
-	if k.grid {
+	if k.grid || k.animation {
 		bindings = append(bindings, k.Quit)
 	}
 	return h.ShortHelpView(bindings)

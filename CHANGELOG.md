@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add bounded GIF and lazy animated-WebP decoding from Gloss, immutable players,
+  frame seeking, loop/disposal handling, and indexed lazy errors.
+- Add cancellable Bubble Tea playback through Picture and a GIF/WebP demo with
+  booba play/pause and frame controls.
+
 - Update native Bubble Tea to 2.1.0, example Bubbles to 2.2.1, and rendering
   dependencies; retain the tested WASM fork for browser compatibility.
 
@@ -20,4 +25,5 @@
 - Establish Task-based QA, Linux/macOS CI, native/WASM vulnerability scans,
   and weekly dependency updates.
 
-Animation and playback extraction remain planned; see [MIGRATION.md](./MIGRATION.md).
+Compositor/session extraction and consumer migration remain planned; see
+[MIGRATION.md](./MIGRATION.md).

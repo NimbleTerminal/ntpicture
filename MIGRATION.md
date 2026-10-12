@@ -13,28 +13,32 @@
 
 No sibling repository has been modified or released.
 
-## Next: terminal-independent animation
+## Implemented: animation and playback
 
-Extract Gloss's clip/player, GIF/WebP decoder and generic compositor into
-`animation`, retaining lazy WebP loading, disposal/loop semantics and limits:
-128 MiB input, 32 Mi canvas pixels, 1,000 frames and 64 MiB GIF frame storage.
-Publish validated configurable limits without an accidental unlimited zero value.
-Make clip storage private or defensively snapshot construction input. Report
-lazy failures with frame index and cause. Check WebP bitstream dimensions before
-pixel allocation and enforce the input bound in GIF preflight.
+- `animation` contains Gloss's bounded GIF/WebP decoding and clip/player logic,
+  without terminal dependencies. GIF stays paletted; WebP retains compressed
+  input and decodes frames lazily. Input buffers and construction pixels are
+  owned snapshots, and published player images expose read-only views.
+- Default resource ceilings remain 128 MiB input, 32 Mi canvas pixels, 1,000
+  frames and 64 MiB GIF frame storage. Callers can tighten them with Limits.
+  GIF preflight also enforces input size; WebP checks bitstream dimensions
+  before pixel decoding and caps container chunk counts.
+- Context-aware decode, advance, restart and seek report indexed lazy failures.
+  Standard codecs cannot be forcibly interrupted between reader calls;
+  each playback controller allows only one outstanding composition job.
+- `playback.Controller` owns a Picture, private playback state, cancellable
+  timing, coalesced seeks, visibility and presentation pacing. It reuses
+  Picture's replacement and cleanup. Multiple controllers route independently.
+- The animation example plays Gloss's original GIF/WebP orbit fixtures and
+  exposes controls through the browser's booba action bar.
 
-Carry contexts through decoding, seek, composition and lazy loads. Bound jobs
-through non-interruptible library calls. Preserve the distinction between frame
-storage accounting and peak working memory. Generic keyed rectangular
-composition can move; document destinations, deduplication, cell grouping and
-reflow mapping remain in Gloss.
+## Next: composition, terminal sessions, and consumers
 
-## Next: Bubble Tea playback and terminal sessions
-
-Add `playback.Controller`, owning a Picture and routing its messages. It owns
-cancellable timing, pause/rate/seek mechanics and presentation backpressure.
-Gloss supplies visibility and owns keys, seek-bar UI, preview behavior, exports,
-document loading/layout, selection, search and aggregate budgets.
+Generic multi-region rectangular composition is still in Gloss. Extract it
+when migrating typeset regions; document destinations, deduplication, cell
+mapping and reflow remain application policy. The demo currently uses two
+independent controllers. Gloss supplies keys, seek-bar UI, preview behavior,
+exports, loading/layout, selection, search and aggregate budgets.
 
 Introduce explicit terminal session state for capability/probe/tmux/shared
 transport configuration. Make legacy package helpers delegate to one default

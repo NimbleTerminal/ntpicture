@@ -86,8 +86,8 @@ and result for these checks:
   pictures; ensure messages route only to their owning instance.
 
 Unit tests cover stale results, geometry, encoding, and cleanup. Manual results
-are not yet recorded for this extracted module. Animation acceptance will be
-added with the playback migration.
+are not yet recorded for this extracted module. Animation acceptance also covers GIF/WebP pause/resume, loop completion,
+frame seeking, lazy failure reporting, and two simultaneously playing pictures.
 
 ## Releases
 
@@ -103,18 +103,18 @@ replacements. Update CHANGELOG.md, run `task ci`, the local consumer checks,
 and the manual acceptance checks above. Review dependency licenses and retain
 upstream copyright notices when distributing copied source or browser assets.
 Then commit the release preparation, tag the intended version, wait for tag CI
-to pass, and publish the GitHub release with its changelog. Do not advertise
-animation/playback packages until they are implemented and validated.
+to pass, and publish the GitHub release with its changelog. Record remaining session/compositor migration work separately from the
+implemented animation and playback packages.
 
 
 ## Browser demo site
 
-`task build-examples` builds still, simple, and grid into `bin/`. To run one
-without building all three, use `GOWORK=off go -C examples run ./grid` (or
-`./simple`, `./still`). These examples use booba.Run for both native and browser
+`task build-examples` builds still, simple, grid, and animation into `bin/`. To run one
+without building all four, use `GOWORK=off go -C examples run ./grid` (or
+`./simple`, `./still`, `./animation`). These examples use booba.Run for both native and browser
 execution and `Picture` for ownership, command routing, and cleanup.
 
-`task build-wasm-site` compiles all three into `web/demos/`, exports the booba
+`task build-wasm-site` compiles all four into `web/demos/`, exports the booba
 and ghostty-web runtime using the pinned `go tool booba-assets` in the examples
 module, and copies license notices. The exporter uses the active toolchain's
 wasm_exec.js. Source HTML/CSS/JS and browser license texts are tracked; generated
@@ -157,3 +157,38 @@ of manual acceptance.
 Dependency refresh: the fork revision `v2.0.0-20261010153813-5097f2f73229`
 returned by `@latest` fails to compile for js/wasm (missing platform methods).
 Keep `c397c32a5074` until a newer WASM-capable revision passes the browser checks.
+
+
+## Animation ownership and bounds
+
+The animation decoder/player is extracted from Gloss's `internal/animate`;
+`playback.Controller` reuses ntpicture's existing Picture instead of copying
+Gloss's public mutable Animator state or its 1,000-ID reservation scheme.
+Each controller schedules the next delay only after the current picture is
+presented. Slow terminals slow playback rather than accumulate work. Seek and
+pause cancel timers/composition, stale messages cannot replace newer state,
+and another composition cannot start until an old cancelled job returns.
+Forward all messages to each controller, even while hidden or closing, so its
+Picture can finish cleanup. Execute commands returned by every mutating method.
+
+`animation.DecodeContext` preflights the whole input, including preview loads.
+`Animate: false` or a single frame returns an image and nil player. GIF decoded
+storage is bounded independently from canvas size. WebP snapshots the input;
+metadata `Stats.Bytes` counts the canvas plus retained file, while the first
+decoded frame, working canvases, codec scratch space, old snapshots and multiple
+players add memory. Limits can be tightened but cannot exceed hard defaults.
+Hosts loading files should also bound their reads before calling DecodeContext.
+
+Player positions and Image views are immutable. NewPlayer snapshots Clip
+construction input; custom lazy loaders must be safe for concurrent calls and
+must not mutate returned images. Prefer LoadContext for cancellation. NextContext
+returns FrameError plus a skipped-frame position on lazy failure; callers may
+choose whether to continue. Controller stops and exposes the error in Status.
+Seek fails immediately on a lazy error. A standard codec computation between
+context-reader calls is not forcibly interruptible; no hard deadline is claimed.
+
+GIF/WebP decoding/disposal/loop tests were ported from Gloss. Added tests cover
+limits, ownership, cancellation, error indexing, independent message owners,
+coalesced seeks, and presentation pacing. `go test -race ./animation ./playback`
+runs those packages without requiring native shared memory. The browser smoke
+check also exercises pause and frame stepping in the two-animation demo.
