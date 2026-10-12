@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Update native Bubble Tea to 2.1.0, example Bubbles to 2.2.1, and rendering
+  dependencies; retain the tested WASM fork for browser compatibility.
+
 - Publish demo help bindings as booba action buttons for browser controls.
 
 - Port the NTCharts embedded-image and interactive grid examples to `Picture`.
