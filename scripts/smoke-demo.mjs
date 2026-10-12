@@ -44,7 +44,7 @@ try {
     assert.equal(right.keys[right.preferred].key, 'right');
   }
   if (demo === 'animation') {
-    for (const label of ['Pause', 'Previous frame', 'Next frame', 'First frame']) {
+    for (const label of ['Pause', 'Previous frame', 'Next frame', 'First frame', 'Keep screen & quit']) {
       assert.ok(snapshot.actions.some(action => action.label === label && action.enabled), `${label} action`);
     }
     bubbletea_write(' ');
@@ -64,7 +64,7 @@ try {
   await delay(150);
   const changed = bubbletea_read();
   assert.ok(changed.length > 0, 'resize or movement produces output');
-  bubbletea_write(quit.keys[quit.preferred].key);
+  bubbletea_write(process.argv[3] === 'keep' ? 'Q' : quit.keys[quit.preferred].key);
   await running;
   assert.equal(exitCode, 0);
   assert.equal(globalThis.bubbletea_exited, true, 'exit published to adapter');

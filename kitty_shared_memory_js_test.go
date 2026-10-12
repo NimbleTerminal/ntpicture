@@ -152,3 +152,25 @@ func TestSharedMemoryCreationFailureFallsBackToDirect(t *testing.T) {
 		t.Fatal("failed creation leaked a registry entry")
 	}
 }
+
+func TestKeepDetachesBrowserRegistry(t *testing.T) {
+	r := shmTestRegistry(t)
+	p := testPicture(true)
+	p.opts.Render.KittyMedium = KittyMediumSharedMemory
+	drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
+	if p.Status().Medium != KittyMediumSharedMemory || r.Get("size").Int() != 1 {
+		t.Fatal("expected an unconsumed shared-memory frame")
+	}
+	view := p.View()
+	cmd := p.Keep()
+	if r.Get("size").Int() != 1 {
+		t.Fatal("keep released shared memory before preparing direct replacement")
+	}
+	messages := drivePicture(t, p, cmd)
+	if r.Get("size").Int() != 0 || strings.Contains(output(messages), "t=s") || !strings.Contains(output(messages), "a=T") || p.View() != view {
+		t.Fatal("keep failed to release registry and retain a direct image")
+	}
+	if p.Close() != nil {
+		t.Fatal("deferred close deletes kept image")
+	}
+}

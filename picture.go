@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"math/rand/v2"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -22,11 +23,19 @@ import (
 const MaxImagePixels = 32 << 20
 
 var ErrImageIDExhausted = errors.New("ntpicture: positive 24-bit image IDs exhausted")
-var pictureIDs atomic.Uint32
+var pictureIDs = func() *atomic.Uint32 {
+	ids := new(atomic.Uint32)
+	// Leave at least half the range for this process. Randomization reduces
+	// collisions with images kept by earlier processes; it is not a lease.
+	ids.Store(rand.Uint32N(1 << 23))
+	return ids
+}()
 
 // NextImageID allocates one fresh positive 24-bit ID, never a block of IDs.
 // Hosts mixing Picture with other image components must use the same allocator
 // everywhere. IDs are not reused; exhaustion is reported rather than wrapping.
+// The starting offset is randomized to reduce cross-process keep-screen
+// collisions. Hosts requiring collision-free terminal history must supply NextID.
 func NextImageID() (int, error) {
 	for {
 		old := pictureIDs.Load()
@@ -85,6 +94,7 @@ type Picture struct {
 	mode                  PictureMode
 	cols, rows            int
 	visible, closed       bool
+	keptView              string
 	img                   image.Image
 	generation, presented uint64
 	front                 *picturePlacement
@@ -545,6 +555,9 @@ func (p *Picture) clearRetired() tea.Cmd {
 // View returns only component content. While a replacement is prepared, its
 // front is clipped/padded to current cell dimensions. The host owns loading UI.
 func (p *Picture) View() string {
+	if p.closed {
+		return p.keptView
+	}
 	if p.closed || !p.visible || p.front == nil || p.cols == 0 || p.rows == 0 {
 		return ""
 	}
@@ -588,7 +601,46 @@ func fitGrid(grid string, cols, w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-// Close cancels work and releases producer resources immediately. Run the
+// Keep permanently stops work while preserving the last presented View and
+// terminal image. Pending replacements and retired placements are discarded.
+// Run the returned command before quitting: Kitty content is retransmitted
+// directly so it survives release of process/browser shared-memory buffers.
+// The host owns final layout and main-screen selection; an alternate screen
+// normally disappears on exit. Subsequent Keep, Close and setters are no-ops.
+// Keep does not wait for or display a pending replacement.
+func (p *Picture) Keep() tea.Cmd {
+	if p.closed {
+		return nil
+	}
+	p.keptView = p.View()
+	front := p.front
+	p.front = nil // Close must never delete the kept terminal ID.
+	cleanup := p.Close()
+	if front == nil || front.model.mode != PictureKitty {
+		return cleanup
+	}
+	// Capture the committed geometry and source, including during a resize.
+	// A fresh renderer avoids geometry-change deletion of the retained ID.
+	cfg := front.model.config()
+	cfg.KittyMedium = KittyMediumDirect
+	m := NewModelWithConfig(cfg)
+	m.mode, m.cols, m.rows = PictureKitty, front.model.cols, front.model.rows
+	m.img = front.image
+	render := m.renderCmdContext(context.Background())
+	generation := p.presented
+	keep := func() tea.Msg {
+		defer func() { _ = front.model.SetImage(nil) }()
+		frame, ok := render().(KittyFrameMsg)
+		if !ok || frame.APC == "" {
+			return ErrorMsg{p, generation, errors.New("ntpicture: keep-screen preparation failed")}
+		}
+		return tea.RawMsg{Msg: frame.APC}
+	}
+	return tea.Sequence(cleanup, keep)
+}
+
+// Close cancels work and releases producer resources immediately. After Keep
+// it is a no-op, including for the retained View. Run the
 // returned command before removing the component or quitting to delete its
 // terminal placements. Already-accepted transmissions also carry late cleanup.
 func (p *Picture) Close() tea.Cmd {

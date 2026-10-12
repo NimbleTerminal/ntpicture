@@ -59,6 +59,18 @@ command is not run, but terminal deletion requires running that command. An
 accepted transmission carries a cleanup guard for removal races. No component
 clears other images globally.
 
+`Keep()` is a final alternative to `Close()` for still images, mesh frames, and
+playback controllers. It cancels pending replacements and freezes the last
+presented view. Return `tea.Sequence(pic.Keep(), tea.Quit)` and include that view
+in the application's final main-screen layout. Kitty content is retransmitted
+directly before exit, releasing shared-memory buffers; glyph content stays in
+the final view. Run the returned command. A subsequent `Close()` is a no-op.
+The host controls screen selection, help removal, and space for the shell prompt.
+
+Default image IDs start at a randomized offset to reduce collisions with images
+kept by previous processes. This is best effort, not a cross-process reservation;
+applications needing guaranteed uniqueness must provide a shared `NextID` policy.
+
 ## Geometry and transport
 
 Kitty PNG, raw RGBA, zlib and shared-memory output retain the NTCharts wire

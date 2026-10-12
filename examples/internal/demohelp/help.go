@@ -16,7 +16,7 @@ import (
 
 type Keys struct {
 	Quit, Up, Down, Left, Right, Toggle key.Binding
-	Play, Previous, Next, Restart       key.Binding
+	Play, Previous, Next, Restart, Keep key.Binding
 	animation                           bool
 	grid                                bool
 }
@@ -45,11 +45,12 @@ func Animation(paused bool) Keys {
 	k.Previous = key.NewBinding(key.WithKeys(","), key.WithHelp(",", "Previous frame"))
 	k.Next = key.NewBinding(key.WithKeys("."), key.WithHelp(".", "Next frame"))
 	k.Restart = key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "First frame"))
+	k.Keep = key.NewBinding(key.WithKeys("Q"), key.WithHelp("Q", "Keep screen & quit"))
 	return k
 }
 func (k Keys) ShortHelp() []key.Binding {
 	if k.animation {
-		return []key.Binding{k.Play, k.Previous, k.Next, k.Restart}
+		return []key.Binding{k.Play, k.Previous, k.Next, k.Restart, k.Keep}
 	}
 	if k.grid {
 		return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Toggle}
@@ -64,6 +65,14 @@ func (k Keys) FullHelp() [][]key.Binding {
 }
 func (k Keys) View() string {
 	h := help.New()
+	if k.animation {
+		// Compact terminal labels; browser buttons retain the full descriptions.
+		for binding, label := range map[*key.Binding]string{
+			&k.Previous: "Prev", &k.Next: "Next", &k.Restart: "First", &k.Keep: "Keep screen",
+		} {
+			binding.SetHelp(binding.Help().Key, label)
+		}
+	}
 	// Keep quit visible in the terminal even when the browser puts it under More.
 	bindings := k.ShortHelp()
 	if k.grid || k.animation {

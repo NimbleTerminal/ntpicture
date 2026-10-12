@@ -299,3 +299,59 @@ func TestPictureRetirementKeepsNewerPlacements(t *testing.T) {
 		t.Fatal("close retained a retired placement")
 	}
 }
+
+func TestPictureKeepFreezesPresentedView(t *testing.T) {
+	for _, kitty := range []bool{false, true} {
+		p := testPicture(kitty)
+		p.opts.Render.KittyMedium = KittyMediumSharedMemory
+		drivePicture(t, p, p.SetImage(testPixels(color.RGBA{R: 255, A: 255})))
+		front := p.front
+		pending := p.SetSize(1, 1)
+		job := p.job
+		view := p.View()
+		messages := drivePicture(t, p, p.Keep())
+		drivePicture(t, p, pending)
+		if job.ctx.Err() == nil || p.Status().Busy || p.View() != view || view == "" {
+			t.Fatal("keep did not cancel replacement and freeze resized front")
+		}
+		if p.front != nil || p.img != nil || p.job != nil || len(p.retired) != 0 {
+			t.Fatal("keep retained producer state")
+		}
+		if kitty {
+			raw := output(messages)
+			if strings.Contains(raw, kittyDeleteImage(front.model.kittyID)) || !strings.Contains(raw, "a=T") || strings.Contains(raw, "t=s") {
+				t.Fatalf("keep must retransmit directly without deleting front: %q", raw)
+			}
+		}
+		if p.Close() != nil || p.Keep() != nil || p.SetImage(nil) != nil || p.SetSize(3, 3) != nil || p.SetVisible(false) != nil || p.View() != view {
+			t.Fatal("keep not final and idempotent")
+		}
+	}
+}
+
+func TestPictureKeepRejectsAcceptedReplacement(t *testing.T) {
+	p := testPicture(true)
+	drivePicture(t, p, p.SetImage(testPixels(color.RGBA{A: 255})))
+	front, view := p.front, p.View()
+	prepared := p.SetImage(testPixels(color.RGBA{B: 255, A: 255}))()
+	job := p.job
+	seq := reflect.ValueOf(p.Update(prepared)())
+	// Output was accepted, but its completion has not reached the event loop.
+	seq.Index(0).Interface().(tea.Cmd)()
+	messages := drivePicture(t, p, p.Keep())
+	messages = append(messages, drivePicture(t, p, seq.Index(1).Interface().(tea.Cmd))...)
+	raw := output(messages)
+	if !strings.Contains(raw, kittyDeleteImage(job.placement.model.kittyID)) || strings.Contains(raw, kittyDeleteImage(front.model.kittyID)) || p.View() != view {
+		t.Fatal("late replacement was kept or retired the retained front")
+	}
+}
+
+func TestPictureKeepWithoutFront(t *testing.T) {
+	p := testPicture(true)
+	pending := p.SetImage(testPixels(color.RGBA{A: 255}))
+	drivePicture(t, p, p.Keep())
+	messages := drivePicture(t, p, pending)
+	if p.View() != "" || p.Status().Busy || strings.Contains(output(messages), "a=T") {
+		t.Fatal("keep displayed an unpresented image")
+	}
+}

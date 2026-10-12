@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -23,9 +24,11 @@ var gifData []byte
 var webpData []byte
 
 type model struct {
-	tracks [2]*playback.Controller
-	width  int
-	kitty  bool
+	tracks    [2]*playback.Controller
+	width     int
+	kitty     bool
+	keeping   bool
+	finalView string
 }
 
 func initialModel() (model, error) {
@@ -41,13 +44,29 @@ func initialModel() (model, error) {
 }
 func (m model) Init() tea.Cmd { return tea.Batch(m.tracks[0].Init(), m.tracks[1].Init()) }
 func (m model) HelpKeys() demohelp.Keys {
+	if m.keeping {
+		return demohelp.Keys{}
+	}
 	s := m.tracks[0].Status()
 	return demohelp.Animation(s.Paused || s.Finished)
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	if m.keeping {
+		for _, c := range m.tracks {
+			cmds = append(cmds, c.Update(msg))
+		}
+		return m, tea.Batch(cmds...)
+	}
 	if press, ok := msg.(tea.KeyPressMsg); ok {
 		keys := m.HelpKeys()
+		if key.Matches(press, keys.Keep) {
+			// Preserve the displayed layout, replacing help with a prompt row.
+			content := m.View().Content
+			m.finalView = content[:strings.LastIndex(content, "\n")+1]
+			m.keeping = true
+			return m, tea.Sequence(tea.Batch(m.tracks[0].Keep(), m.tracks[1].Keep()), tea.Quit)
+		}
 		if key.Matches(press, keys.Quit) {
 			return m, tea.Sequence(tea.Batch(m.tracks[0].Close(), m.tracks[1].Close()), tea.Quit)
 		}
@@ -84,6 +103,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 func (m model) View() tea.View {
+	if m.keeping {
+		return tea.NewView(m.finalView)
+	}
 	var panes []string
 	for i, c := range m.tracks {
 		label := []string{"GIF", "WebP"}[i]

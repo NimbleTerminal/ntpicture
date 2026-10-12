@@ -102,6 +102,7 @@ tasks:
       - node scripts/check-site.mjs
       - for: [still, simple, grid, animation]
         cmd: node scripts/smoke-demo.mjs {{.ITEM}}
+      - node scripts/smoke-demo.mjs animation keep
   serve-wasm-site:
     desc: Serve demos at http://localhost:8000/web/
     cmds:

@@ -205,10 +205,23 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 
 // Close cancels work, releases the clip, and returns Picture cleanup commands.
 func (c *Controller) Close() tea.Cmd {
+	c.stop()
+	return c.pic.Close()
+}
+
+// Keep cancels playback and pending composition, releases the clip, and keeps
+// the last presented frame. Run its command before quitting; the host must
+// retain View in its final layout and choose the main screen to leave it there.
+// Like Close, Keep is final. A later Close does not delete the kept frame.
+func (c *Controller) Keep() tea.Cmd {
+	c.stop()
+	return c.pic.Keep()
+}
+
+func (c *Controller) stop() {
 	c.closed = true
 	c.cancel()
 	c.pending = nil
 	c.player = nil
 	c.job = nil
-	return c.pic.Close()
 }

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add Gloss-style keep-screen exit for pictures and playback, with a Q control
+  and browser help button in the animation demo.
+
 - Add bounded GIF and lazy animated-WebP decoding from Gloss, immutable players,
   frame seeking, loop/disposal handling, and indexed lazy errors.
 - Add cancellable Bubble Tea playback through Picture and a GIF/WebP demo with

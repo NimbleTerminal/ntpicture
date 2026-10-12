@@ -120,3 +120,22 @@ func TestCloseStopsWaitingTimer(t *testing.T) {
 		t.Fatal("cancelled timer restored closed playback")
 	}
 }
+
+func TestKeepCancelsCompositionAndPreservesFrame(t *testing.T) {
+	c := New(testPlayer(t), Options{})
+	c.Pause(true)
+	c.SetSize(2, 2)
+	drive(t, c, c.SetPlayer(c.player))
+	view := c.View()
+	pending := c.Seek(2)
+	job := c.job
+	drive(t, c, c.Keep())
+	drive(t, c, c.Update(pending()))
+	if job.ctx.Err() == nil || c.Status().Busy || c.player != nil || c.View() != view || view == "" {
+		t.Fatal("keep lost frame or accepted cancelled composition")
+	}
+	drive(t, c, c.Close())
+	if c.View() != view || c.SetPlayer(testPlayer(t)) != nil || c.Keep() != nil {
+		t.Fatal("keep not final")
+	}
+}
