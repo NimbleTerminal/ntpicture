@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Publish demo help bindings as booba action buttons for browser controls.
+
+- Port the NTCharts embedded-image and interactive grid examples to `Picture`.
+- Add an isolated examples module, a booba browser demo site, Pages deployment,
+  native/WASM demo builds, runtime smoke checks, and generated dependency notices.
+
 - Extract NTCharts image rendering, Kitty transport, glyph fallback, static
   decoders, and native/browser shared-memory support into `nimbleterminal.dev/ntpicture`.
 - Add `Picture` to retain displayed content while preparing replacements,

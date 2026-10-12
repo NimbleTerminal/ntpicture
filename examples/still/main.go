@@ -7,8 +7,10 @@ import (
 	"image/color"
 	"os"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	nt "nimbleterminal.dev/ntpicture"
+	"nimbleterminal.dev/ntpicture/examples/internal/demohelp"
 )
 
 type model struct{ pic *nt.Picture }
@@ -23,8 +25,11 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(m.pic.Init(), m.pic.SetSize(40, 12), m.pic.SetImage(img))
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok && (key.String() == "q" || key.String() == "ctrl+c") {
+	if press, ok := msg.(tea.KeyPressMsg); ok && key.Matches(press, m.HelpKeys().Quit) {
 		return m, tea.Sequence(m.pic.Close(), tea.Quit)
+	}
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		return m, tea.Batch(m.pic.Update(msg), m.pic.SetSize(max(0, size.Width), max(0, size.Height-1)))
 	}
 	cmd := m.pic.Update(msg)
 	if nt.KittySupported() == nt.KittyCapabilitySupported && m.pic.Mode() != nt.PictureKitty {
@@ -33,14 +38,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 func (m model) View() tea.View {
-	v := tea.NewView(m.pic.View() + "\nq: quit")
+	v := tea.NewView(m.pic.View() + "\n" + m.HelpKeys().View())
 	v.AltScreen = true
 	return v
 }
+func (m model) HelpKeys() demohelp.Keys {
+	return demohelp.New(false, nt.KittySupported() == nt.KittyCapabilitySupported)
+}
+
 func main() {
 	p := nt.New(nt.Options{})
 	defer p.Close() // Local resources are also released on abnormal program exit.
-	if _, err := tea.NewProgram(model{p}).Run(); err != nil {
+	if err := demohelp.Run(model{p}, "Still image"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

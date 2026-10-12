@@ -24,7 +24,7 @@ cmd = pic.SetMode(ntpicture.PictureKitty)
 cmd = tea.Sequence(pic.Close(), tea.Quit)
 ```
 
-Run `go run ./examples/still` for a native gradient example. `q` quits with
+Run `task run-still` for a native gradient example. `q` quits with
 placement cleanup. The host owns keys, layout, loading/error UI and visibility.
 
 ## Picture ownership and replacement
@@ -109,6 +109,26 @@ See [DEVELOP.md](DEVELOP.md) for checks and [MIGRATION.md](MIGRATION.md) for
 remaining milestones. The extracted rendering code and tests originate in
 NTCharts; its MIT copyright notice is preserved in [LICENSE](LICENSE).
 
+## Examples and browser demo
+
+```sh
+task build-examples       # bin/ntpicture-{still,simple,grid}
+task serve-wasm-site      # http://localhost:8000/web/
+```
+
+The site runs three examples locally in the browser through booba: a generated
+still image, the embedded-image viewer ported from NTCharts, and its interactive
+`GridImage` board. The same programs run natively. Use arrows/WASD/HJKL in the
+grid, `g` to switch rendering modes, and `q` to quit. Restart reloads a fresh
+browser session. Booba action buttons above the terminal come from the same Go
+help bindings as the keyboard controls; the grid exposes movement and, when
+Kitty is available, rendering mode. More includes Quit.
+
+Examples have their own Go module; booba stays out of the library's dependency
+graph. The NTCharts URL, heatmap, and chart adapters remain NTCharts examples.
+See [DEVELOP.md](./DEVELOP.md#browser-demo-site) for building and deploying the
+site, and [NOTICE.md](./NOTICE.md) for the embedded artwork's separate license.
+
 ## Open Collaboration
 
 Run `task ci` before submitting changes. It checks formatting and module
@@ -136,7 +156,11 @@ and image registry integration.
 
 ## License
 
-[MIT License](./LICENSE) — Copyright (c) 2024–2026
+Source code: [MIT License](./LICENSE). Artwork exceptions are listed in
+[NOTICE.md](./NOTICE.md); dependency licenses are in
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
+Copyright (c) 2024–2026
 [Neomantra Corp](https://www.neomantra.com).
 
 ----

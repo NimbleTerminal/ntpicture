@@ -24,54 +24,89 @@ tasks:
         if [ -n "$files" ]; then printf '%s\n' "$files"; exit 1; fi
   go-tidy:
     desc: Update native module metadata
-    cmds: ['go mod tidy']
+    cmds: ['go mod tidy', 'go -C examples mod tidy']
   go-tidy-check:
     aliases: [tidy-check]
     desc: Check native module metadata without changing files
-    cmds: ['go mod tidy -diff']
+    cmds: ['go mod tidy -diff', 'go -C examples mod tidy -diff']
   go-verify:
     desc: Verify downloaded module contents
-    cmds: ['go mod verify']
+    cmds: ['go mod verify', 'go -C examples mod verify']
   test:
     desc: Run native tests (requires POSIX shared memory on macOS/Linux)
-    cmds: ['go test -mod=readonly ./...']
+    cmds: ['go test -mod=readonly ./...', 'go -C examples test -mod=readonly ./...']
   test-race:
     desc: Run native tests with the race detector
-    cmds: ['go test -mod=readonly -race ./...']
+    cmds: ['go test -mod=readonly -race ./...', 'go -C examples test -mod=readonly -race ./...']
   test-no-cgo:
     desc: Test direct transport fallback without CGO
     env: {CGO_ENABLED: '0'}
-    cmds: ['go test -mod=readonly ./...']
+    cmds: ['go test -mod=readonly ./...', 'go -C examples test -mod=readonly ./...']
   vet:
     desc: Run Go vet
-    cmds: ['go vet -mod=readonly ./...']
+    cmds: ['go vet -mod=readonly ./...', 'go -C examples vet -mod=readonly ./...']
   build:
     desc: Build library and native example
     cmds:
       - go build -mod=readonly ./...
-      - task: build-ex-still
+      - task: build-examples
   build-ex-still:
     desc: Build bin/ntpicture-still
     cmds:
       - mkdir -p bin
-      - go build -mod=readonly -o bin/ntpicture-still ./examples/still
+      - go -C examples build -mod=readonly -o ../bin/ntpicture-still ./still
   run-still:
     desc: Run the still-image example
-    cmds: ['go run -mod=readonly ./examples/still {{.CLI_ARGS}}']
+    cmds: ['go -C examples run -mod=readonly ./still {{.CLI_ARGS}}']
   cross-windows:
     desc: Check Windows compilation
     env: {GOOS: windows, GOARCH: amd64, CGO_ENABLED: '0'}
-    cmds: ['go build -mod=readonly ./...']
+    cmds: ['go build -mod=readonly ./...', 'go -C examples build -mod=readonly ./...']
+  build-examples:
+    desc: Build all native demos
+    cmds:
+      - mkdir -p bin
+      - for: [still, simple, grid]
+        cmd: go -C examples build -mod=readonly -o ../bin/ntpicture-{{.ITEM}} ./{{.ITEM}}
   build-wasm:
-    desc: Build the example with the browser Bubble Tea fork
+    desc: Build all browser demos
     env:
       GOWORK: '{{.ROOT_DIR}}/wasm.work'
       GOOS: js
       GOARCH: wasm
       CGO_ENABLED: '0'
     cmds:
+      - mkdir -p web/demos
+      - for: [still, simple, grid]
+        cmd: go -C examples build -mod=readonly -o ../web/demos/{{.ITEM}}.wasm ./{{.ITEM}}
+  notices:
+    desc: Regenerate dependency and browser runtime notices
+    cmds: ['go run ./internal/tools/notices > THIRD_PARTY_NOTICES.md']
+  notices-check:
+    desc: Check generated notices without modifying tracked files
+    cmds:
       - mkdir -p dist
-      - go build -mod=readonly -o dist/still.wasm ./examples/still
+      - go run ./internal/tools/notices > dist/THIRD_PARTY_NOTICES.md
+      - cmp THIRD_PARTY_NOTICES.md dist/THIRD_PARTY_NOTICES.md
+  build-wasm-site:
+    desc: Build browser demos and export the pinned booba runtime
+    cmds:
+      - task: build-wasm
+      - go -C examples tool booba-assets --no-index ../web
+      - cp LICENSE NOTICE.md THIRD_PARTY_NOTICES.md web/
+      - task: check-site
+  check-site:
+    desc: Check JavaScript syntax and required site assets
+    cmds:
+      - node --check web/site.js
+      - node scripts/check-site.mjs
+      - for: [still, simple, grid]
+        cmd: node scripts/smoke-demo.mjs {{.ITEM}}
+  serve-wasm-site:
+    desc: Serve demos at http://localhost:8000/web/
+    cmds:
+      - task: build-wasm-site
+      - python3 -m http.server 8000 --bind 127.0.0.1
   test-wasm:
     aliases: [wasm-test]
     desc: Test WASM and browser registry lifecycle under Node
@@ -81,7 +116,7 @@ tasks:
       GOARCH: wasm
       CGO_ENABLED: '0'
     cmds:
-      - 'go test -mod=readonly -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./...'
+      - 'go test -mod=readonly -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./... ./examples/...'
   vulncheck-install:
     internal: true
     run: once
@@ -92,12 +127,14 @@ tasks:
     cmds:
       - task: vulncheck-install
       - '"{{.ROOT_DIR}}/.task/bin/govulncheck" -test ./...'
+      - cmd: '"{{.ROOT_DIR}}/.task/bin/govulncheck" -test ./...'
+        dir: examples
       - task: vulncheck-wasm
   vulncheck-wasm:
     desc: Scan dependencies with the browser fork (requires network)
     cmds:
       - task: vulncheck-install
-      - cmd: '"{{.ROOT_DIR}}/.task/bin/govulncheck" ./...'
+      - cmd: '"{{.ROOT_DIR}}/.task/bin/govulncheck" ./... ./examples/...'
         env:
           GOWORK: '{{.ROOT_DIR}}/wasm.work'
           GOOS: js
@@ -123,9 +160,10 @@ tasks:
       - task: vet
       - task: cross-windows
       - task: build
-      - task: build-wasm
+      - task: build-wasm-site
+      - task: notices-check
       - task: test-wasm
       - task: vulncheck
   clean:
     desc: Remove generated binaries and task tools
-    cmds: ['rm -rf bin dist .task']
+    cmds: ['rm -rf bin dist .task web/demos web/booba web/ghostty-web web/wasm_exec.js web/LICENSE web/NOTICE.md web/THIRD_PARTY_NOTICES.md']

@@ -3,3 +3,10 @@
 *.wasm
 /bin/
 /.task/
+/web/demos/
+/web/booba/
+/web/ghostty-web/
+/web/wasm_exec.js
+/web/LICENSE
+/web/NOTICE.md
+/web/THIRD_PARTY_NOTICES.md
