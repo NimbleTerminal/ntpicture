@@ -174,3 +174,25 @@ func TestKeepDetachesBrowserRegistry(t *testing.T) {
 		t.Fatal("deferred close deletes kept image")
 	}
 }
+
+func TestStableIDBrowserSharedMemory(t *testing.T) {
+	r := shmTestRegistry(t)
+	p := testPicture(true)
+	p.opts.StableID = true
+	p.opts.Render.KittyMedium = KittyMediumSharedMemory
+	var view string
+	for i := 0; i < 5; i++ {
+		messages := drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
+		if p.Status().Medium != KittyMediumSharedMemory || r.Get("size").Int() != 1 || strings.Contains(output(messages), "a=d") {
+			t.Fatal("stream lost registry transport or deleted live image")
+		}
+		if i > 0 && p.View() != view {
+			t.Fatal("stream changed browser placeholders")
+		}
+		view = p.View()
+	}
+	drivePicture(t, p, p.Keep())
+	if r.Get("size").Int() != 0 || p.View() != view {
+		t.Fatal("keep leaked registry or lost stream")
+	}
+}

@@ -46,6 +46,19 @@ concurrency bounded. At most two old placements are held for delayed retirement.
 this policy and should retain their own exact module rasterization and custom
 glyph output. Rendering options survive every replacement.
 
+For continuously supplied mesh/framebuffer images, set `Options.StableID: true`.
+Kitty frames then reuse the displayed image ID while cell dimensions and cell
+pixel geometry remain unchanged. The placeholder string stays identical, so
+Bubble Tea can skip redrawing it and transmit only the image update. Each
+Picture has its own ID; resize, hiding/clearing, and committed mode changes
+require a new placement. `ClearOnReplace` takes precedence.
+
+Streaming updates terminal pixels as soon as the transmission arrives, before
+`PresentedMsg`. Cancellation rejects pending work but cannot recall bytes already
+sent. Keep restores the last committed frame after accepted output drains. The
+default fresh-ID behavior still retains the old image independently during a
+replacement. Neither mode changes the configured image encoding or resolution.
+
 `PresentedMsg` identifies its `Owner` and committed `Generation`; it means the
 ordered output/grid sequence completed, not that the terminal acknowledged
 painting. `ErrorMsg` reports failed preparation or validation. `Status` exposes

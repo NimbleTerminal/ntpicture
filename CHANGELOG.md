@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add opt-in stable-ID Kitty streaming to avoid placeholder redraws each frame;
+  preserve cancellation, resize cleanup, and keep-screen restoration.
+
 - Add Gloss-style keep-screen exit for pictures and playback, with a Q control
   and browser help button in the animation demo.
 

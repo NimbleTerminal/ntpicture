@@ -38,7 +38,7 @@ func initialModel() (model, error) {
 		if err != nil {
 			return m, err
 		}
-		m.tracks[i] = playback.New(p, playback.Options{Picture: picture.Options{Render: picture.Config{KittyMedium: picture.KittyMediumSharedMemory}}})
+		m.tracks[i] = playback.New(p, playback.Options{Picture: picture.Options{StableID: true, Render: picture.Config{KittyMedium: picture.KittyMediumSharedMemory}}})
 	}
 	return m, nil
 }

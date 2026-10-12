@@ -11,6 +11,8 @@
 - Picture and playback Keep stop work and preserve the last presented view,
   retransmitting Kitty frames directly before releasing shared buffers.
   The animation demo offers Gloss-style Q to keep its main-screen output.
+- Optional StableID streaming reuses Kitty IDs at unchanged geometry; cancelled
+  borrowers cannot delete the displayed image. Animation demos use this path.
 - Fresh single-ID allocation, failure reporting and bounded Picture geometry.
 - A native example, browser workspace and temporary consumer compatibility checks.
 
@@ -53,9 +55,10 @@ native shared-memory capability are still shared globals.
 Retirement currently uses a per-Picture grace period and a bounded old-placement
 list. Validate native and browser visual transitions before replacing this with
 any stronger frame boundary. Keep now supplies the leave-displayed lifecycle;
-Gloss still owns its final layout and screen policy. Decide on tested ID reuse/stable-ID streaming before
-promising indefinite high-rate playback; allocation currently fails rather
-than wrapping the 24-bit range.
+Gloss still owns its final layout and screen policy. StableID now avoids
+per-frame allocation at unchanged geometry. New placements
+still consume fresh IDs and fail rather than wrapping the 24-bit range. Validate
+native Kitty and ghostty-web visual parity before migrating high-rate consumers.
 
 ## Then: migrate consumers
 

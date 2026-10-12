@@ -48,14 +48,20 @@ func NextImageID() (int, error) {
 	}
 }
 
-// Options configures a Picture. Render.KittyID is ignored: every replacement
-// uses NextID. The zero value renders glyphs until SetMode selects Kitty.
+// Options configures a Picture. Render.KittyID is ignored: new placements
+// use NextID. The zero value renders glyphs until SetMode selects Kitty.
 type Options struct {
 	Render Config
 	NextID func() (int, error)
 	// ClearOnReplace removes old content immediately, as required for QR codes.
 	// Otherwise the displayed picture remains until its replacement is ready.
 	ClearOnReplace bool
+	// StableID reuses the displayed Kitty image ID while cell geometry is
+	// unchanged, keeping View identical across streaming frames. Pixels update
+	// on transmission, before PresentedMsg; output already sent cannot be
+	// recalled. Resize, mode changes, hiding and clearing start a fresh ID.
+	// ClearOnReplace takes precedence. Glyph rendering is unaffected.
+	StableID bool
 	// RetireDelay defaults to 50ms. A negative duration means immediate retirement.
 	// This is a Bubble Tea frame-ordering grace period, not a terminal acknowledgement.
 	RetireDelay time.Duration
@@ -116,12 +122,22 @@ type picturePlacement struct {
 	generation uint64
 	retireAt   time.Time
 	active     atomic.Bool
+	lease      *pictureImageID
+	ownsID     bool
 	delete     tea.Cmd // Immutable; safe to use after the owner has been removed.
 }
+
+// A streaming replacement borrows its front's ID until commit. Cleanup of a
+// cancelled borrower must never delete the still-displayed image.
+type pictureImageID struct {
+	active atomic.Bool
+}
+
 type pictureJob struct {
-	placement *picturePlacement
-	ctx       context.Context
-	cancel    context.CancelFunc
+	placement  *picturePlacement
+	ctx        context.Context
+	cancel     context.CancelFunc
+	outputDone chan struct{} // Closed by accepted transmission completion.
 }
 type picturePrepared struct {
 	owner *Picture
@@ -358,7 +374,14 @@ func (p *Picture) schedule() tea.Cmd {
 		return func() tea.Msg { return ErrorMsg{p, generation, err} }
 	}
 	cfg := p.opts.Render
-	if p.mode == PictureKitty {
+	var lease *pictureImageID
+	if p.opts.StableID && !p.opts.ClearOnReplace && p.mode == PictureKitty && p.front != nil &&
+		p.front.model.mode == PictureKitty && p.front.model.cols == p.cols && p.front.model.rows == p.rows &&
+		p.front.model.cellPixelW == cfg.CellPixelWidth && p.front.model.cellPixelH == cfg.CellPixelHeight {
+		lease = p.front.lease
+		cfg.KittyID = p.front.model.kittyID
+	}
+	if p.mode == PictureKitty && lease == nil {
 		id, err := p.opts.NextID()
 		if err == nil && (id <= 0 || id >= 1<<24) {
 			err = ErrImageIDExhausted
@@ -375,7 +398,19 @@ func (p *Picture) schedule() tea.Cmd {
 	placement.model.cols, placement.model.rows = p.cols, p.rows
 	placement.active.Store(true)
 	if p.mode == PictureKitty {
-		placement.delete = tea.Raw(kittyDeleteImage(cfg.KittyID))
+		placement.lease = lease
+		if lease == nil {
+			lease = new(pictureImageID)
+			lease.active.Store(true)
+			placement.lease, placement.ownsID = lease, true
+		}
+		deleteImage := kittyDeleteImage(cfg.KittyID)
+		placement.delete = func() tea.Msg {
+			if lease.active.Load() {
+				return nil
+			}
+			return tea.RawMsg{Msg: deleteImage}
+		}
 	}
 	ctx, cancel := context.WithCancel(p.lifetime)
 	job := &pictureJob{placement: placement, ctx: ctx, cancel: cancel}
@@ -432,6 +467,7 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			p.job = nil
 			return tea.Batch(p.dispose(j.placement), p.failSubmission(errors.New("ntpicture: shared image was retired before transmission")))
 		}
+		j.outputDone = make(chan struct{})
 		ready := func() tea.Msg { return pictureReady{p, j, f.Grid, f.Format, f.Medium} }
 		return tea.Sequence(func() tea.Msg {
 			if !j.placement.active.Load() {
@@ -439,6 +475,7 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			}
 			return tea.RawMsg{Msg: f.APC}
 		}, func() tea.Msg {
+			defer close(j.outputDone)
 			// A Close/replacement can race with the raw output after acceptance.
 			// Cleanup survives removal of this Picture from the host's routing table.
 			if !j.placement.active.Load() {
@@ -489,6 +526,10 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 func (p *Picture) commit(j *pictureJob, format KittyFormat, medium KittyMedium) tea.Cmd {
 	var cleanup tea.Cmd
 	if old := p.front; old != nil {
+		if old.lease != nil && old.lease == j.placement.lease {
+			old.ownsID = false
+			j.placement.ownsID = true
+		}
 		if p.opts.RetireDelay < 0 || p.mode == PictureGlyph {
 			cleanup = p.dispose(old)
 		} else {
@@ -531,6 +572,9 @@ func (p *Picture) dispose(f *picturePlacement) tea.Cmd {
 		return nil
 	}
 	f.active.Store(false)
+	if f.ownsID && f.lease != nil {
+		f.lease.active.Store(false)
+	}
 	// Kitty preparation only reads captured inputs and its synchronized resource
 	// tracker. A glyph View touches Model caches, so don't mutate that model here.
 	if f.model.mode == PictureKitty {
@@ -607,10 +651,15 @@ func fitGrid(grid string, cols, w, h int) string {
 // directly so it survives release of process/browser shared-memory buffers.
 // The host owns final layout and main-screen selection; an alternate screen
 // normally disappears on exit. Subsequent Keep, Close and setters are no-ops.
-// Keep does not wait for or display a pending replacement.
+// Keep cancels pending preparation. In StableID mode its command drains any
+// already-accepted transmission before restoring the last committed frame.
 func (p *Picture) Keep() tea.Cmd {
 	if p.closed {
 		return nil
+	}
+	var outputDone <-chan struct{}
+	if p.job != nil && p.front != nil && p.job.placement.lease != nil && p.job.placement.lease == p.front.lease {
+		outputDone = p.job.outputDone
 	}
 	p.keptView = p.View()
 	front := p.front
@@ -629,6 +678,11 @@ func (p *Picture) Keep() tea.Cmd {
 	render := m.renderCmdContext(context.Background())
 	generation := p.presented
 	keep := func() tea.Msg {
+		// Drain accepted output before restoring the committed frame under an
+		// ID that a cancelled streaming replacement may already have updated.
+		if outputDone != nil {
+			<-outputDone
+		}
 		defer func() { _ = front.model.SetImage(nil) }()
 		frame, ok := render().(KittyFrameMsg)
 		if !ok || frame.APC == "" {
