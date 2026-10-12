@@ -71,11 +71,8 @@ func BenchmarkGlyph_AnsiImage_DitherBlocks(b *testing.B) {
 	}
 }
 
-// BenchmarkGlyph_PictureView is the integrated path: View() runs
-// prepareSource (CatmullRom resample + bg composite) then hands the
-// result to ansimage. Use this to confirm picture-layer behavior
-// doesn't drown out pixterm-level wins, and to see the user-visible
-// delta a picture consumer will feel.
+// BenchmarkGlyph_PictureView measures fitting and ANSI half-block encoding
+// together, including per-model scratch reuse across frames.
 //
 // invalidateGlyph each iteration so the cache doesn't short-circuit
 // and we measure the full render every time.
@@ -86,6 +83,34 @@ func BenchmarkGlyph_PictureView(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		m.invalidateGlyph()
+		if got := m.View().Content; got == "" {
+			b.Fatal("empty View")
+		}
+	}
+}
+
+func BenchmarkGlyph_PictureView_240x68(b *testing.B) {
+	m := NewModelWithConfig(Config{Fit: FitFill})
+	m.SetSize(240, 68)
+	m.SetImage(benchImage(240, 135))
+	b.ReportAllocs()
+	for b.Loop() {
+		m.invalidateGlyph()
+		if got := m.View().Content; got == "" {
+			b.Fatal("empty View")
+		}
+	}
+}
+
+// Picture creates a separate Model for each asynchronous replacement. Measure
+// that allocation pattern as well as the low-level Model's scratch reuse.
+func BenchmarkGlyph_PictureView_240x68FreshModel(b *testing.B) {
+	img := benchImage(240, 135)
+	b.ReportAllocs()
+	for b.Loop() {
+		m := NewModelWithConfig(Config{Fit: FitFill})
+		m.SetSize(240, 68)
+		m.SetImage(img)
 		if got := m.View().Content; got == "" {
 			b.Fatal("empty View")
 		}

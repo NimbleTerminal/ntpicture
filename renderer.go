@@ -9,11 +9,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"strings"
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/NimbleMarkets/pixterm/pkg/ansimage"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"nimbleterminal.dev/ntpicture/internal/kittyshm"
@@ -124,6 +122,8 @@ type Model struct {
 
 	glyphCache string
 	glyphKey   string
+	glyphFit   fitScratch
+	glyphBuf   []byte
 
 	kittyGrid string
 
@@ -572,7 +572,8 @@ func RequestCellSize() tea.Cmd {
 // blank window during the mode switch.
 //
 // The Model never renders user-facing loading or error text; layers above
-// (e.g. pictureurl) own that.
+// (e.g. Picture) own that. View mutates caches and scratch buffers and is
+// not safe for concurrent use with View or other Model methods.
 func (m *Model) View() tea.View {
 	if m.img == nil || m.cols <= 0 || m.rows <= 0 {
 		return tea.NewView("")
@@ -591,34 +592,13 @@ func (m *Model) View() tea.View {
 		return tea.NewView(m.glyphCache)
 	}
 
-	rendered := prepareSource(m.img, m.fit, m.cols, m.rows, m.cellPixelW, m.cellPixelH, m.background, m.anchor)
-	if rendered == nil {
-		return tea.NewView("")
-	}
-	// ScaleModeResize (not Fit): prepareSource already applied the chosen
-	// FitMode against the actual cell pixel dimensions, producing a bitmap
-	// whose AR matches the cell rect. ansimage's job here is "render into
-	// the half-block grid at exactly (cols, rows*2)", not "preserve AR
-	// again" — pixterm hardcodes a 1:2 cell assumption that disagrees
-	// with the prepared bitmap on terminals reporting non-1:2 cell ratios
-	// (line-spacing, retina cells), causing Glyph to letterbox while Kitty
-	// fills. Resize keeps the two backends consistent.
-	ascii, err := ansimage.NewScaledFromImage(
-		rendered,
-		m.rows*2,
-		m.cols,
-		m.background,
-		ansimage.ScaleModeResize,
-		ansimage.NoDithering,
-	)
-	if err != nil {
-		return tea.NewView("")
-	}
-
-	// pixterm/ansimage appends \n after every row including the last; the
-	// Kitty path does not. Strip so both modes report the same shape to
-	// newline-aware layout code (lipgloss.JoinVertical, etc.).
-	out := strings.TrimRight(ascii.RenderExt(false, false), "\n")
+	// Half-blocks can display only one horizontal and two vertical pixels
+	// per cell. Fit at that resolution instead of scaling to Kitty pixels
+	// and immediately downsampling again.
+	rendered := prepareSourceWithScratch(m.img, m.fit, m.cols, m.rows, 1, 2, m.background, m.anchor, &m.glyphFit)
+	m.glyphBuf = appendGlyph(m.glyphBuf[:0], rendered)
+	// Copy: previously returned Views must remain immutable when scratch is reused.
+	out := string(m.glyphBuf)
 	m.glyphCache = out
 	m.glyphKey = key
 	return tea.NewView(out)

@@ -147,7 +147,7 @@ func TestModel_KittyMode_StaleFrameIgnored(t *testing.T) {
 }
 
 func TestModel_View_NeitherModeEndsWithTrailingNewline(t *testing.T) {
-	// pixterm/ansimage appends \n after every row including the last, while
+	// The former pixterm path appended \n after every row including the last, while
 	// the Kitty path's buildKittyGrid omits it. Without normalization, the
 	// Glyph render carries a trailing \n that lipgloss.JoinVertical and
 	// other newline-aware layout code interpret as an extra empty row,
