@@ -177,7 +177,7 @@ type kittyProbeTickMsg struct{}
 // Supported). KittyMediumSharedMemory frames are sent Direct unless the
 // terminal answers that query with OK.
 func QueryKittySupport() tea.Cmd {
-	var cmd tea.Cmd
+	var cmds []tea.Cmd
 	kittyQueryOnce.Do(func() {
 		var kittyQuery string
 		switch KittySupported() {
@@ -200,7 +200,7 @@ func QueryKittySupport() tea.Cmd {
 			kittyEnvSignalled.Store(true)
 			kittyQuery = tmuxWrap(buildKittyQueryAPC(kittyProbeID))
 		}
-		cmd = tea.Batch(
+		cmds = append(cmds,
 			// The shared-memory query goes first, so the medium is
 			// resolved by the time Kitty is.
 			func() tea.Msg { return tea.RawMsg{Msg: kittySharedQueryAPC() + kittyQuery} },
@@ -210,9 +210,9 @@ func QueryKittySupport() tea.Cmd {
 		)
 	})
 	if c := KittySupported(); c != KittyCapabilityUnknown {
-		return tea.Batch(cmd, kittyCapabilityCommand(c))
+		cmds = append(cmds, kittyCapabilityCommand(c))
 	}
-	return cmd
+	return tea.Batch(cmds...)
 }
 
 // kittyEnvSignal reports whether the process environment indicates a

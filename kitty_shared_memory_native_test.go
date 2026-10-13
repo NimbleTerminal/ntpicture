@@ -161,3 +161,24 @@ func TestQueryKittySupportProbesSharedMemoryWhenForced(t *testing.T) {
 		t.Fatalf("want only the t=s query: %q", seq)
 	}
 }
+
+// Inspect the command shape even when the host cannot create a shared-memory
+// object. The existing payload tests separately require working shared memory.
+func TestQueryKittySupportForcedFlatBatch(t *testing.T) {
+	resetKittyCapability(t)
+	ForceKittyCapability(KittyCapabilitySupported)
+	kittyQueryOnce = sync.Once{}
+	t.Cleanup(func() { kittyQueryOnce = sync.Once{}; _ = kittySharedProbe.Swap(nil).Unlink() })
+	cmds := collectBatchCmds(QueryKittySupport())
+	if len(cmds) != 3 {
+		t.Fatalf("want raw query, timeout, capability commands in one batch; got %d", len(cmds))
+	}
+	if msg := cmds[0](); msg == nil {
+		t.Fatal("missing raw command")
+	} else if _, ok := msg.(tea.RawMsg); !ok {
+		t.Fatalf("first command returned %T, want tea.RawMsg", msg)
+	}
+	if msg := cmds[2](); msg.(KittyCapabilityMsg).Capability != KittyCapabilitySupported {
+		t.Fatal("missing known capability")
+	}
+}

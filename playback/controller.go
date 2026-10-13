@@ -14,6 +14,8 @@ import (
 // Wait must honor cancellation. Nil uses a cancellable timer.
 type Wait func(context.Context, time.Duration) bool
 type Options struct {
+	// Picture supplies rendering options. Its StableID field is ignored;
+	// FreshIDs controls playback ID policy instead.
 	Picture picture.Options
 	Wait    Wait
 	// FreshIDs opts out of the stable-ID default for playback. Use it when

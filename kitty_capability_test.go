@@ -433,3 +433,12 @@ func TestCapabilityQueryReportsKnownResult(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyModelReturnsCapabilityCommand(t *testing.T) {
+	resetKittyCapability(t)
+	m := NewModel()
+	cmd := m.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}})
+	if cmd == nil || cmd().(KittyCapabilityMsg).Capability != KittyCapabilitySupported {
+		t.Fatal("legacy model dropped resolution command")
+	}
+}
