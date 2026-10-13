@@ -24,6 +24,7 @@ var gifData []byte
 var webpData []byte
 
 type model struct {
+	session   *picture.TerminalSession
 	tracks    [2]*playback.Controller
 	width     int
 	kitty     bool
@@ -32,13 +33,14 @@ type model struct {
 }
 
 func initialModel() (model, error) {
-	m := model{}
+	m := model{session: picture.NewTerminalSession(picture.TerminalOptions{})}
 	for i, data := range [][]byte{gifData, webpData} {
 		_, p, err := animation.DecodeContext(context.Background(), data, animation.Options{Animate: true})
 		if err != nil {
+			m.session.Close()
 			return m, err
 		}
-		m.tracks[i] = playback.New(p, playback.Options{Picture: picture.Options{Render: picture.Config{KittyMedium: picture.KittyMediumSharedMemory}}})
+		m.tracks[i] = playback.New(p, playback.Options{Picture: picture.Options{Session: m.session, Render: picture.Config{KittyMedium: picture.KittyMediumSharedMemory}}})
 	}
 	return m, nil
 }
@@ -65,9 +67,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			content := m.View().Content
 			m.finalView = content[:strings.LastIndex(content, "\n")+1]
 			m.keeping = true
+			m.session.Close()
 			return m, tea.Sequence(tea.Batch(m.tracks[0].Keep(), m.tracks[1].Keep()), tea.Quit)
 		}
 		if key.Matches(press, keys.Quit) {
+			m.session.Close()
 			return m, tea.Sequence(tea.Batch(m.tracks[0].Close(), m.tracks[1].Close()), tea.Quit)
 		}
 		paused := !m.tracks[0].Status().Paused
@@ -94,7 +98,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	for _, c := range m.tracks {
 		cmds = append(cmds, c.Update(msg))
 	}
-	if cap, ok := msg.(picture.KittyCapabilityMsg); ok && !m.kitty && cap.Capability == picture.KittyCapabilitySupported {
+	if event, ok := msg.(picture.TerminalSessionMsg); ok && event.Session == m.session && !m.kitty && m.session.Snapshot().Kitty == picture.KittyCapabilitySupported {
 		m.kitty = true
 		for _, c := range m.tracks {
 			cmds = append(cmds, c.SetMode(picture.PictureKitty))

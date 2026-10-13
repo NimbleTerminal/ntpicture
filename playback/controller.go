@@ -253,3 +253,9 @@ func (c *Controller) stop() {
 	c.player = nil
 	c.job = nil
 }
+
+// SetViewport clips the prepared picture without seeking or restarting playback.
+func (c *Controller) SetViewport(v picture.Viewport) { c.pic.SetViewport(v) }
+
+// ResetViewport restores the complete picture view.
+func (c *Controller) ResetViewport() { c.pic.ResetViewport() }

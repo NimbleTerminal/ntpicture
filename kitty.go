@@ -63,23 +63,27 @@ func tmuxWrap(seq string) string {
 // places the image into the cell rectangle preserving source AR, which is
 // a no-op when source AR matches cell-rect AR.
 func buildKittyAPC(img image.Image, id, cols, rows int, format KittyFormat, z ...int) string {
+	return legacyTransport().buildKittyAPC(img, id, cols, rows, format, z...)
+}
+
+func (transport kittyTransport) buildKittyAPC(img image.Image, id, cols, rows int, format KittyFormat, z ...int) string {
 	if format == KittyFormatRGBA {
 		b := img.Bounds()
 		data := kittyRGBABytes(img)
 		if data == nil {
 			return ""
 		}
-		return buildKittyRGBAAPC(data, b.Dx(), b.Dy(), id, cols, rows, z...)
+		return transport.buildKittyRGBAAPC(data, b.Dx(), b.Dy(), id, cols, rows, z...)
 	}
 	if format == KittyFormatZlib {
-		return buildKittyZlibAPC(img, id, cols, rows, z...)
+		return transport.buildKittyZlibAPC(img, id, cols, rows, z...)
 	}
 	var buf bytes.Buffer
 	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := encoder.Encode(&buf, img); err != nil {
 		return ""
 	}
-	return buildKittyPNGAPC(buf.Bytes(), id, cols, rows, z...)
+	return transport.buildKittyPNGAPC(buf.Bytes(), id, cols, rows, z...)
 }
 
 // buildKittyZlibAPC sends raw pixels compressed with zlib (o=z): RGB (f=24)
@@ -87,11 +91,15 @@ func buildKittyAPC(img image.Image, id, cols, rows int, format KittyFormat, z ..
 // tries every filter on every row even at BestSpeed; zlib alone is about
 // three times faster for a comparable payload.
 func buildKittyZlibAPC(img image.Image, id, cols, rows int, z ...int) string {
+	return legacyTransport().buildKittyZlibAPC(img, id, cols, rows, z...)
+}
+
+func (transport kittyTransport) buildKittyZlibAPC(img image.Image, id, cols, rows int, z ...int) string {
 	b := img.Bounds()
 	if b.Empty() {
 		return ""
 	}
-	o := kittyRGBAOptions(b.Dx(), b.Dy(), id, cols, rows, z...)
+	o := transport.kittyRGBAOptions(b.Dx(), b.Dy(), id, cols, rows, z...)
 	o.Compression = kitty.Zlib
 	var raw []byte
 	if opaque, ok := img.(interface{ Opaque() bool }); ok && opaque.Opaque() {
@@ -176,7 +184,11 @@ func normalizeKittyFormat(f KittyFormat) KittyFormat {
 }
 
 func kittyRGBAOptions(width, height, id, cols, rows int, z ...int) *kitty.Options {
-	o := kittyPNGOptions(id, cols, rows, z...)
+	return legacyTransport().kittyRGBAOptions(width, height, id, cols, rows, z...)
+}
+
+func (transport kittyTransport) kittyRGBAOptions(width, height, id, cols, rows int, z ...int) *kitty.Options {
+	o := transport.kittyPNGOptions(id, cols, rows, z...)
 	o.Format = kitty.RGBA
 	o.ImageWidth = width
 	o.ImageHeight = height
@@ -184,8 +196,12 @@ func kittyRGBAOptions(width, height, id, cols, rows int, z ...int) *kitty.Option
 }
 
 func buildKittyRGBAAPC(data []byte, width, height, id, cols, rows int, z ...int) string {
+	return legacyTransport().buildKittyRGBAAPC(data, width, height, id, cols, rows, z...)
+}
+
+func (transport kittyTransport) buildKittyRGBAAPC(data []byte, width, height, id, cols, rows int, z ...int) string {
 	var buf bytes.Buffer
-	if err := encodeKittyGraphicsData(&buf, data, kittyRGBAOptions(width, height, id, cols, rows, z...)); err != nil {
+	if err := encodeKittyGraphicsData(&buf, data, transport.kittyRGBAOptions(width, height, id, cols, rows, z...)); err != nil {
 		return ""
 	}
 	return buf.String()
@@ -251,6 +267,10 @@ func writeKittyRGBA(out []byte, img image.Image) {
 // kittyPNGOptions wraps each chunk separately for tmux, including RGBA
 // and shared-memory payloads that reuse these options.
 func kittyPNGOptions(id, cols, rows int, z ...int) *kitty.Options {
+	return legacyTransport().kittyPNGOptions(id, cols, rows, z...)
+}
+
+func (transport kittyTransport) kittyPNGOptions(id, cols, rows int, z ...int) *kitty.Options {
 	depth := 0
 	if len(z) > 0 {
 		depth = z[0]
@@ -266,7 +286,7 @@ func kittyPNGOptions(id, cols, rows int, z ...int) *kitty.Options {
 		Quiet:            2,
 		Chunk:            true,
 	}
-	if tmuxPassthroughEnabled.Load() {
+	if transport.tmux {
 		o.ChunkFormatter = ansi.TmuxPassthrough
 	}
 	return o
@@ -274,8 +294,12 @@ func kittyPNGOptions(id, cols, rows int, z ...int) *kitty.Options {
 
 // buildKittyPNGAPC is also used by framing regression tests and benchmarks.
 func buildKittyPNGAPC(data []byte, id, cols, rows int, z ...int) string {
+	return legacyTransport().buildKittyPNGAPC(data, id, cols, rows, z...)
+}
+
+func (transport kittyTransport) buildKittyPNGAPC(data []byte, id, cols, rows int, z ...int) string {
 	var buf bytes.Buffer
-	if err := encodeKittyGraphicsData(&buf, data, kittyPNGOptions(id, cols, rows, z...)); err != nil {
+	if err := encodeKittyGraphicsData(&buf, data, transport.kittyPNGOptions(id, cols, rows, z...)); err != nil {
 		return ""
 	}
 	return buf.String()
@@ -308,5 +332,9 @@ func buildKittyGrid(cols, rows, imageID int) string {
 }
 
 func kittyDeleteImage(id int) string {
-	return tmuxWrap(fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", id))
+	return legacyTransport().kittyDeleteImage(id)
+}
+
+func (transport kittyTransport) kittyDeleteImage(id int) string {
+	return transport.wrap(fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", id))
 }

@@ -48,8 +48,8 @@ glyph output. Rendering options survive every replacement.
 
 Standalone `Picture` uses fresh IDs by default. For continuously supplied
 mesh/framebuffer images, set `Options.StableID: true`. `playback.New` uses
-stable IDs by default; set `playback.Options{FreshIDs: true}` to opt out. With stable IDs, Kitty
-frames reuse the displayed image ID while cell dimensions and cell pixel
+stable IDs by default; set `playback.Options{FreshIDs: true}` to opt out.
+With stable IDs, Kitty frames reuse the displayed image ID while cell dimensions and cell pixel
 geometry remain unchanged. The placeholder string stays identical, so Bubble Tea
 can skip redrawing it and transmit only the image update. Each Picture has its
 own ID; resize, hiding/clearing, and committed mode changes require a new
@@ -113,8 +113,8 @@ capability and geometry. It does not probe. Otherwise run `Init`, route replies,
 and select Kitty on `KittyCapabilityMsg{Capability: KittyCapabilitySupported}`.
 The message also reports timeouts and already-known results; handle duplicates
 and late positive replies. Invalid terminal cell-size reports are ignored, while
-explicit `SetTerminal` calls still validate their inputs. The extracted legacy
-probe and tmux settings are still process-global in this milestone.
+explicit `SetTerminal` calls still validate their inputs. This is the legacy
+default-session flow; explicit sessions use `TerminalSessionMsg` as shown below.
 
 Shared memory uses the unchanged browser registry
 `globalThis.ghosttyKittySharedMemory` (`Map<string, Uint8Array>`), Linux named
@@ -128,6 +128,62 @@ block. By default all `Picture` instances share `NextImageID`. Hosts mixing
 legacy pictures, QR codes and new pictures must supply/use one allocator across
 all of them. IDs do not wrap or recycle; exhaustion returns
 `ErrImageIDExhausted`.
+
+## Shared terminal sessions and viewports
+
+Use one `TerminalSession` per Bubble Tea terminal connection. Share it across
+pictures and playback controllers; discovery runs once through normal messages.
+Background, fit, encoding, and glyph/Kitty selection remain per-picture policy.
+
+```go
+session := ntpicture.NewTerminalSession(ntpicture.TerminalOptions{})
+a := ntpicture.New(ntpicture.Options{Session: session})
+b := ntpicture.New(ntpicture.Options{Session: session})
+cmd := tea.Batch(a.Init(), b.Init()) // one session probe
+
+// In Update, forward every message to both pictures and run their commands.
+cmd = tea.Batch(a.Update(msg), b.Update(msg))
+if event, ok := msg.(ntpicture.TerminalSessionMsg); ok &&
+    event.Session == session &&
+    session.Snapshot().Kitty == ntpicture.KittyCapabilitySupported {
+    cmd = tea.Batch(cmd, a.SetMode(ntpicture.PictureKitty),
+        b.SetMode(ntpicture.PictureKitty))
+}
+```
+
+`TerminalOptions` accepts known Kitty/shared-memory capabilities, initial cell
+pixel dimensions, and an optional tmux override. Explicit values take precedence
+over environment hints. Unknown capabilities are discovered independently;
+allocation failures still fall back to direct transport. `Snapshot` reports
+capabilities and geometry; each picture's `Status` reports its actual transport.
+Forward raw terminal events only to the session for that connection. Close each
+picture and execute its cleanup command, then call `session.Close()` to release
+pending probe resources. Keep-screen also requires closing the session on exit.
+
+Omitting `Options.Session` preserves legacy behavior. Package-level capability
+helpers and `Model` use the process-wide compatibility session exposed by
+`DefaultTerminalSession`; they do not change explicit sessions. The default
+session has process lifetime and cannot be closed.
+
+A viewport selects cells from the full prepared image, independently of layout:
+
+```go
+cmd = a.SetSize(80, 60) // prepare the full image at this cell size
+cmd = tea.Batch(cmd, a.SetImage(img))
+a.SetViewport(ntpicture.Viewport{X: 0, Y: 20, Width: 80, Height: 15})
+content := a.View() // source rows 20–34; host positions this in its layout
+// Scroll without preparing or transmitting pixels; the image ID stays the same.
+a.SetViewport(ntpicture.Viewport{X: 0, Y: 21, Width: 80, Height: 15})
+a.ResetViewport() // show the full prepared image again
+```
+
+Kitty views preserve original placeholder coordinates; glyph views preserve ANSI
+colors while clipping rows and columns. Out-of-bounds portions are clipped and
+nonpositive dimensions produce an empty view. Viewports persist across frames,
+resize, and keep-screen. They retain the full image and do not pause playback;
+use `SetVisible` for hiding/resource policy. Playback controllers expose the
+same `SetViewport` and `ResetViewport` methods. Gloss continues to own document
+layout and the mapping from document regions into these cell rectangles.
 
 ## Compatibility and migration
 

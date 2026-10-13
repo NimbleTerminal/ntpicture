@@ -133,12 +133,16 @@ and reflow remain application policy. The demo currently uses two independent
 controllers. Gloss supplies keys, seek-bar UI, preview behavior, exports,
 loading/layout, selection, search and aggregate budgets.
 
-Introduce explicit terminal session state for capability/probe/tmux/shared
-transport configuration. Make legacy package helpers delegate to one default
-session. Preserve old environment variables and message/type identity while old
-and new imports coexist. New Picture's SetTerminal already accepts host-provided
-capability without consulting global detection, but the legacy probe, tmux and
-native shared-memory capability are still shared globals.
+Explicit TerminalSession now isolates discovery, cell geometry, tmux wrapping,
+and shared-memory capability for pictures that opt in. Legacy Model and package
+helpers retain their compatibility state through DefaultTerminalSession. Migrate
+hosts to one explicit session per terminal; process-wide resource budgets remain
+intentional. The animation example shares one session across both controllers.
+
+Viewport now clips prepared Kitty/glyph content without bitmap retransmission.
+It supports source-cell offsets in both axes, with clipping at layout bounds.
+Gloss still needs to map document regions into viewports and validate scrolling
+in its own native/browser layouts; this API alone does not migrate that policy.
 
 Retirement currently uses a per-Picture grace period and a bounded old-placement
 list. Validate native and browser visual transitions before replacing this with

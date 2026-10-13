@@ -13,10 +13,8 @@ import (
 )
 
 // KittyCapability reports whether the host terminal supports the Kitty
-// graphics protocol. The state is process-wide — terminal support is a
-// property of the tty, not of any individual Model — and shared by every
-// picture.Model, chartpicture.Model, heatpicture.Model, and
-// pictureurl.Model in the program.
+// graphics protocol. Legacy package helpers share process-wide state. Explicit
+// TerminalSession instances track support independently for each connection.
 type KittyCapability int8
 
 const (
@@ -231,8 +229,10 @@ func QueryKittySupport() tea.Cmd {
 //
 // Anything else returns false; consumers can override via
 // ForceKittyCapability if they have out-of-band knowledge.
-func kittyEnvSignal() bool {
-	if tmuxPassthroughEnabled.Load() {
+func kittyEnvSignal() bool { return kittyEnvSignalFor(tmuxPassthroughEnabled.Load()) }
+
+func kittyEnvSignalFor(tmux bool) bool {
+	if tmux {
 		return true
 	}
 	if os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("KITTY_INSTALLATION_DIR") != "" {

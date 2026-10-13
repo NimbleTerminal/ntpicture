@@ -142,6 +142,7 @@ type Model struct {
 	kittyFormat KittyFormat
 	kittyMedium KittyMedium
 	kittyShared *kittySharedState
+	transport   *kittyTransport // immutable settings captured for an explicit session
 
 	// lastRenderedGeom records the (cols, rows, cellPixelW, cellPixelH)
 	// of the most recently *applied* KittyFrame — i.e. the geometry
@@ -490,7 +491,7 @@ type applyKittyGridMsg struct {
 func IsPictureMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case KittyFrameMsg, applyKittyGridMsg, uv.CellSizeEvent, uv.KittyGraphicsEvent, kittyProbeTickMsg,
-		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg, KittyCapabilityMsg:
+		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg, KittyCapabilityMsg, TerminalSessionMsg, terminalSessionTick:
 		return true
 	}
 	return false
@@ -544,6 +545,9 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		m.kittyGrid = msg.grid
 		return nil
 	case uv.CellSizeEvent:
+		if msg.Width > 0 && msg.Height > 0 {
+			defaultTerminalSession.state.CellPixelWidth, defaultTerminalSession.state.CellPixelHeight = msg.Width, msg.Height
+		}
 		return m.SetCellPixelSize(msg.Width, msg.Height)
 	case uv.KittyGraphicsEvent:
 		return recordKittyResponse(msg)
@@ -642,6 +646,10 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 	anchor := m.anchor
 	format, medium, z := m.kittyFormat, m.kittyMedium, m.kittyZ
 	shared := m.kittyShared
+	transport := legacyTransport()
+	if m.transport != nil {
+		transport = *m.transport
+	}
 	shared.begin(seq)
 	// Apply kittyResolutionFactor to the cell-pixel dims used for the
 	// transmitted image. The placement rectangle (cols × rows cells) is
@@ -660,9 +668,9 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 		actualMedium, actualFormat := KittyMediumDirect, format
 		var apc string
 		var object *kittyshm.Object
-		if medium == KittyMediumSharedMemory && kittySharedUsable() {
+		if medium == KittyMediumSharedMemory && transport.shared {
 			var err error
-			apc, object, err = buildKittySharedMemoryAPC(prepared, id, cols, rows, z)
+			apc, object, err = transport.buildKittySharedMemoryAPC(prepared, id, cols, rows, z)
 			if err == nil {
 				actualMedium, actualFormat = KittyMediumSharedMemory, KittyFormatRGBA
 			}
@@ -671,7 +679,7 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 			// Yield around expensive direct encoding, including shared-memory
 			// fallback, so browser events can drain. Native yields are no-ops.
 			yieldToJS()
-			apc = buildKittyAPC(prepared, id, cols, rows, format, z)
+			apc = transport.buildKittyAPC(prepared, id, cols, rows, format, z)
 			yieldToJS()
 		}
 		if ctx.Err() != nil {
@@ -683,7 +691,7 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 		}
 		currGeom := kittyGeom{cols: cols, rows: rows, cellPixelW: cpw, cellPixelH: cph, fit: fit, anchor: anchor}
 		if prevGeom != (kittyGeom{}) && prevGeom != currGeom {
-			apc = kittyDeleteImage(id) + apc
+			apc = transport.kittyDeleteImage(id) + apc
 		}
 		grid := buildKittyGrid(cols, rows, id)
 		return KittyFrameMsg{modelID: modelID, ID: id, Seq: seq, APC: apc, Grid: grid, Format: actualFormat, Medium: actualMedium, sharedMemory: object}

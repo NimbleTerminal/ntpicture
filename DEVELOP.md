@@ -85,6 +85,9 @@ and result for these checks:
   unavailable, delayed consumption, and cleanup after cancellation or shutdown.
 - Browser host: check the actual booba/ghostty-web Canvas2D/WebGL output,
   registry consumption, resizing, and teardown with multiple pictures.
+- Sessions/viewports: share discovery across pictures, isolate independent
+  connections, scroll in both axes without bitmap retransmission, and verify
+  source offsets after resize, replacement, and keep-screen.
 - Lifecycle: exercise rapid updates and stale messages while closing/reopening
   pictures; ensure messages route only to their owning instance.
 
@@ -127,13 +130,15 @@ browser UI, not inferred from protocol tests.
   nimbleterminal.dev.
 
 The current animation demo requests shared memory and relies on the stable-ID
-default of `playback.New`; it does not set `Picture.StableID`. Its transport was not separately
+default of `playback.New`; it does not set `Picture.StableID`. Its transport was
+not separately
 instrumented in this UI run, so this is not proof that every frame used shared
 memory. The grid also requests shared memory. Independent automated checks
 passed for the actual booba bundle's PNG/RGBA/zlib pixels and shared-memory
 registry consumption (`task browser-check`), all four demo startup/input/resize/
 quit smoke checks and animation keep-screen, plus
-`task test-no-cgo` and `task test-wasm` (including cancellation, stable IDs, and registry cleanup).
+`task test-no-cgo` and `task test-wasm` (including cancellation, stable IDs, and
+registry cleanup).
 
 Remaining visual coverage: native Kitty, native shared memory and tmux; forced
 shared-memory failure/fallback in the browser; deterministic cancellation during

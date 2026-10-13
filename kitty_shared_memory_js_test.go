@@ -196,3 +196,33 @@ func TestStableIDBrowserSharedMemory(t *testing.T) {
 		t.Fatal("keep leaked registry or lost stream")
 	}
 }
+
+func TestTerminalSessionBrowserViewportAndFallback(t *testing.T) {
+	r := shmTestRegistry(t)
+	opts := sessionOptions(false)
+	opts.SharedMemory = KittyCapabilityUnknown
+	s := NewTerminalSession(opts)
+	defer s.Close()
+	p := New(Options{Session: s, Render: Config{Fit: FitFill, KittyMedium: KittyMediumSharedMemory}, RetireDelay: -1})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	drivePicture(t, p, p.SetSize(4, 4))
+	drivePicture(t, p, p.SetMode(PictureKitty))
+	drivePicture(t, p, p.SetImage(randomNRGBA(4, 8)))
+	if p.Status().Medium != KittyMediumSharedMemory || r.Get("size").Int() != 1 {
+		t.Fatal("session did not use browser registry")
+	}
+	p.SetViewport(Viewport{1, 1, 2, 2})
+	_ = p.View()
+	if r.Get("size").Int() != 1 || p.job != nil {
+		t.Fatal("viewport allocated a shared frame")
+	}
+	r.Set("set", js.Global().Get("Function").New("throw new Error('registry unavailable')"))
+	drivePicture(t, p, p.SetImage(randomNRGBA(4, 8)))
+	if p.Status().Medium != KittyMediumDirect {
+		t.Fatal("session lost direct fallback")
+	}
+	drivePicture(t, p, p.Close())
+	if r.Get("size").Int() != 0 {
+		t.Fatal("session picture leaked registry entry")
+	}
+}

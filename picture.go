@@ -51,8 +51,11 @@ func NextImageID() (int, error) {
 // Options configures a Picture. Render.KittyID is ignored: new placements
 // use NextID. The zero value renders glyphs until SetMode selects Kitty.
 type Options struct {
-	Render Config
-	NextID func() (int, error)
+	// Session shares discovery, cell geometry, and transport settings. Nil uses
+	// the legacy default. Explicit sessions supply initial cell geometry.
+	Session *TerminalSession
+	Render  Config
+	NextID  func() (int, error)
 	// ClearOnReplace removes old content immediately, as required for QR codes.
 	// Otherwise the displayed picture remains until its replacement is ready.
 	ClearOnReplace bool
@@ -101,6 +104,8 @@ type Picture struct {
 	cols, rows            int
 	visible, closed       bool
 	keptView              string
+	viewport              Viewport
+	viewportSet           bool
 	img                   image.Image
 	generation, presented uint64
 	front                 *picturePlacement
@@ -163,6 +168,10 @@ func New(opts Options) *Picture {
 	if opts.RetireDelay == 0 {
 		opts.RetireDelay = 50 * time.Millisecond
 	}
+	if opts.Session != nil {
+		state := opts.Session.Snapshot()
+		opts.Render.CellPixelWidth, opts.Render.CellPixelHeight = state.CellPixelWidth, state.CellPixelHeight
+	}
 	// Normalize all renderer defaults once and preserve them across replacements.
 	m := NewModelWithConfig(opts.Render)
 	opts.Render = m.config()
@@ -181,7 +190,7 @@ func (p *Picture) Init() tea.Cmd {
 	if p.closed {
 		return nil
 	}
-	return tea.Batch(RequestCellSize(), QueryKittySupport())
+	return p.session().Init()
 }
 func (p *Picture) Status() Status {
 	return Status{p.generation, p.presented, !p.closed && (p.job != nil || p.dirty), p.err, p.format, p.medium}
@@ -301,14 +310,14 @@ func (p *Picture) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	return p.changed()
 }
 
-// SetMode uses the legacy capability probe. Hosts with known capability can
+// SetMode uses the picture’s terminal session capability. Hosts with known capability can
 // use SetTerminal instead. An unavailable Kitty mode leaves the mode unchanged.
 func (p *Picture) SetMode(mode PictureMode) tea.Cmd {
 	if p.closed || mode == p.mode {
 		return nil
 	}
 	if mode == PictureKitty {
-		if err := KittyUnavailable(); err != nil {
+		if err := p.session().unavailable(); err != nil {
 			p.err = err
 			generation := p.generation
 			return func() tea.Msg { return ErrorMsg{p, generation, err} }
@@ -394,6 +403,8 @@ func (p *Picture) schedule() tea.Cmd {
 		cfg.KittyID = id
 	}
 	placement := &picturePlacement{model: NewModelWithConfig(cfg), image: p.img, generation: p.generation}
+	transport := p.session().transport()
+	placement.model.transport = &transport
 	placement.model.mode = p.mode
 	placement.model.cols, placement.model.rows = p.cols, p.rows
 	placement.active.Store(true)
@@ -404,7 +415,7 @@ func (p *Picture) schedule() tea.Cmd {
 			lease.active.Store(true)
 			placement.lease, placement.ownsID = lease, true
 		}
-		deleteImage := kittyDeleteImage(cfg.KittyID)
+		deleteImage := transport.kittyDeleteImage(cfg.KittyID)
 		placement.delete = func() tea.Msg {
 			if lease.active.Load() {
 				return nil
@@ -436,6 +447,23 @@ func (p *Picture) schedule() tea.Cmd {
 // work is drained before another preparation starts: cancellation never opens
 // an unbounded second worker. Unknown and foreign messages are ignored.
 func (p *Picture) Update(msg tea.Msg) tea.Cmd {
+	if p.opts.Session != nil {
+		terminal := false
+		switch v := msg.(type) {
+		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick:
+			terminal = true
+		case TerminalSessionMsg:
+			if v.Session != p.opts.Session {
+				return nil
+			}
+			terminal = true
+		}
+		if terminal {
+			cmd := p.opts.Session.Update(msg)
+			state := p.opts.Session.Snapshot()
+			return tea.Batch(cmd, p.SetTerminal(p.mode == PictureKitty, state.CellPixelWidth, state.CellPixelHeight))
+		}
+	}
 	switch v := msg.(type) {
 	case picturePrepared:
 		if v.owner != p || v.job != p.job {
@@ -519,6 +547,7 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		if v.Width <= 0 || v.Height <= 0 {
 			return nil
 		}
+		defaultTerminalSession.state.CellPixelWidth, defaultTerminalSession.state.CellPixelHeight = v.Width, v.Height
 		return p.SetTerminal(p.mode == PictureKitty, v.Width, v.Height)
 	case uv.KittyGraphicsEvent:
 		return recordKittyResponse(v)
@@ -610,6 +639,9 @@ func (p *Picture) View() string {
 	if p.closed || !p.visible || p.front == nil || p.cols == 0 || p.rows == 0 {
 		return ""
 	}
+	if p.viewportSet {
+		return p.viewportView()
+	}
 	if p.front.model.cols == p.cols && p.front.model.rows == p.rows {
 		return p.front.grid
 	}
@@ -685,6 +717,7 @@ func (p *Picture) Keep() tea.Cmd {
 	cfg := front.model.config()
 	cfg.KittyMedium = KittyMediumDirect
 	m := NewModelWithConfig(cfg)
+	m.transport = front.model.transport
 	m.mode, m.cols, m.rows = PictureKitty, front.model.cols, front.model.rows
 	m.img = front.image
 	render := m.renderCmdContext(context.Background())
@@ -724,4 +757,11 @@ func (p *Picture) Close() tea.Cmd {
 		p.job = nil
 	}
 	return tea.Batch(pending, p.clearFront(), p.clearRetired())
+}
+
+func (p *Picture) session() *TerminalSession {
+	if p.opts.Session != nil {
+		return p.opts.Session
+	}
+	return DefaultTerminalSession()
 }

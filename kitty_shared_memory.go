@@ -90,6 +90,10 @@ func recordKittySharedResponse(ok bool) {
 }
 
 func buildKittySharedMemoryAPC(img image.Image, id, cols, rows int, z ...int) (string, *kittyshm.Object, error) {
+	return legacyTransport().buildKittySharedMemoryAPC(img, id, cols, rows, z...)
+}
+
+func (transport kittyTransport) buildKittySharedMemoryAPC(img image.Image, id, cols, rows int, z ...int) (string, *kittyshm.Object, error) {
 	b := img.Bounds()
 	if b.Empty() {
 		return "", nil, fmt.Errorf("empty shared-memory image")
@@ -101,7 +105,7 @@ func buildKittySharedMemoryAPC(img image.Image, id, cols, rows int, z ...int) (s
 	if err != nil {
 		return "", nil, err
 	}
-	o := kittyRGBAOptions(b.Dx(), b.Dy(), id, cols, rows, z...)
+	o := transport.kittyRGBAOptions(b.Dx(), b.Dy(), id, cols, rows, z...)
 	o.Transmission = kitty.SharedMemory
 	o.Size = obj.Size
 	var buf bytes.Buffer
