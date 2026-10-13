@@ -397,3 +397,39 @@ func TestModel_ToggleBlocked(t *testing.T) {
 		t.Fatalf("Kitty mode: ToggleBlocked = %v, want nil", err)
 	}
 }
+
+func TestCapabilityResolutionNotifications(t *testing.T) {
+	resetKittyCapability(t)
+	p, q := New(Options{}), New(Options{})
+	defer p.Close()
+	defer q.Close()
+	timeout := p.Update(kittyProbeTickMsg{})
+	if timeout == nil || timeout().(KittyCapabilityMsg).Capability != KittyCapabilityUnsupported {
+		t.Fatal("missing timeout notification")
+	}
+	if q.Update(kittyProbeTickMsg{}) != nil {
+		t.Fatal("duplicate transition notification")
+	}
+	ev := uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}
+	supported := q.Update(ev)
+	if supported == nil || supported().(KittyCapabilityMsg).Capability != KittyCapabilitySupported {
+		t.Fatal("late positive reply not reported")
+	}
+	if p.Update(ev) != nil {
+		t.Fatal("multiple owners reported same transition")
+	}
+	if !IsPictureMsg(KittyCapabilityMsg{}) {
+		t.Fatal("notification not recognized")
+	}
+}
+
+func TestCapabilityQueryReportsKnownResult(t *testing.T) {
+	resetKittyCapability(t)
+	ForceKittyCapability(KittyCapabilityUnsupported)
+	for range 2 {
+		cmd := QueryKittySupport()
+		if cmd == nil || cmd().(KittyCapabilityMsg).Capability != KittyCapabilityUnsupported {
+			t.Fatal("known capability missing from query")
+		}
+	}
+}

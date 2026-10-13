@@ -13,6 +13,7 @@ type PictureMode = nt.PictureMode
 type FitMode = nt.FitMode
 type FitAnchor = nt.FitAnchor
 type KittyCapability = nt.KittyCapability
+type KittyCapabilityMsg = nt.KittyCapabilityMsg
 type KittyFormat = nt.KittyFormat
 type KittyMedium = nt.KittyMedium
 type KittyFrameMsg = nt.KittyFrameMsg

@@ -32,7 +32,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.pic.Update(msg), m.pic.SetSize(max(0, size.Width), max(0, size.Height-1)))
 	}
 	cmd := m.pic.Update(msg)
-	if nt.KittySupported() == nt.KittyCapabilitySupported && m.pic.Mode() != nt.PictureKitty {
+	if cap, ok := msg.(nt.KittyCapabilityMsg); ok && cap.Capability == nt.KittyCapabilitySupported && m.pic.Mode() != nt.PictureKitty {
 		return m, tea.Batch(cmd, m.pic.SetMode(nt.PictureKitty))
 	}
 	return m, cmd

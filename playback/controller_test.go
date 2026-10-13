@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"context"
 	"image"
+	picture "nimbleterminal.dev/ntpicture"
 	"nimbleterminal.dev/ntpicture/animation"
 	"reflect"
 	"testing"
@@ -137,5 +138,74 @@ func TestKeepCancelsCompositionAndPreservesFrame(t *testing.T) {
 	drive(t, c, c.Close())
 	if c.View() != view || c.SetPlayer(testPlayer(t)) != nil || c.Keep() != nil {
 		t.Fatal("keep not final")
+	}
+}
+
+func TestPlaybackStableIDDefaultAndOptOut(t *testing.T) {
+	for _, fresh := range []bool{false, true} {
+		ids := 0
+		c := New(testPlayer(t), Options{FreshIDs: fresh, Picture: picture.Options{NextID: func() (int, error) { ids++; return ids, nil }, RetireDelay: -1}})
+		c.Pause(true)
+		c.SetSize(2, 2)
+		c.SetTerminal(true, 1, 1)
+		drive(t, c, c.SetPlayer(c.player))
+		view := c.View()
+		drive(t, c, c.Seek(2))
+		if fresh {
+			if ids != 2 || c.View() == view {
+				t.Fatal("fresh-ID opt-out ignored")
+			}
+		} else if ids != 1 || c.View() != view {
+			t.Fatal("playback did not default to stable ID")
+		}
+		drive(t, c, c.Close())
+	}
+}
+
+func TestPlaybackDeadlineIncludesRenderTime(t *testing.T) {
+	now := time.Unix(100, 0)
+	var waits []time.Duration
+	c := New(testPlayer(t), Options{Wait: func(_ context.Context, d time.Duration) bool { waits = append(waits, d); now = now.Add(d); return true }})
+	c.now = func() time.Time { return now }
+	period := c.player.Delay()
+	overhead := period / 4
+	c.SetSize(2, 2)
+	var run func(tea.Cmd)
+	run = func(cmd tea.Cmd) {
+		if cmd == nil {
+			return
+		}
+		msg := cmd()
+		if msg == nil {
+			return
+		}
+		v := reflect.ValueOf(msg)
+		if v.Kind() == reflect.Slice {
+			for i := 0; i < v.Len(); i++ {
+				run(v.Index(i).Interface().(tea.Cmd))
+			}
+			return
+		}
+		if _, ok := msg.(result); ok {
+			now = now.Add(overhead)
+		}
+		run(c.Update(msg))
+	}
+	run(c.SetPlayer(c.player))
+	if len(waits) != 2 || waits[0] != period || waits[1] != period-overhead {
+		t.Fatalf("waits=%v, period=%v: work time was added to frame period", waits, period)
+	}
+	c.Close()
+}
+
+func TestPlaybackControlsResetDeadline(t *testing.T) {
+	c := New(testPlayer(t), Options{})
+	defer c.Close()
+	for _, change := range []func(){func() { c.Pause(true) }, func() { c.SetVisible(false) }, func() { c.SetRate(2) }, func() { c.Seek(1) }, func() { c.SetPlayer(testPlayer(t)) }} {
+		c.nextDue = time.Unix(123, 0)
+		change()
+		if !c.nextDue.IsZero() {
+			t.Fatal("control retained stale playback timeline")
+		}
 	}
 }

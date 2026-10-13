@@ -514,11 +514,16 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		p.retired = kept
 		return tea.Batch(append(cmds, p.retireLater())...)
 	case uv.CellSizeEvent:
+		// Some terminals return zero when pixel dimensions are unavailable.
+		// Ignore malformed reports without discarding an in-flight source.
+		if v.Width <= 0 || v.Height <= 0 {
+			return nil
+		}
 		return p.SetTerminal(p.mode == PictureKitty, v.Width, v.Height)
 	case uv.KittyGraphicsEvent:
-		recordKittyResponse(v)
+		return recordKittyResponse(v)
 	case kittyProbeTickMsg:
-		recordKittyTimeout()
+		return recordKittyTimeout()
 	}
 	return nil
 }
@@ -647,8 +652,9 @@ func fitGrid(grid string, cols, w, h int) string {
 
 // Keep permanently stops work while preserving the last presented View and
 // terminal image. Pending replacements and retired placements are discarded.
-// Run the returned command before quitting: Kitty content is retransmitted
-// directly so it survives release of process/browser shared-memory buffers.
+// Run the returned command before quitting. Shared-memory fronts are sent
+// directly to survive buffer release; direct fronts need no retransmission
+// unless an accepted stable-ID replacement may have overwritten their pixels.
 // The host owns final layout and main-screen selection; an alternate screen
 // normally disappears on exit. Subsequent Keep, Close and setters are no-ops.
 // Keep cancels pending preparation. In StableID mode its command drains any
@@ -666,6 +672,12 @@ func (p *Picture) Keep() tea.Cmd {
 	p.front = nil // Close must never delete the kept terminal ID.
 	cleanup := p.Close()
 	if front == nil || front.model.mode != PictureKitty {
+		return cleanup
+	}
+	if p.medium == KittyMediumDirect && outputDone == nil {
+		// The terminal already owns these pixels. Only shared-memory fronts or
+		// an accepted borrower of this ID need an exit-time retransmission.
+		_ = front.model.SetImage(nil)
 		return cleanup
 	}
 	// Capture the committed geometry and source, including during a resize.

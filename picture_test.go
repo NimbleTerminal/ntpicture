@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // Drive the actual Bubble Tea command tree, including its private sequence
@@ -319,8 +320,8 @@ func TestPictureKeepFreezesPresentedView(t *testing.T) {
 		}
 		if kitty {
 			raw := output(messages)
-			if strings.Contains(raw, kittyDeleteImage(front.model.kittyID)) || !strings.Contains(raw, "a=T") || strings.Contains(raw, "t=s") {
-				t.Fatalf("keep must retransmit directly without deleting front: %q", raw)
+			if strings.Contains(raw, kittyDeleteImage(front.model.kittyID)) || strings.Contains(raw, "a=T") != (p.medium == KittyMediumSharedMemory) || strings.Contains(raw, "t=s") {
+				t.Fatalf("keep must only retransmit shared fronts without deleting front: %q", raw)
 			}
 		}
 		if p.Close() != nil || p.Keep() != nil || p.SetImage(nil) != nil || p.SetSize(3, 3) != nil || p.SetVisible(false) != nil || p.View() != view {
@@ -353,5 +354,36 @@ func TestPictureKeepWithoutFront(t *testing.T) {
 	messages := drivePicture(t, p, pending)
 	if p.View() != "" || p.Status().Busy || strings.Contains(output(messages), "a=T") {
 		t.Fatal("keep displayed an unpresented image")
+	}
+}
+
+func TestPictureIgnoresInvalidCellReports(t *testing.T) {
+	p := testPicture(true)
+	pending := p.SetImage(testPixels(color.RGBA{R: 255, A: 255}))
+	job, generation := p.job, p.generation
+	for _, size := range []uv.CellSizeEvent{{Width: 0, Height: 0}, {Width: 8, Height: 0}, {Width: -1, Height: 16}} {
+		if p.Update(size) != nil || p.job != job || p.generation != generation || p.img == nil || p.Status().Err != nil || job.ctx.Err() != nil {
+			t.Fatal("invalid terminal report discarded source")
+		}
+	}
+	drivePicture(t, p, pending)
+	if p.View() == "" {
+		t.Fatal("initial image stalled")
+	}
+	drivePicture(t, p, p.Close())
+}
+
+func TestKeepDirectFrontNeedsNoTransmission(t *testing.T) {
+	for _, stable := range []bool{false, true} {
+		p := testPicture(true)
+		p.opts.StableID = stable
+		drivePicture(t, p, p.SetImage(testPixels(color.RGBA{A: 255})))
+		view := p.View()
+		if got := output(drivePicture(t, p, p.Keep())); got != "" {
+			t.Fatalf("direct keep emitted %q", got)
+		}
+		if p.View() != view {
+			t.Fatal("lost direct view")
+		}
 	}
 }

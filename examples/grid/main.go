@@ -127,7 +127,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, c)
 		}
 	}
-	if !m.autoSelected && picture.KittySupported() == picture.KittyCapabilitySupported {
+	if cap, ok := msg.(picture.KittyCapabilityMsg); ok && !m.autoSelected && cap.Capability == picture.KittyCapabilitySupported {
 		m.autoSelected = true
 		cmds = append(cmds, m.pic.SetMode(picture.PictureKitty))
 	}

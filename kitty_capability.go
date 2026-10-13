@@ -55,6 +55,17 @@ var (
 	kittyQueryOnce    sync.Once
 )
 
+// KittyCapabilityMsg reports probe resolution. Forward terminal messages to
+// Model.Update or Picture.Update and execute their commands to receive it.
+// A late positive reply can follow a timeout notification. Init/query also
+// reports an already-known capability, so hosts should handle duplicates.
+// ForceKittyCapability itself does not enqueue a Bubble Tea message.
+type KittyCapabilityMsg struct{ Capability KittyCapability }
+
+func kittyCapabilityCommand(c KittyCapability) tea.Cmd {
+	return func() tea.Msg { return KittyCapabilityMsg{Capability: c} }
+}
+
 // KittyEnvSignalled reports whether the env preflight saw a positive
 // indicator (TERM=xterm-{kitty,ghostty}, KITTY_*, GHOSTTY_*, WEZTERM_*,
 // recognized TERM_PROGRAM, or tmux passthrough enabled) at the time
@@ -128,8 +139,8 @@ type kittyProbeTickMsg struct{}
 
 // QueryKittySupport returns a Cmd that probes terminal Kitty graphics
 // support. The probe runs at most once per process via sync.Once;
-// subsequent calls return nil. Multiple Models can safely batch this
-// from their Init — only the first emission actually queries the
+// subsequent calls only report the capability when already known. Multiple
+// Models can safely batch this from their Init — only the first emission actually queries the
 // terminal.
 //
 // Pre-flight env check: most well-behaved terminals silently swallow
@@ -158,7 +169,8 @@ type kittyProbeTickMsg struct{}
 //     KittyCapabilityUnsupported.
 //
 // Both messages are intercepted by Model.Update — consumers that
-// forward every tea.Msg to Model.Update don't need to handle them.
+// forward every tea.Msg to Model.Update don't need to handle them. Run its
+// returned command to receive KittyCapabilityMsg when the result changes.
 //
 // Where this process can create shared-memory objects, the probe also
 // queries the t=s medium (even when the capability was forced to
@@ -197,6 +209,9 @@ func QueryKittySupport() tea.Cmd {
 			}),
 		)
 	})
+	if c := KittySupported(); c != KittyCapabilityUnknown {
+		return tea.Batch(cmd, kittyCapabilityCommand(c))
+	}
 	return cmd
 }
 
@@ -260,23 +275,29 @@ func buildKittyQueryAPC(id int) string {
 // immediately. Two CompareAndSwaps cover both starting states
 // (Unknown after probe-but-no-tick, Unsupported after tick-but-late-
 // response) without overriding a Forced(Supported) that's already set.
-func recordKittyResponse(ev uv.KittyGraphicsEvent) {
+func recordKittyResponse(ev uv.KittyGraphicsEvent) tea.Cmd {
 	if ev.Options.ID == kittySharedProbeID {
 		recordKittySharedResponse(string(ev.Payload) == "OK")
-		return
+		return nil
 	}
 	if ev.Options.ID != kittyProbeID {
-		return
+		return nil
 	}
-	if !kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilitySupported)) {
-		kittyCap.CompareAndSwap(int32(KittyCapabilityUnsupported), int32(KittyCapabilitySupported))
+	if kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilitySupported)) ||
+		kittyCap.CompareAndSwap(int32(KittyCapabilityUnsupported), int32(KittyCapabilitySupported)) {
+		return kittyCapabilityCommand(KittyCapabilitySupported)
 	}
+	return nil
 }
 
 // recordKittyTimeout marks Kitty unsupported if the probe window has
 // elapsed without a response. Idempotent and a no-op if the capability
 // was already resolved (by an earlier response or by ForceKittyCapability).
-func recordKittyTimeout() {
-	kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
+func recordKittyTimeout() tea.Cmd {
+	changed := kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
 	recordKittySharedResponse(false)
+	if changed {
+		return kittyCapabilityCommand(KittyCapabilityUnsupported)
+	}
+	return nil
 }

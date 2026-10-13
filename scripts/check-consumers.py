@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Test the extraction through NTCharts aliases without editing sibling repos.
 
-Requires sibling checkouts of ntcharts, ntcharts3d, ntqrcode and gloss. Copies
+Requires sibling checkouts of ntcharts, ntcharts3d, ntqrcode and gloss.
+Copies ntcanvas when present to preserve the current local canvas replacement. Copies
 tracked/unignored files into a temporary directory; all module edits stay there.
 """
 import argparse
@@ -46,6 +47,8 @@ def main():
         env.setdefault("GOCACHE", str(base / "go-cache"))
         for name in ("ntcharts", "ntcharts3d", "ntqrcode", "gloss"):
             copy_checkout(args.projects / name, base / name)
+        if (args.projects / "ntcanvas").is_dir():
+            copy_checkout(args.projects / "ntcanvas", base / "ntcanvas")
         picture = base / "ntcharts" / "picture"
         for path in picture.glob("*.go"):
             path.unlink()

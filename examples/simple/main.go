@@ -62,7 +62,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, c)
 	}
 
-	if picture.KittySupported() == picture.KittyCapabilitySupported && m.pic.Mode() != picture.PictureKitty {
+	if cap, ok := msg.(picture.KittyCapabilityMsg); ok && cap.Capability == picture.KittyCapabilitySupported && m.pic.Mode() != picture.PictureKitty {
 		cmds = append(cmds, m.pic.SetMode(picture.PictureKitty))
 	}
 	return m, tea.Batch(cmds...)

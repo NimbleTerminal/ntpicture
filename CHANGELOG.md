@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Default playback to stable Kitty IDs with a fresh-ID opt-out; carry frame
+  deadlines across rendering to avoid cumulative playback slowdown.
+- Report Kitty capability resolution as a Bubble Tea message and ignore invalid
+  terminal cell-size reports without dropping pending images.
+- Avoid resending direct Kitty fronts on keep-screen exit unless a pending
+  stable-ID transmission requires restoring the retained frame.
+
 - Add opt-in stable-ID Kitty streaming to avoid placeholder redraws each frame;
   preserve cancellation, resize cleanup, and keep-screen restoration.
 

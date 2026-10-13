@@ -490,7 +490,7 @@ type applyKittyGridMsg struct {
 func IsPictureMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case KittyFrameMsg, applyKittyGridMsg, uv.CellSizeEvent, uv.KittyGraphicsEvent, kittyProbeTickMsg,
-		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg:
+		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg, KittyCapabilityMsg:
 		return true
 	}
 	return false
@@ -546,11 +546,9 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case uv.CellSizeEvent:
 		return m.SetCellPixelSize(msg.Width, msg.Height)
 	case uv.KittyGraphicsEvent:
-		recordKittyResponse(msg)
-		return nil
+		return recordKittyResponse(msg)
 	case kittyProbeTickMsg:
-		recordKittyTimeout()
-		return nil
+		return recordKittyTimeout()
 	}
 	return nil
 }

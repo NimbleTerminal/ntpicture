@@ -16,6 +16,10 @@ type Wait func(context.Context, time.Duration) bool
 type Options struct {
 	Picture picture.Options
 	Wait    Wait
+	// FreshIDs opts out of the stable-ID default for playback. Use it when
+	// retaining independently transmitted old/new Kitty images is required.
+	// Picture.ClearOnReplace also overrides stable-ID reuse.
+	FreshIDs bool
 }
 type Status struct {
 	Player                 *animation.Player // Immutable current position; presentation may still be pending.
@@ -31,6 +35,8 @@ type Controller struct {
 	pic                               *picture.Picture
 	player                            *animation.Player
 	wait                              Wait
+	now                               func() time.Time
+	nextDue                           time.Time
 	job                               *job
 	pending                           *int
 	paused, finished, visible, closed bool
@@ -40,6 +46,7 @@ type Controller struct {
 type job struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	due    time.Time
 }
 type result struct {
 	owner  *Controller
@@ -53,7 +60,8 @@ func New(player *animation.Player, options Options) *Controller {
 	if options.Wait == nil {
 		options.Wait = wait
 	}
-	return &Controller{pic: picture.New(options.Picture), player: player, wait: options.Wait, visible: true, rate: 1}
+	options.Picture.StableID = !options.FreshIDs
+	return &Controller{now: time.Now, pic: picture.New(options.Picture), player: player, wait: options.Wait, visible: true, rate: 1}
 }
 func wait(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
@@ -77,6 +85,7 @@ func (c *Controller) Status() Status {
 }
 func (c *Controller) View() string { return c.pic.View() }
 func (c *Controller) cancel() {
+	c.nextDue = time.Time{}
 	if c.job != nil {
 		c.job.cancel()
 	}
@@ -157,14 +166,20 @@ func (c *Controller) schedule() tea.Cmd {
 	}
 	c.pending = nil
 	ctx, cancel := context.WithCancel(context.Background())
-	j := &job{ctx, cancel}
+	j := &job{ctx: ctx, cancel: cancel}
 	c.job = j
-	p, waiter, delay := c.player, c.wait, time.Duration(float64(c.player.Delay())/c.rate)
+	p, waiter, now := c.player, c.wait, c.now
+	if target == nil {
+		if c.nextDue.IsZero() {
+			c.nextDue = now().Add(time.Duration(float64(p.Delay()) / c.rate))
+		}
+		j.due = c.nextDue
+	}
 	return func() tea.Msg {
 		out := result{owner: c, job: j, more: true}
 		if target != nil {
 			out.player, out.err = p.Seek(ctx, *target)
-		} else if waiter(ctx, delay) {
+		} else if waiter(ctx, max(0, j.due.Sub(now()))) {
 			out.player, out.more, out.err = p.NextContext(ctx)
 		} else {
 			out.err = context.Canceled
@@ -190,6 +205,17 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 				c.player = m.player
 				c.finished = !m.more
 				if m.more {
+					if !m.job.due.IsZero() {
+						// Carry the timeline through composition and transmission.
+						// If composition alone overruns, rebase rather than building
+						// an unbounded catch-up debt. Never skip frames or overlap jobs.
+						base := m.job.due
+						delay := time.Duration(float64(m.player.Delay()) / c.rate)
+						c.nextDue = base.Add(delay)
+						if c.nextDue.Before(c.now()) {
+							c.nextDue = c.now()
+						}
+					}
 					cmds = append(cmds, c.pic.SetImageImmutable(m.player.Image()))
 				}
 			}
