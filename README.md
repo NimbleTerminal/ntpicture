@@ -4,8 +4,8 @@ A reusable terminal image component for Bubble Tea v2. Module:
 `nimbleterminal.dev/ntpicture`.
 
 This is an unreleased extraction from NTCharts and Gloss. `Picture` handles
-still images and continuously supplied frames. `animation` decodes GIF/WebP
-and composes playback positions; `playback` schedules them through a Picture.
+still images and continuously supplied frames. `animation` decodes GIF/WebP and
+composes playback positions; `playback` schedules them through a Picture.
 
 ```go
 pic := ntpicture.New(ntpicture.Options{
@@ -24,8 +24,8 @@ cmd = pic.SetMode(ntpicture.PictureKitty)
 cmd = tea.Sequence(pic.Close(), tea.Quit)
 ```
 
-Run `task run-still` for a native gradient example. `q` quits with
-placement cleanup. The host owns keys, layout, loading/error UI and visibility.
+Run `task run-still` for a native gradient example. `q` quits with placement
+cleanup. The host owns keys, layout, loading/error UI and visibility.
 
 ## Picture ownership and replacement
 
@@ -46,18 +46,21 @@ concurrency bounded. At most two old placements are held for delayed retirement.
 this policy and should retain their own exact module rasterization and custom
 glyph output. Rendering options survive every replacement.
 
-For continuously supplied mesh/framebuffer images, set `Options.StableID: true`.
-Kitty frames then reuse the displayed image ID while cell dimensions and cell
-pixel geometry remain unchanged. The placeholder string stays identical, so
-Bubble Tea can skip redrawing it and transmit only the image update. Each
-Picture has its own ID; resize, hiding/clearing, and committed mode changes
-require a new placement. `ClearOnReplace` takes precedence.
+Standalone `Picture` uses fresh IDs by default. For continuously supplied
+mesh/framebuffer images, set `Options.StableID: true`. `playback.New` uses
+stable IDs by default; set `playback.Options{FreshIDs: true}` to opt out. With stable IDs, Kitty
+frames reuse the displayed image ID while cell dimensions and cell pixel
+geometry remain unchanged. The placeholder string stays identical, so Bubble Tea
+can skip redrawing it and transmit only the image update. Each Picture has its
+own ID; resize, hiding/clearing, and committed mode changes require a new
+placement. `ClearOnReplace` takes precedence.
 
 Streaming updates terminal pixels as soon as the transmission arrives, before
-`PresentedMsg`. Cancellation rejects pending work but cannot recall bytes already
-sent. Keep restores the last committed frame after accepted output drains. The
-default fresh-ID behavior still retains the old image independently during a
-replacement. Neither mode changes the configured image encoding or resolution.
+`PresentedMsg`. Cancellation rejects pending work but cannot recall bytes
+already sent. Keep restores the last committed frame after accepted output
+drains. Fresh-ID replacement retains the old image independently
+during a replacement. Neither mode changes the configured image encoding or
+resolution.
 
 `PresentedMsg` identifies its `Owner` and committed `Generation`; it means the
 ordered output/grid sequence completed, not that the terminal acknowledged
@@ -67,29 +70,25 @@ transport. Superseded generations are not presented; a producer coalescing its
 own requests should track the newest `Status().Generation`.
 
 `SetVisible(false)` cancels work and removes placements while retaining the
-source. `Close` is final and idempotent. Local resources are released even if its
-command is not run, but terminal deletion requires running that command. An
+source. `Close` is final and idempotent. Local resources are released even if
+its command is not run, but terminal deletion requires running that command. An
 accepted transmission carries a cleanup guard for removal races. No component
 clears other images globally.
 
 `Keep()` is a final alternative to `Close()` for still images, mesh frames, and
 playback controllers. It cancels pending replacements and freezes the last
-presented view. Return `tea.Sequence(pic.Keep(), tea.Quit)` and include that view
-in the application's final main-screen layout. Kitty content is retransmitted
-directly before exit when shared buffers must be released or an accepted
-streaming update must be undone. Direct fronts otherwise send no image on exit;
-glyph content stays in the final view. Run the returned command. A subsequent `Close()` is a no-op.
-The host controls screen selection, help removal, and space for the shell prompt.
+presented view. Return `tea.Sequence(pic.Keep(), tea.Quit)` and include that
+view in the application's final main-screen layout. Kitty content is
+retransmitted directly before exit when shared buffers must be released or an
+accepted streaming update must be undone. Direct fronts otherwise send no image
+on exit; glyph content stays in the final view. Run the returned command. A
+subsequent `Close()` is a no-op. The host controls screen selection, help
+removal, and space for the shell prompt.
 
 Default image IDs start at a randomized offset to reduce collisions with images
-kept by previous processes. This is best effort, not a cross-process reservation;
-applications needing guaranteed uniqueness must provide a shared `NextID` policy.
-
-`playback.New` enables stable-ID streaming by default. Set
-`playback.Options{FreshIDs: true}` to retain separate IDs for replacements;
-`Picture.ClearOnReplace` still takes precedence. Standalone `Picture` retains
-its fresh-ID default for still-image replacement; framebuffer producers should
-opt into `StableID` explicitly.
+kept by previous processes. This is best effort, not a cross-process
+reservation; applications needing guaranteed uniqueness must provide a shared
+`NextID` policy.
 
 Playback carries a frame deadline across composition, encoding, and output,
 waiting only for the remaining interval. Presentation still gates the next job.
@@ -101,8 +100,8 @@ debt; slow rendering can still limit the achievable frame rate.
 
 Kitty PNG, raw RGBA, zlib and shared-memory output retain the NTCharts wire
 format. Glyph output uses colored half blocks. Fit contain/fill/cover, anchors,
-cell pixel dimensions, placement depth and resolution factors are supported.
-The exact-size `FitFill` path bypasses resampling.
+cell pixel dimensions, placement depth and resolution factors are supported. The
+exact-size `FitFill` path bypasses resampling.
 
 `Picture` bounds source and prepared images to 32 Mi pixels and validates Kitty
 placeholder dimensions. This is a pixel bound, not a total RAM budget: source,
@@ -114,13 +113,13 @@ capability and geometry. It does not probe. Otherwise run `Init`, route replies,
 and select Kitty on `KittyCapabilityMsg{Capability: KittyCapabilitySupported}`.
 The message also reports timeouts and already-known results; handle duplicates
 and late positive replies. Invalid terminal cell-size reports are ignored, while
-explicit `SetTerminal` calls still validate their inputs. The extracted
-legacy probe and tmux settings are still process-global in this milestone.
+explicit `SetTerminal` calls still validate their inputs. The extracted legacy
+probe and tmux settings are still process-global in this milestone.
 
 Shared memory uses the unchanged browser registry
 `globalThis.ghosttyKittySharedMemory` (`Map<string, Uint8Array>`), Linux named
-objects, or macOS POSIX shared memory with CGO. Creation/probe failures fall back
-to the configured direct format. Native pending objects retain the 64 MiB
+objects, or macOS POSIX shared memory with CGO. Creation/probe failures fall
+back to the configured direct format. Native pending objects retain the 64 MiB
 process cap and abandoned-retirement grace. Browser producer accounting has not
 yet been strengthened beyond the extracted implementation.
 
@@ -128,8 +127,7 @@ Image ID allocation returns **one** fresh positive 24-bit ID per call, not a
 block. By default all `Picture` instances share `NextImageID`. Hosts mixing
 legacy pictures, QR codes and new pictures must supply/use one allocator across
 all of them. IDs do not wrap or recycle; exhaustion returns
-`ErrImageIDExhausted`. Stable-ID streams allocate again only when a new
-placement is needed, such as after a resize or hide/show cycle.
+`ErrImageIDExhausted`.
 
 ## Compatibility and migration
 
@@ -169,8 +167,8 @@ cmd = ctrl.Close()    // cancel work and retire placements; execute this command
 ```
 
 GIF frames stay paletted; WebP frames decode lazily. Both honor frame delays,
-rectangles, transparency, disposal, and loop counts. Decoding defaults to
-128 MiB input, 32 Mi canvas pixels, 1,000 frames, and 64 MiB GIF frame storage.
+rectangles, transparency, disposal, and loop counts. Decoding defaults to 128
+MiB input, 32 Mi canvas pixels, 1,000 frames, and 64 MiB GIF frame storage.
 `animation.Options.Limits` can tighten these ceilings; zero selects defaults.
 Lazy failures identify the frame and pause playback through `ctrl.Status().Err`.
 Hosts still own controls, visibility decisions, and aggregate resource budgets.
@@ -184,12 +182,13 @@ task serve-wasm-site      # http://localhost:8000/web/
 
 The site runs four examples locally in the browser through booba: a generated
 still image, the embedded-image viewer ported from NTCharts, its interactive
-`GridImage` board, and side-by-side GIF/WebP playback from Gloss. The same programs run natively. Use arrows/WASD/HJKL in the
-grid, `g` to switch rendering modes, and `q` to quit. Restart reloads a fresh
-browser session. Booba action buttons above the terminal come from the same Go
-help bindings as the keyboard controls; the grid exposes movement and, when
-Kitty is available, rendering mode. Animation exposes play/pause, frame stepping,
-and first-frame seeking. More includes Quit.
+`GridImage` board, and side-by-side GIF/WebP playback from Gloss. The same
+programs run natively. Use arrows/WASD/HJKL in the grid, `g` to switch rendering
+modes, and `q` to quit. Restart reloads a fresh browser session. Booba action
+buttons above the terminal come from the same Go help bindings as the keyboard
+controls; the grid exposes movement and, when Kitty is available, rendering
+mode. Animation exposes play/pause, frame stepping, first-frame seeking, and
+keep-screen exit. Use the keyboard’s `q` to clear and quit the animation demo.
 
 Examples have their own Go module; booba stays out of the library's dependency
 graph. The NTCharts URL, heatmap, and chart adapters remain NTCharts examples.
@@ -206,20 +205,20 @@ vulnerability scans. `task test` runs native tests without querying the
 vulnerability database. See [DEVELOP.md](./DEVELOP.md) for consumer checks,
 manual acceptance checks, and release preparation.
 
-Contributions and feedback are welcome. Please follow our
-[Code of Conduct](./CODE_OF_CONDUCT.md).
+Contributions and feedback are welcome. Please follow our [Code of
+Conduct](./CODE_OF_CONDUCT.md).
 
 - [Report an issue](https://github.com/NimbleTerminal/ntpicture/issues)
 - [Submit a pull request](https://github.com/NimbleTerminal/ntpicture/pulls)
 
 ## Acknowledgements
 
-ntpicture grows out of [NTCharts](https://github.com/NimbleMarkets/ntcharts)
-and the image presentation work in Gloss. Thanks to
-[Charm](https://charm.sh/) for Bubble Tea and its terminal libraries,
-[pixterm](https://github.com/NimbleMarkets/pixterm) for the earlier glyph renderer, and
-[go-booba](https://github.com/NimbleMarkets/go-booba) for the browser runtime
-and image registry integration.
+ntpicture grows out of [NTCharts](https://github.com/NimbleMarkets/ntcharts) and
+the image presentation work in Gloss. Thanks to [Charm](https://charm.sh/) for
+Bubble Tea and its terminal libraries,
+[pixterm](https://github.com/NimbleMarkets/pixterm) for the earlier glyph
+renderer, and [go-booba](https://github.com/NimbleMarkets/go-booba) for the
+browser runtime and image registry integration.
 
 ## License
 
@@ -227,8 +226,8 @@ Source code: [MIT License](./LICENSE). Artwork exceptions are listed in
 [NOTICE.md](./NOTICE.md); dependency licenses are in
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-Copyright (c) 2024–2026
-[Neomantra Corp](https://www.neomantra.com).
+Copyright (c) 2024–2026 [Neomantra Corp](https://www.neomantra.com).
 
 ----
-Made with :heart: and :fire: by the team behind [Nimble Terminal](https://nimbleterminal.dev).
+Made with :heart: and :fire: by the team behind [Nimble
+Terminal](https://nimbleterminal.dev).
