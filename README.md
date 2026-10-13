@@ -76,13 +76,26 @@ clears other images globally.
 playback controllers. It cancels pending replacements and freezes the last
 presented view. Return `tea.Sequence(pic.Keep(), tea.Quit)` and include that view
 in the application's final main-screen layout. Kitty content is retransmitted
-directly before exit, releasing shared-memory buffers; glyph content stays in
-the final view. Run the returned command. A subsequent `Close()` is a no-op.
+directly before exit when shared buffers must be released or an accepted
+streaming update must be undone. Direct fronts otherwise send no image on exit;
+glyph content stays in the final view. Run the returned command. A subsequent `Close()` is a no-op.
 The host controls screen selection, help removal, and space for the shell prompt.
 
 Default image IDs start at a randomized offset to reduce collisions with images
 kept by previous processes. This is best effort, not a cross-process reservation;
 applications needing guaranteed uniqueness must provide a shared `NextID` policy.
+
+`playback.New` enables stable-ID streaming by default. Set
+`playback.Options{FreshIDs: true}` to retain separate IDs for replacements;
+`Picture.ClearOnReplace` still takes precedence. Standalone `Picture` retains
+its fresh-ID default for still-image replacement; framebuffer producers should
+opt into `StableID` explicitly.
+
+Playback carries a frame deadline across composition, encoding, and output,
+waiting only for the remaining interval. Presentation still gates the next job.
+Pause, seek, visibility changes, source replacement, and rate changes reset the
+timeline. Overruns do not create overlapping workers or an accumulating catch-up
+debt; slow rendering can still limit the achievable frame rate.
 
 ## Geometry and transport
 
@@ -98,7 +111,10 @@ aggregate document budgets.
 
 Use `SetTerminal(kitty, cellWidth, cellHeight)` when the host already knows its
 capability and geometry. It does not probe. Otherwise run `Init`, route replies,
-and choose Kitty after `KittySupported()` becomes affirmative. The extracted
+and select Kitty on `KittyCapabilityMsg{Capability: KittyCapabilitySupported}`.
+The message also reports timeouts and already-known results; handle duplicates
+and late positive replies. Invalid terminal cell-size reports are ignored, while
+explicit `SetTerminal` calls still validate their inputs. The extracted
 legacy probe and tmux settings are still process-global in this milestone.
 
 Shared memory uses the unchanged browser registry
@@ -112,7 +128,8 @@ Image ID allocation returns **one** fresh positive 24-bit ID per call, not a
 block. By default all `Picture` instances share `NextImageID`. Hosts mixing
 legacy pictures, QR codes and new pictures must supply/use one allocator across
 all of them. IDs do not wrap or recycle; exhaustion returns
-`ErrImageIDExhausted`. Long-running high-rate ID reuse is a later decision.
+`ErrImageIDExhausted`. Stable-ID streams allocate again only when a new
+placement is needed, such as after a resize or hide/show cycle.
 
 ## Compatibility and migration
 
@@ -200,7 +217,7 @@ Contributions and feedback are welcome. Please follow our
 ntpicture grows out of [NTCharts](https://github.com/NimbleMarkets/ntcharts)
 and the image presentation work in Gloss. Thanks to
 [Charm](https://charm.sh/) for Bubble Tea and its terminal libraries,
-[pixterm](https://github.com/NimbleMarkets/pixterm) for glyph rendering, and
+[pixterm](https://github.com/NimbleMarkets/pixterm) for the earlier glyph renderer, and
 [go-booba](https://github.com/NimbleMarkets/go-booba) for the browser runtime
 and image registry integration.
 
@@ -214,4 +231,4 @@ Copyright (c) 2024–2026
 [Neomantra Corp](https://www.neomantra.com).
 
 ----
-Made with :heart: and :fire: by the team behind [Nimble.Markets](https://nimble.markets).
+Made with :heart: and :fire: by the team behind [Nimble Terminal](https://nimbleterminal.dev).

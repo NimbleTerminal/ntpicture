@@ -21,7 +21,7 @@ if (demo === 'grid') {
   document.querySelector('#help').textContent = 'Arrows / WASD / HJKL move · g toggles glyph/Kitty · q quits. Click the terminal to focus.';
 }
 if (demo === 'animation') {
-  document.querySelector('#help').textContent = 'Space pauses/plays both clips · comma/period steps · Home returns to frame one · q quits. Buttons above send the same controls.';
+  document.querySelector('#help').textContent = 'Space pauses/plays both clips · comma/period steps · Home returns to frame one · Q keeps the screen and quits · q clears and quits. Buttons above send the same controls.';
 }
 function failed(error) {
   status.dataset.error = '';

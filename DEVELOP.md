@@ -85,8 +85,8 @@ and result for these checks:
 - Lifecycle: exercise rapid updates and stale messages while closing/reopening
   pictures; ensure messages route only to their owning instance.
 
-Unit tests cover stale results, geometry, encoding, and cleanup. Manual results
-are not yet recorded for this extracted module. Animation acceptance also covers GIF/WebP pause/resume, loop completion,
+Unit tests cover stale results, geometry, encoding, and cleanup. The first browser visual results and remaining native checks are recorded in
+[MIGRATION.md](./MIGRATION.md#visual-verification-2026-10-12). Animation acceptance also covers GIF/WebP pause/resume, loop completion,
 frame seeking, lazy failure reporting, and two simultaneously playing pictures.
 
 ## Releases
