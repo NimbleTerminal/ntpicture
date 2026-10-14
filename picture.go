@@ -68,6 +68,11 @@ type Options struct {
 	// RetireDelay defaults to 50ms. A negative duration means immediate retirement.
 	// This is a Bubble Tea frame-ordering grace period, not a terminal acknowledgement.
 	RetireDelay time.Duration
+	// HostGeometry makes Update ignore terminal events: cell-size reports, Kitty
+	// replies, probe ticks and session notifications. The host forwards them to
+	// its TerminalSession (or DefaultTerminalSession) and applies geometry with
+	// SetTerminal or Submit, so a stale raster is never re-prepared first.
+	HostGeometry bool
 }
 
 // Status is an event-loop snapshot. Presented identifies the last committed
@@ -212,10 +217,13 @@ func (p *Picture) SetImage(img image.Image) tea.Cmd {
 	if err := checkImage(img); err != nil {
 		return p.failSubmission(err)
 	}
+	return p.SetImageImmutable(snapshotImage(img))
+}
+func snapshotImage(img image.Image) *image.RGBA {
 	b := img.Bounds()
 	snapshot := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
 	draw.Draw(snapshot, snapshot.Bounds(), imageview.Unwrap(img), b.Min, draw.Src)
-	return p.SetImageImmutable(snapshot)
+	return snapshot
 }
 
 // SetImageImmutable avoids a pixel copy. The caller promises never to mutate
@@ -482,6 +490,12 @@ func (p *Picture) schedule() tea.Cmd {
 // work is drained before another preparation starts: cancellation never opens
 // an unbounded second worker. Unknown and foreign messages are ignored.
 func (p *Picture) Update(msg tea.Msg) tea.Cmd {
+	if p.opts.HostGeometry {
+		switch msg.(type) {
+		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, kittyProbeTickMsg, TerminalSessionMsg:
+			return nil
+		}
+	}
 	if p.opts.Session != nil {
 		terminal := false
 		switch v := msg.(type) {

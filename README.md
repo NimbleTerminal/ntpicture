@@ -46,6 +46,33 @@ concurrency bounded. At most two old placements are held for delayed retirement.
 this policy and should retain their own exact module rasterization and custom
 glyph output. Rendering options survive every replacement.
 
+Exact-pixel producers such as QR codes and framebuffers can submit an image
+with its geometry in one call. `Submit` validates the cell layout, mode, cell
+pixel size and image together, then applies them as a single generation; a
+rejection reports `ErrorMsg` and changes none of them. `Exact` rejects an image
+whose bounds differ from the resulting `RasterGeometry().Pixels` instead of
+resampling it. A nil `Image` clears at the new geometry.
+
+```go
+pic := ntpicture.New(ntpicture.Options{
+    Render:         ntpicture.Config{Fit: ntpicture.FitFill},
+    ClearOnReplace: true,
+    HostGeometry:   true, // Update ignores terminal events
+})
+// In Update, after the host has rebuilt modules for the new geometry:
+cmd := pic.Submit(ntpicture.Frame{
+    Image: modules, Cols: cols, Rows: rows,
+    Mode: ntpicture.PictureKitty, CellWidth: cw, CellHeight: ch,
+    Exact: true,
+})
+```
+
+`Options.HostGeometry` makes `Update` handle only the picture's own messages.
+Cell-size reports, Kitty replies, probe ticks and `TerminalSessionMsg` are
+ignored, so a resize never re-prepares the old raster. The host forwards those
+events to its `TerminalSession` (or `DefaultTerminalSession()`), reads
+`Snapshot`, and applies geometry through `Submit` or `SetTerminal`.
+
 Standalone `Picture` uses fresh IDs by default. For continuously supplied
 mesh/framebuffer images, set `Options.StableID: true`. `playback.New` uses
 stable IDs by default; set `playback.Options{FreshIDs: true}` to opt out.

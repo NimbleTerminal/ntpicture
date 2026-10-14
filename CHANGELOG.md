@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `Picture.Submit` to validate and apply an image with its cell layout,
+  mode and cell pixel geometry as one generation, with an `Exact` option that
+  rejects mis-sized rasters instead of resampling them. Add
+  `Options.HostGeometry` so hosts that manage terminal geometry can keep
+  `Update` from reacting to terminal events.
+
 - Restore ordinary `FitCover` preparation speed by using the separable scaler
   while the circumscribed rectangle is at most four times the visible target,
   keeping bounded allocation for extreme aspect mismatches.

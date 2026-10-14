@@ -187,7 +187,9 @@ state, frame snapshots, quality adaptation, framebuffer cap, camera and fallback
 policy. The inspected local NTCharts3d checkout now imports ntcanvas for its
 wireframe renderer through a sibling replace directive; the temporary consumer
 harness copies that sibling too. QR keeps direct module glyphs, the quiet zone,
-unfiltered pixels and immediate clearing on failed fit.
+unfiltered pixels and immediate clearing on failed fit. QR can replace its
+geometry-event interception and clear/SetTerminal/SetImage sequence with
+`Options.HostGeometry` and one `Submit(Frame{..., Exact: true})`.
 
 Validate the complete native/glyph/browser and cleanup matrix before removing
 old implementations. Use each repository's documented CI and generated-artifact
