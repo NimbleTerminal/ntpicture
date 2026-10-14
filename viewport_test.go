@@ -82,18 +82,75 @@ func TestViewportPendingReplacementResizeAndKeep(t *testing.T) {
 
 func TestViewportBounds(t *testing.T) {
 	for _, tc := range []struct {
-		v    Viewport
-		want image.Rectangle
+		cols, rows int
+		v          Viewport
+		want       image.Rectangle
 	}{
-		{Viewport{1, 2, 3, 4}, image.Rect(1, 2, 4, 6)},
-		{Viewport{-1, -2, 3, 4}, image.Rect(0, 0, 2, 2)},
-		{Viewport{10, 0, 3, 4}, image.Rectangle{}},
-		{Viewport{0, 0, 0, 4}, image.Rectangle{}},
-		{Viewport{-10, -10, 2, 2}, image.Rectangle{}},
-		{Viewport{1, 1, int(^uint(0) >> 1), int(^uint(0) >> 1)}, image.Rect(1, 1, 10, 10)},
+		{10, 10, Viewport{1, 2, 3, 4}, image.Rect(1, 2, 4, 6)},
+		{10, 10, Viewport{-1, -2, 3, 4}, image.Rect(0, 0, 2, 2)},
+		{10, 10, Viewport{10, 0, 3, 4}, image.Rectangle{}},
+		{10, 10, Viewport{0, 0, 0, 4}, image.Rectangle{}},
+		{10, 10, Viewport{-10, -10, 2, 2}, image.Rectangle{}},
+		{10, 10, Viewport{1, 1, int(^uint(0) >> 1), int(^uint(0) >> 1)}, image.Rect(1, 1, 10, 10)},
+		{0, 0, Viewport{-2, -1, 6, 5}, image.Rectangle{}},
+		{5, -85, Viewport{-2, -127, 6, 137}, image.Rectangle{}},
 	} {
-		if got := tc.v.bounds(10, 10); got != tc.want {
-			t.Fatalf("%+v: %v != %v", tc.v, got, tc.want)
+		if got := tc.v.bounds(tc.cols, tc.rows); got != tc.want {
+			t.Fatalf("(%d,%d) %+v: %v != %v", tc.cols, tc.rows, tc.v, got, tc.want)
 		}
 	}
+}
+
+func FuzzViewportAndGeometry(f *testing.F) {
+	f.Add(10, 10, 1, 2, 3, 4, 8, 16, uint8(0), uint8(0), false)
+	f.Add(5, 4, -2, -1, 6, 5, 3, 7, uint8(1), uint8(2), true)
+	f.Add(0, 0, -100, 100, 50, 50, 1, 1, uint8(2), uint8(4), true)
+	f.Add(5, -85, -2, -127, 6, 137, 1, 1, uint8(0), uint8(0), false)
+	f.Fuzz(func(t *testing.T, cols, rows, vx, vy, vw, vh, srcW, srcH int, fit, anchor uint8, kittyMode bool) {
+		v := Viewport{X: vx, Y: vy, Width: vw, Height: vh}
+		rect := v.bounds(cols, rows)
+		if cols <= 0 || rows <= 0 || vw <= 0 || vh <= 0 {
+			if !rect.Empty() {
+				t.Fatalf("non-empty bounds %v for cols=%d rows=%d v=%+v", rect, cols, rows, v)
+			}
+		} else if !rect.Empty() {
+			if !rect.In(image.Rect(0, 0, cols, rows)) || rect.Dx() > vw || rect.Dy() > vh {
+				t.Fatalf("bounds %v out of range for cols=%d rows=%d v=%+v", rect, cols, rows, v)
+			}
+		}
+
+		c := cols % 9
+		r := rows % 9
+		sw := (srcW & 7) + 1
+		sh := (srcH & 7) + 1
+		p := New(Options{
+			Render: Config{
+				Fit:    FitMode(fit % 4),
+				Anchor: FitAnchor(anchor % 6),
+			},
+			RetireDelay: -1,
+		})
+		if kittyMode {
+			drivePicture(t, p, p.SetMode(PictureKitty))
+		}
+		drivePicture(t, p, p.SetSize(c, r))
+		drivePicture(t, p, p.SetImage(randomNRGBA(sw, sh)))
+		p.SetViewport(v)
+		view := p.View()
+		expected := v.bounds(c, r)
+		if c <= 0 || r <= 0 || expected.Empty() {
+			if view != "" {
+				t.Fatalf("expected empty view, got %q", view)
+			}
+		} else if gotLines := strings.Count(view, "\n") + 1; gotLines != expected.Dy() {
+			t.Fatalf("lines %d != %d", gotLines, expected.Dy())
+		}
+		geom := p.RasterGeometry()
+		if c > 0 && r > 0 {
+			if geom.Pixels.X <= 0 || geom.Pixels.Y <= 0 || geom.DisplayAspect <= 0 {
+				t.Fatalf("invalid geometry: %+v", geom)
+			}
+		}
+		drivePicture(t, p, p.Close())
+	})
 }

@@ -31,7 +31,7 @@ func (p *Picture) ResetViewport() {
 
 func (v Viewport) bounds(cols, rows int) image.Rectangle {
 	// Clamp before adding sizes, avoiding overflow for arbitrary caller inputs.
-	if v.Width <= 0 || v.Height <= 0 || v.X >= cols || v.Y >= rows {
+	if cols <= 0 || rows <= 0 || v.Width <= 0 || v.Height <= 0 || v.X >= cols || v.Y >= rows {
 		return image.Rectangle{}
 	}
 	if v.X < 0 {

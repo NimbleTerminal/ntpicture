@@ -382,3 +382,72 @@ func TestPauseAndSetRatePreserveInFlightSeekAndRestart(t *testing.T) {
 		t.Fatalf("in-flight restart was dropped by SetRate: frame=%d paused=%v", c.Status().Player.Frame(), c.Status().Paused)
 	}
 }
+
+func FuzzControllerActions(f *testing.F) {
+	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+	f.Add([]byte{3, 2, 1, 4, 3, 6, 5, 0, 8, 11})
+	f.Fuzz(func(t *testing.T, ops []byte) {
+		if len(ops) > 64 {
+			ops = ops[:64]
+		}
+		c := New(testPlayer(t), Options{
+			Wait:    func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
+			Picture: picture.Options{RetireDelay: -1},
+		})
+		var queue []tea.Cmd
+		enqueue := func(cmd tea.Cmd) {
+			if cmd != nil {
+				queue = append(queue, cmd)
+			}
+		}
+		flushOne := func() {
+			if len(queue) == 0 {
+				return
+			}
+			cmd := queue[0]
+			queue = queue[1:]
+			drive(t, c, cmd)
+		}
+		enqueue(c.Init())
+		for _, op := range ops {
+			switch op % 12 {
+			case 0:
+				flushOne()
+			case 1:
+				enqueue(c.Pause(op&16 != 0))
+			case 2:
+				enqueue(c.SetRate(float64(int(op)%6) * 0.5))
+			case 3:
+				enqueue(c.Seek(int(op%4) - 1))
+			case 4:
+				enqueue(c.Restart())
+			case 5:
+				enqueue(c.SetVisible(op&16 != 0))
+			case 6:
+				enqueue(c.SetSize(int(op%5), int((op>>2)%5)))
+			case 7:
+				enqueue(c.SetTerminal(op&16 != 0, int(op%10)+1, int((op>>2)%10)+1))
+			case 8:
+				enqueue(c.SetResolution(float64(op%5) * 0.25))
+			case 9:
+				c.SetViewport(picture.Viewport{X: int(op%5) - 1, Y: int((op>>2)%5) - 1, Width: int(op % 4), Height: int((op >> 3) % 4)})
+			case 10:
+				c.ResetViewport()
+			case 11:
+				enqueue(c.SetPlayer(testPlayer(t)))
+			}
+			_ = c.View()
+			st := c.Status()
+			if st.Rate < 0.25 || st.Rate > 4 {
+				t.Fatalf("rate out of bounds: %v", st.Rate)
+			}
+		}
+		for len(queue) > 0 {
+			flushOne()
+		}
+		drive(t, c, c.Close())
+		if c.Status().Source != nil || c.Status().Player != nil || c.Status().Busy {
+			t.Fatalf("closed controller retained state: %+v", c.Status())
+		}
+	})
+}

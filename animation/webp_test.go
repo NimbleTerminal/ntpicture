@@ -23,7 +23,7 @@ var webpStills = map[string]string{
 	"half2":      "524946466200000057454250565038580a00000010000000010000000000414c5048030000000080000056503820380000005002009d012a0200010000000025a00274ba01f801fa01fc00079000feff6f56fffcb0fc7f5279ffcb10ffff13d39bc454f2bffe26400000",
 }
 
-func webpStill(t *testing.T, name string) []byte {
+func webpStill(t testing.TB, name string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(webpStills[name])
 	if err != nil || len(b) == 0 {
@@ -34,7 +34,7 @@ func webpStill(t *testing.T, name string) []byte {
 
 // webpBitstream is a still file's frame data: its chunks after the RIFF
 // header, without any VP8X chunk, which is how an ANMF chunk carries them.
-func webpBitstream(t *testing.T, name string) []byte {
+func webpBitstream(t testing.TB, name string) []byte {
 	t.Helper()
 	b := webpStill(t, name)[12:]
 	var out []byte
@@ -78,7 +78,7 @@ func chunk(id string, payload []byte) []byte {
 
 func put24(b []byte, v int) { b[0], b[1], b[2] = byte(v), byte(v>>8), byte(v>>16) }
 
-func webpTestData(t *testing.T, a webpAnim) []byte {
+func webpTestData(t testing.TB, a webpAnim) []byte {
 	t.Helper()
 	vp8x := make([]byte, 10)
 	vp8x[0] = 1 << 1 // animation
@@ -394,4 +394,55 @@ func TestWebPPreflightRejects(t *testing.T) {
 			t.Errorf("animate %v: mismatched first frame decoded", animate)
 		}
 	}
+}
+
+func FuzzWebPPreflightAndDecode(f *testing.F) {
+	f.Add([]byte("RIFF\x00\x00\x00\x00WEBP"))
+	f.Add(webpTestData(f, webpFourFrames(0)))
+	for _, hexData := range webpStills {
+		if b, err := hex.DecodeString(hexData); err == nil {
+			f.Add(b)
+		}
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		limits := Limits{
+			MaxInputBytes:    1 << 16,
+			MaxCanvasPixels:  4096,
+			MaxFrames:        16,
+			MaxGIFFrameBytes: 1 << 18,
+		}
+		_, _ = PreflightWithLimits(t.Context(), data, limits)
+		padded := make([]byte, len(data)+16)
+		sub := padded[7 : 7+len(data)]
+		copy(sub, data)
+		img, p, err := DecodeContext(t.Context(), sub, Options{
+			Animate: true,
+			Limits:  limits,
+		})
+		if err != nil {
+			return
+		}
+		if img == nil || img.Bounds().Empty() {
+			t.Fatalf("decoded empty image: %v", img)
+		}
+		if p != nil {
+			for range 8 {
+				if p.Image() == nil || p.Image().Bounds() != img.Bounds() {
+					t.Fatalf("player frame bounds mismatch: %v != %v", p.Image().Bounds(), img.Bounds())
+				}
+				if p.Delay() <= 0 || p.Frame() < 1 || p.Frame() > p.Frames() {
+					t.Fatalf("invalid player state: delay=%v frame=%d/%d", p.Delay(), p.Frame(), p.Frames())
+				}
+				next, more := p.Next()
+				if !more {
+					break
+				}
+				p = next
+			}
+			restarted := p.Restart()
+			if restarted.Frame() != 1 || restarted.Image() == nil {
+				t.Fatalf("restart invalid: frame=%d", restarted.Frame())
+			}
+		}
+	})
 }
