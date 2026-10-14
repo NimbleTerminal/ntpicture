@@ -16,7 +16,7 @@ import (
 
 var gifPalette = color.Palette{color.Transparent, color.RGBA{255, 0, 0, 255}, color.RGBA{0, 255, 0, 255}, color.RGBA{0, 0, 255, 255}, color.RGBA{255, 255, 0, 255}}
 
-func gifTestData(t *testing.T, loop int) []byte {
+func gifTestData(t testing.TB, loop int) []byte {
 	t.Helper()
 	frames := []*image.Paletted{
 		image.NewPaletted(image.Rect(0, 0, 3, 1), gifPalette),
@@ -195,11 +195,56 @@ func TestGIFPreflightBoundsAndTruncation(t *testing.T) {
 
 func FuzzGIFPreflight(f *testing.F) {
 	f.Add([]byte("GIF89a\x01\x00\x01\x00\x00\x00\x00\x3b"))
+	f.Add(gifTestData(f, 0))
+	f.Add(gifTestData(f, -1))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 1<<20 {
 			t.Skip()
 		}
 		_ = checkGIF(data)
+		limits := Limits{
+			MaxInputBytes:    1 << 16,
+			MaxCanvasPixels:  4096,
+			MaxFrames:        16,
+			MaxGIFFrameBytes: 1 << 18,
+		}
+		_, _ = PreflightWithLimits(t.Context(), data, limits)
+		img, p, err := DecodeContext(t.Context(), data, Options{
+			Animate: true,
+			Limits:  limits,
+		})
+		if err != nil {
+			return
+		}
+		if img == nil || img.Bounds().Empty() {
+			t.Fatalf("empty decoded GIF image: %v", img)
+		}
+		if p != nil {
+			cur := p
+			for step := range min(8, p.Frames()+2) {
+				target := (step % p.Frames()) + 1
+				s1, err1 := cur.Seek(t.Context(), target)
+				s2, err2 := p.Restart().Seek(t.Context(), target)
+				if (err1 != nil) != (err2 != nil) {
+					t.Fatalf("seek error mismatch at frame %d->%d: %v vs %v", cur.Frame(), target, err1, err2)
+				}
+				if err1 == nil {
+					b := s1.Image().Bounds()
+					for y := b.Min.Y; y < b.Max.Y; y++ {
+						for x := b.Min.X; x < b.Max.X; x++ {
+							if s1.Image().At(x, y) != s2.Image().At(x, y) {
+								t.Fatalf("seek pixel mismatch at (%d,%d) from frame %d->%d", x, y, cur.Frame(), target)
+							}
+						}
+					}
+				}
+				next, more := cur.Next()
+				if !more {
+					break
+				}
+				cur = next
+			}
+		}
 	})
 }
 

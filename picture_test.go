@@ -419,3 +419,89 @@ func TestPictureInvalidGeometryPreservesPendingAndHiddenSource(t *testing.T) {
 		t.Fatal("hidden source lost after invalid geometry calls")
 	}
 }
+
+func FuzzPictureActions(f *testing.F) {
+	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, true, false, false)
+	f.Add([]byte{4, 2, 1, 6, 3, 5, 0, 7, 8, 11, 2, 0}, false, true, true)
+	f.Fuzz(func(t *testing.T, ops []byte, stableID, clearOnReplace, hostGeometry bool) {
+		if len(ops) > 64 {
+			ops = ops[:64]
+		}
+		sess := NewTerminalSession(TerminalOptions{Kitty: KittyCapabilitySupported, CellPixelWidth: 2, CellPixelHeight: 4})
+		defer sess.Close()
+		p := New(Options{
+			Session:        sess,
+			StableID:       stableID,
+			ClearOnReplace: clearOnReplace,
+			HostGeometry:   hostGeometry,
+			RetireDelay:    -1,
+		})
+		var queue []tea.Cmd
+		enqueue := func(cmd tea.Cmd) {
+			if cmd != nil {
+				queue = append(queue, cmd)
+			}
+		}
+		flushOne := func() {
+			if len(queue) == 0 {
+				return
+			}
+			cmd := queue[0]
+			queue = queue[1:]
+			drivePicture(t, p, cmd)
+		}
+		imgA := testPixels(color.RGBA{R: 200, G: 10, B: 20, A: 255})
+		imgB := testPixels(color.RGBA{R: 10, G: 200, B: 30, A: 255})
+		for _, op := range ops {
+			switch op % 12 {
+			case 0:
+				flushOne()
+			case 1:
+				enqueue(p.SetImage(imgA))
+			case 2:
+				enqueue(p.SetImageImmutable(imgB))
+			case 3:
+				enqueue(p.SetImage(nil))
+			case 4:
+				enqueue(p.SetSize(int(op%5), int((op>>2)%5)))
+			case 5:
+				enqueue(p.SetTerminal(op&16 != 0, int(op%8)-1, int((op>>2)%8)+1))
+			case 6:
+				mode := PictureGlyph
+				if op&16 != 0 {
+					mode = PictureKitty
+				}
+				enqueue(p.SetMode(mode))
+			case 7:
+				enqueue(p.SetVisible(op&16 != 0))
+			case 8:
+				enqueue(p.SetResolution(float64(op%5) * 0.25))
+			case 9:
+				p.SetViewport(Viewport{X: int(op%5) - 1, Y: int((op>>2)%5) - 1, Width: int(op % 4), Height: int((op >> 3) % 4)})
+			case 10:
+				p.ResetViewport()
+			case 11:
+				enqueue(p.Submit(Frame{
+					Image:      imgA,
+					Cols:       int(op%5) - 1,
+					Rows:       int((op>>2)%5) - 1,
+					Mode:       PictureMode(op % 3),
+					CellWidth:  int(op % 4),
+					CellHeight: int((op>>2)%4) + 1,
+					Exact:      op&32 != 0,
+					Immutable:  op&64 != 0,
+				}))
+			}
+			_ = p.View()
+			_ = p.Status()
+			_ = p.RasterGeometry()
+		}
+		for len(queue) > 0 {
+			flushOne()
+		}
+		drivePicture(t, p, p.Close())
+		if p.Status().Busy {
+			t.Fatalf("closed picture remained busy: %+v", p.Status())
+		}
+	})
+}

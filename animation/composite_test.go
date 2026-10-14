@@ -312,3 +312,66 @@ func TestCompositeImmutableBaseOwnership(t *testing.T) {
 		t.Fatal("copying constructor stopped taking a snapshot")
 	}
 }
+
+func FuzzCompositeWindowAndAdvance(f *testing.F) {
+	f.Add(8, 8, 0, 0, 3, 1, 1, 1, 4, 4, 6, 6, 2)
+	f.Add(12, 10, -2, -1, 5, 4, 0, 0, 12, 10, 0, 0, 4)
+	f.Add(4, 4, 2, 2, 4, 4, 1, 1, 3, 3, 5, 5, 1)
+	f.Fuzz(func(t *testing.T, bw, bh, rx, ry, rw, rh, wx, wy, ww, wh, sw, sh, steps int) {
+		bw = (bw & 15) + 1
+		bh = (bh & 15) + 1
+		rw = (rw & 15) - 2
+		rh = (rh & 15) - 2
+		rx = (rx % 17) - 4
+		ry = (ry % 17) - 4
+		wx = (wx % 17) - 4
+		wy = (wy % 17) - 4
+		ww = (ww & 15) - 2
+		wh = (wh & 15) - 2
+		sw = (sw & 15) - 1
+		sh = (sh & 15) - 1
+
+		_, p, err := DecodeGIF(gifTestData(t, 0), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := image.NewRGBA(image.Rect(0, 0, bw, bh))
+		regions := []Region{
+			{Rect: image.Rectangle{Min: image.Pt(rx, ry), Max: image.Pt(rx+rw, ry+rh)}, Player: p, Key: "a"},
+		}
+		comp, err := NewComposite(t.Context(), base, regions, nil)
+		if rw <= 0 || rh <= 0 {
+			if err == nil {
+				t.Fatalf("expected error for non-positive region %dx%d", rw, rh)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("unexpected NewComposite error: %v", err)
+		}
+		if comp.Image().Bounds() != base.Bounds() {
+			t.Fatalf("composite bounds %v != %v", comp.Image().Bounds(), base.Bounds())
+		}
+		cur := Source(comp)
+		for range steps & 7 {
+			next, more, err := cur.Advance(t.Context())
+			if err != nil {
+				t.Fatalf("Advance error: %v", err)
+			}
+			if !more {
+				break
+			}
+			cur = next
+		}
+		win, err := cur.(*Composite).Window(t.Context(), image.Rectangle{Min: image.Pt(wx, wy), Max: image.Pt(wx+ww, wy+wh)}, image.Pt(sw, sh))
+		if err == nil {
+			if win.Image() == nil || win.Image().Bounds().Empty() {
+				t.Fatalf("empty window image: %v", win.Image())
+			}
+			reset, err := win.Reset(t.Context())
+			if err != nil || reset.Image().Bounds() != win.Image().Bounds() {
+				t.Fatalf("window Reset failed: %v", err)
+			}
+		}
+	})
+}

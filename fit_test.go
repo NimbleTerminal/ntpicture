@@ -385,3 +385,51 @@ func BenchmarkPrepareSource_SameSize(b *testing.B) {
 		prepareSource(src, FitContain, 200, 50, 10, 20, color.White, AnchorCenter)
 	}
 }
+
+func FuzzFitAndEncode(f *testing.F) {
+	f.Add(8, 16, 4, 4, 2, 4, 1, 2, uint8(0), uint8(0), uint8(0), uint8(0), uint8(255), false)
+	f.Add(32, 2, 3, 3, 2, 2, -3, 5, uint8(2), uint8(4), uint8(2), uint8(128), uint8(128), true)
+	f.Add(4, 4, 2, 2, 2, 2, 0, 0, uint8(1), uint8(1), uint8(1), uint8(255), uint8(0), false)
+	f.Fuzz(func(t *testing.T, sw, sh, cols, rows, cw, ch, ox, oy int, fit, anchor, fmtByte, srcAlpha, bgAlpha uint8, useNRGBA bool) {
+		sw = (sw & 31) + 1
+		sh = (sh & 31) + 1
+		cols = (cols & 7) + 1
+		rows = (rows & 7) + 1
+		cw = (cw & 7) + 1
+		ch = ((ch & 3) + 1) * 2
+		ox = (ox % 9) - 4
+		oy = (oy % 9) - 4
+
+		rect := image.Rect(ox, oy, ox+sw, oy+sh)
+		var src image.Image
+		if useNRGBA {
+			nrgba := image.NewNRGBA(rect)
+			for i := 0; i < len(nrgba.Pix); i += 4 {
+				nrgba.Pix[i], nrgba.Pix[i+1], nrgba.Pix[i+2], nrgba.Pix[i+3] = byte(i), byte(i>>1), 100, srcAlpha
+			}
+			src = nrgba
+		} else {
+			rgba := image.NewRGBA(rect)
+			for i := 0; i < len(rgba.Pix); i += 4 {
+				a := srcAlpha
+				rgba.Pix[i], rgba.Pix[i+1], rgba.Pix[i+2], rgba.Pix[i+3] = min(byte(i), a), min(byte(i>>1), a), min(100, a), a
+			}
+			src = rgba
+		}
+
+		bg := color.NRGBA{R: 10, G: 20, B: 30, A: bgAlpha}
+		var scratch fitScratch
+		prepared := prepareSourceWithScratch(src, FitMode(fit%4), cols, rows, cw, ch, bg, FitAnchor(anchor%6), &scratch)
+		if prepared == nil || prepared.Bounds().Dx() != cols*cw || prepared.Bounds().Dy() != rows*ch {
+			t.Fatalf("unexpected prepared bounds: %v, want %dx%d", prepared.Bounds(), cols*cw, rows*ch)
+		}
+		glyph := appendGlyph(nil, prepared)
+		if len(glyph) == 0 {
+			t.Fatal("empty glyph output")
+		}
+		apc := buildKittyAPC(prepared, 42, cols, rows, KittyFormat(fmtByte%4))
+		if apc == "" {
+			t.Fatal("empty kitty APC output")
+		}
+	})
+}
