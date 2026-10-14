@@ -165,30 +165,6 @@ func (s *kittySharedState) replace(seq uint64, obj *kittyshm.Object) bool {
 	return true
 }
 
-func (s *kittySharedState) retire(seq uint64) *kittyshm.Object {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.seq = seq
-	var pending *kittyshm.Object
-	if s.submitted && s.object != nil {
-		s.object.Retire()
-		if !s.object.Done() {
-			pending = s.object
-		}
-	} else {
-		_ = s.object.Unlink()
-	}
-	s.object, s.submitted = nil, false
-	for _, old := range s.retired {
-		old.Retire()
-	}
-	s.retired = nil
-	return pending
-}
-
 func (s *kittySharedState) clear(seq uint64) {
 	if s == nil {
 		return

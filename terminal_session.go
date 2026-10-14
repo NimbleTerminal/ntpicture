@@ -53,7 +53,7 @@ type terminalSessionTick struct{ session *TerminalSession }
 // input to sessions for other terminals. Probe replies and timeouts are scoped.
 // Close releases probe resources; pictures retain their own placement cleanup.
 type TerminalSession struct {
-	mu                        sync.Mutex
+	mu                        sync.Mutex // guards defaultTerminalSession fields across goroutines; explicit sessions belong to one event loop
 	state                     TerminalState
 	started                   bool
 	closed                    atomic.Bool
@@ -70,9 +70,36 @@ var terminalProbeIDs atomic.Uint32
 
 // DefaultTerminalSession returns the compatibility session. Package-level
 // capability/tmux helpers and legacy Model use its process-wide discovery state.
+// Calling Update on the default session (directly or via Options{Session: DefaultTerminalSession()})
+// emits TerminalSessionMsg alongside KittyCapabilityMsg; implicit callers (Model and
+// Picture with nil Session) report only KittyCapabilityMsg.
 // Prefer an explicit session for independent programs/connections. Do not Close
 // the default session; its lifetime is the process lifetime.
 func DefaultTerminalSession() *TerminalSession { return defaultTerminalSession }
+
+func (s *TerminalSession) setCellSize(w, h int) {
+	if s.legacy {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	s.state.CellPixelWidth, s.state.CellPixelHeight = w, h
+}
+
+func (s *TerminalSession) setKittyForced(forced bool) {
+	if s.legacy {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	s.kittyForced = forced
+}
+
+func (s *TerminalSession) isKittyForced() bool {
+	if s.legacy {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	return s.kittyForced
+}
 
 func envTerminalConfig() (tmux bool, kitty KittyCapability, kittyForced bool) {
 	tmux = os.Getenv("TMUX") != ""
@@ -211,33 +238,23 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 	if s.closed.Load() {
 		return nil
 	}
-	if s.legacy {
-		switch v := msg.(type) {
-		case uv.CellSizeEvent:
-			if v.Width > 0 && v.Height > 0 {
-				s.mu.Lock()
-				s.state.CellPixelWidth, s.state.CellPixelHeight = v.Width, v.Height
-				s.mu.Unlock()
-			}
-		case uv.KittyGraphicsEvent:
-			return recordKittyResponse(v)
-		case kittyProbeTickMsg:
-			return recordKittyTimeout()
-		}
-		return nil
-	}
 	before := s.Snapshot()
+	var legacy tea.Cmd
 	switch v := msg.(type) {
 	case uv.CellSizeEvent:
 		if v.Width <= 0 || v.Height <= 0 {
 			return nil
 		}
-		s.state.CellPixelWidth, s.state.CellPixelHeight = v.Width, v.Height
+		s.setCellSize(v.Width, v.Height)
 	case uv.KittyGraphicsEvent:
+		if s.legacy {
+			legacy = recordKittyResponse(v)
+			break
+		}
 		if !s.started {
 			return nil
 		}
-		if v.Options.ID == s.probeID && !s.kittyForced {
+		if v.Options.ID == s.probeID && !s.isKittyForced() {
 			s.state.Kitty = KittyCapabilitySupported
 		}
 		if v.Options.ID == s.probeID+1 && !s.sharedForced {
@@ -261,11 +278,15 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 		}
 		_ = s.probe.Unlink()
 		s.probe = nil
+	case kittyProbeTickMsg:
+		if s.legacy {
+			legacy = recordKittyTimeout()
+		}
 	}
 	if before != s.Snapshot() {
-		return s.notification()
+		return tea.Batch(legacy, s.notification())
 	}
-	return nil
+	return legacy
 }
 
 // Close cancels queued probe output and unlinks a pending probe immediately.
@@ -286,7 +307,7 @@ func (s *TerminalSession) unavailable() error {
 	case KittyCapabilityUnknown:
 		return ErrKittyProbePending
 	default:
-		if state.EnvSignalled && !s.kittyForced {
+		if state.EnvSignalled && !s.isKittyForced() {
 			return ErrKittyProbeTimeout
 		}
 		return ErrKittyNotDetected

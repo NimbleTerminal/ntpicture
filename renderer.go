@@ -561,10 +561,12 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		if msg.Width <= 0 || msg.Height <= 0 {
 			return nil
 		}
-		_ = defaultTerminalSession.Update(msg)
+		defaultTerminalSession.setCellSize(msg.Width, msg.Height)
 		return m.SetCellPixelSize(msg.Width, msg.Height)
-	case uv.KittyGraphicsEvent, kittyProbeTickMsg:
-		return defaultTerminalSession.Update(msg)
+	case uv.KittyGraphicsEvent:
+		return recordKittyResponse(msg)
+	case kittyProbeTickMsg:
+		return recordKittyTimeout()
 	}
 	return nil
 }
@@ -576,16 +578,6 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 // every tea.Msg to Model.Update as usual.
 func RequestCellSize() tea.Cmd {
 	return tea.Raw(ansi.WindowOp(16))
-}
-
-func prepareGlyphFrame(img image.Image, cfg Config, cols, rows int, scratch *fitScratch, buf []byte) (string, []byte) {
-	// Half-blocks can display only one horizontal and two vertical pixels
-	// per cell. Fit at that resolution instead of scaling to Kitty pixels
-	// and immediately downsampling again.
-	rendered := prepareSourceWithScratch(img, cfg.Fit, cols, rows, 1, 2, cfg.Background, cfg.Anchor, scratch)
-	buf = appendGlyph(buf[:0], rendered)
-	// Copy: previously returned Views must remain immutable when scratch is reused.
-	return string(buf), buf
 }
 
 // View returns the rendered image as a tea.View, or an empty view if there is
@@ -616,13 +608,13 @@ func (m *Model) View() tea.View {
 		return tea.NewView(m.glyphCache)
 	}
 
-	cfg := Config{
-		Fit:        m.fit,
-		Anchor:     m.anchor,
-		Background: m.background,
-	}
-	out, buf := prepareGlyphFrame(m.img, cfg, m.cols, m.rows, &m.glyphFit, m.glyphBuf)
-	m.glyphBuf = buf
+	// Half-blocks can display only one horizontal and two vertical pixels
+	// per cell. Fit at that resolution instead of scaling to Kitty pixels
+	// and immediately downsampling again.
+	rendered := prepareSourceWithScratch(m.img, m.fit, m.cols, m.rows, 1, 2, m.background, m.anchor, &m.glyphFit)
+	m.glyphBuf = appendGlyph(m.glyphBuf[:0], rendered)
+	// Copy: previously returned Views must remain immutable when scratch is reused.
+	out := string(m.glyphBuf)
 	m.glyphCache = out
 	m.glyphKey = key
 	return tea.NewView(out)
@@ -645,16 +637,21 @@ func (m *Model) kittyCellPixelSize() (int, int) {
 }
 
 type kittyPrepareParams struct {
-	modelID    uint64
-	seq        uint64
-	img        image.Image
-	cfg        Config
-	cols, rows int
-	cpw, cph   int
-	rasterSize image.Point
-	prevGeom   kittyGeom
-	transport  kittyTransport
-	shared     *kittySharedState
+	modelID         uint64
+	seq             uint64
+	img             image.Image
+	kittyZ, kittyID int
+	background      color.Color
+	fit             FitMode
+	anchor          FitAnchor
+	format          KittyFormat
+	medium          KittyMedium
+	cols, rows      int
+	cpw, cph        int
+	rasterSize      image.Point
+	prevGeom        kittyGeom
+	transport       kittyTransport
+	shared          *kittySharedState
 }
 
 func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg, bool) {
@@ -663,19 +660,19 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg
 	}
 	var prepared image.Image
 	if p.rasterSize.X > 0 && p.rasterSize.Y > 0 {
-		prepared = prepareSource(p.img, p.cfg.Fit, p.rasterSize.X, p.rasterSize.Y, 1, 1, p.cfg.Background, p.cfg.Anchor)
+		prepared = prepareSource(p.img, p.fit, p.rasterSize.X, p.rasterSize.Y, 1, 1, p.background, p.anchor)
 	} else {
-		prepared = prepareSource(p.img, p.cfg.Fit, p.cols, p.rows, p.cpw, p.cph, p.cfg.Background, p.cfg.Anchor)
+		prepared = prepareSource(p.img, p.fit, p.cols, p.rows, p.cpw, p.cph, p.background, p.anchor)
 	}
 	if prepared == nil || ctx.Err() != nil {
 		return KittyFrameMsg{}, false
 	}
-	actualMedium, actualFormat := KittyMediumDirect, p.cfg.KittyFormat
+	actualMedium, actualFormat := KittyMediumDirect, p.format
 	var apc string
 	var object *kittyshm.Object
-	if p.cfg.KittyMedium == KittyMediumSharedMemory && p.transport.shared {
+	if p.medium == KittyMediumSharedMemory && p.transport.shared {
 		var err error
-		apc, object, err = p.transport.buildKittySharedMemoryAPC(prepared, p.cfg.KittyID, p.cols, p.rows, p.cfg.KittyZ)
+		apc, object, err = p.transport.buildKittySharedMemoryAPC(prepared, p.kittyID, p.cols, p.rows, p.kittyZ)
 		if err == nil {
 			actualMedium, actualFormat = KittyMediumSharedMemory, KittyFormatRGBA
 		}
@@ -684,7 +681,7 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg
 		// Yield around expensive direct encoding, including shared-memory
 		// fallback, so browser events can drain. Native yields are no-ops.
 		yieldToJS()
-		apc = p.transport.buildKittyAPC(prepared, p.cfg.KittyID, p.cols, p.rows, p.cfg.KittyFormat, p.cfg.KittyZ)
+		apc = p.transport.buildKittyAPC(prepared, p.kittyID, p.cols, p.rows, p.format, p.kittyZ)
 		yieldToJS()
 	}
 	if ctx.Err() != nil {
@@ -694,14 +691,14 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg
 	if !p.shared.replace(p.seq, object) {
 		return KittyFrameMsg{}, false
 	}
-	currGeom := kittyGeom{cols: p.cols, rows: p.rows, cellPixelW: p.cpw, cellPixelH: p.cph, fit: p.cfg.Fit, anchor: p.cfg.Anchor}
+	currGeom := kittyGeom{cols: p.cols, rows: p.rows, cellPixelW: p.cpw, cellPixelH: p.cph, fit: p.fit, anchor: p.anchor}
 	if p.prevGeom != (kittyGeom{}) && p.prevGeom != currGeom {
-		apc = p.transport.kittyDeleteImage(p.cfg.KittyID) + apc
+		apc = p.transport.kittyDeleteImage(p.kittyID) + apc
 	}
-	grid := buildKittyGrid(p.cols, p.rows, p.cfg.KittyID)
+	grid := buildKittyGrid(p.cols, p.rows, p.kittyID)
 	return KittyFrameMsg{
 		modelID:      p.modelID,
-		ID:           p.cfg.KittyID,
+		ID:           p.kittyID,
 		Seq:          p.seq,
 		APC:          apc,
 		Grid:         grid,
@@ -735,18 +732,16 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 		transport = *m.transport
 	}
 	params := kittyPrepareParams{
-		modelID: m.modelID,
-		seq:     m.seq,
-		img:     m.img,
-		cfg: Config{
-			KittyZ:      m.kittyZ,
-			KittyID:     m.kittyID,
-			Background:  m.background,
-			Fit:         m.fit,
-			Anchor:      m.anchor,
-			KittyFormat: m.kittyFormat,
-			KittyMedium: m.kittyMedium,
-		},
+		modelID:    m.modelID,
+		seq:        m.seq,
+		img:        m.img,
+		kittyZ:     m.kittyZ,
+		kittyID:    m.kittyID,
+		background: m.background,
+		fit:        m.fit,
+		anchor:     m.anchor,
+		format:     m.kittyFormat,
+		medium:     m.kittyMedium,
 		cols:       m.cols,
 		rows:       m.rows,
 		cpw:        cpw,

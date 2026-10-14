@@ -309,7 +309,9 @@ func writeKittyGridRow(sb *strings.Builder, imageID, y, x0, x1 int) {
 
 func buildKittyGrid(cols, rows, imageID int) string {
 	var sb strings.Builder
-	sb.Grow((cols*4 + 26) * rows)
+	// Each cell is a 4-byte placeholder plus two 2–3 byte diacritics (8–10 bytes),
+	// plus true-color SGR, foreground reset, and newline per row (~25 bytes).
+	sb.Grow((cols*10 + 25) * rows)
 	for y := 0; y < rows; y++ {
 		writeKittyGridRow(&sb, imageID, y, 0, cols)
 		if y < rows-1 {

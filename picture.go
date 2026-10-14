@@ -457,7 +457,7 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	if p.opts.Session != nil {
 		terminal := false
 		switch v := msg.(type) {
-		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick:
+		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, kittyProbeTickMsg:
 			terminal = true
 		case TerminalSessionMsg:
 			if v.Session != p.opts.Session {
@@ -554,10 +554,12 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		if v.Width <= 0 || v.Height <= 0 {
 			return nil
 		}
-		_ = defaultTerminalSession.Update(v)
+		defaultTerminalSession.setCellSize(v.Width, v.Height)
 		return p.SetTerminal(p.mode == PictureKitty, v.Width, v.Height)
-	case uv.KittyGraphicsEvent, kittyProbeTickMsg:
-		return defaultTerminalSession.Update(v)
+	case uv.KittyGraphicsEvent:
+		return recordKittyResponse(v)
+	case kittyProbeTickMsg:
+		return recordKittyTimeout()
 	}
 	return nil
 }

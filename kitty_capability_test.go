@@ -120,6 +120,17 @@ func TestRecordKittyResponse_OverridesUnsupportedFromTimeout(t *testing.T) {
 	}
 }
 
+func TestRecordKittyResponse_DoesNotOverrideForcedUnsupported(t *testing.T) {
+	resetKittyCapability(t)
+	ForceKittyCapability(KittyCapabilityUnsupported)
+	if cmd := recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}); cmd != nil {
+		t.Fatal("probe reply emitted command despite Forced(Unsupported)")
+	}
+	if got := KittySupported(); got != KittyCapabilityUnsupported {
+		t.Fatalf("probe reply overrode Forced(Unsupported): got %v", got)
+	}
+}
+
 // TestModel_Toggle_NoOpWhenKittyUnsupported verifies the gating: with
 // the capability forced Unsupported, Toggle in Glyph mode does NOT
 // switch to Kitty (which would emit garbage to a non-Kitty terminal).
@@ -351,17 +362,29 @@ func TestKittyUnavailable_Reasons(t *testing.T) {
 		name     string
 		cap      KittyCapability
 		signaled bool
+		forced   bool
 		want     error
 	}{
-		{"unknown", KittyCapabilityUnknown, false, ErrKittyProbePending},
-		{"supported", KittyCapabilitySupported, false, nil},
-		{"unsupported, env not signalled", KittyCapabilityUnsupported, false, ErrKittyNotDetected},
-		{"unsupported, probe timed out", KittyCapabilityUnsupported, true, ErrKittyProbeTimeout},
+		{"unknown", KittyCapabilityUnknown, false, false, ErrKittyProbePending},
+		{"supported", KittyCapabilitySupported, false, true, nil},
+		{"unsupported, env not signalled", KittyCapabilityUnsupported, false, false, ErrKittyNotDetected},
+		{"unsupported, probe timed out", KittyCapabilityUnsupported, true, false, ErrKittyProbeTimeout},
+		{"unsupported, forced with env signalled", KittyCapabilityUnsupported, true, true, ErrKittyNotDetected},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ForceKittyCapability(tc.cap)
 			kittyEnvSignalled.Store(tc.signaled)
+			if tc.forced {
+				ForceKittyCapability(tc.cap)
+			} else {
+				ForceKittyCapability(KittyCapabilityUnknown)
+				if tc.cap == KittyCapabilityUnsupported {
+					recordKittyTimeout()
+				}
+			}
+			if got := KittyEnvSignalled(); got != tc.signaled {
+				t.Fatalf("KittyEnvSignalled() = %v, want %v", got, tc.signaled)
+			}
 			if got := KittyUnavailable(); !errors.Is(got, tc.want) {
 				t.Fatalf("KittyUnavailable() = %v, want %v", got, tc.want)
 			}

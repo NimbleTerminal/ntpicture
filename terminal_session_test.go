@@ -190,8 +190,14 @@ func TestTerminalSessionOverridesEnvironment(t *testing.T) {
 }
 
 func TestDefaultTerminalSessionTracksLegacyGeometry(t *testing.T) {
-	old := defaultTerminalSession.state
-	t.Cleanup(func() { defaultTerminalSession.state = old })
+	resetKittyCapability(t)
+	resetKittySharedCap(t)
+	old := defaultTerminalSession.Snapshot()
+	t.Cleanup(func() {
+		defaultTerminalSession.setCellSize(old.CellPixelWidth, old.CellPixelHeight)
+	})
+	defaultTerminalSession.setCellSize(0, 0)
+
 	m := NewModel()
 	m.Update(uv.CellSizeEvent{Width: 9, Height: 18})
 	if state := DefaultTerminalSession().Snapshot(); state.CellPixelWidth != 9 || state.CellPixelHeight != 18 {
@@ -201,5 +207,25 @@ func TestDefaultTerminalSessionTracksLegacyGeometry(t *testing.T) {
 	p.Update(uv.CellSizeEvent{Width: 10, Height: 20})
 	if state := DefaultTerminalSession().Snapshot(); state.CellPixelWidth != 10 || state.CellPixelHeight != 20 {
 		t.Fatal("default picture geometry not recorded")
+	}
+
+	cmd := DefaultTerminalSession().Update(uv.CellSizeEvent{Width: 11, Height: 22})
+	if cmd == nil {
+		t.Fatal("default session did not emit command on cell size change")
+	}
+	if msg, ok := cmd().(TerminalSessionMsg); !ok || msg.Session != DefaultTerminalSession() || msg.State.CellPixelWidth != 11 || msg.State.CellPixelHeight != 22 {
+		t.Fatalf("unexpected default session cell size msg: %#v", msg)
+	}
+
+	withDefault := New(Options{Session: DefaultTerminalSession()})
+	msgs := drivePicture(t, withDefault, withDefault.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}))
+	found := false
+	for _, m := range msgs {
+		if msg, ok := m.(TerminalSessionMsg); ok && msg.Session == DefaultTerminalSession() && msg.State.Kitty == KittyCapabilitySupported {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("picture with DefaultTerminalSession did not emit TerminalSessionMsg on probe reply")
 	}
 }

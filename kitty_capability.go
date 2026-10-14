@@ -117,9 +117,7 @@ func KittyUnavailable() error {
 // Model.Init so the probe is skipped; NTCHARTS_KITTY=supported|unsupported
 // does the same from the environment.
 func ForceKittyCapability(c KittyCapability) {
-	if c == KittyCapabilityUnsupported {
-		kittyEnvSignalled.Store(false)
-	}
+	defaultTerminalSession.setKittyForced(c != KittyCapabilityUnknown)
 	kittyCap.Store(int32(c))
 }
 
@@ -218,7 +216,7 @@ func QueryKittySupport() tea.Cmd {
 //   - GHOSTTY_RESOURCES_DIR (Ghostty)
 //   - WEZTERM_EXECUTABLE, WEZTERM_PANE (WezTerm)
 //   - TERM=xterm-kitty, TERM=xterm-ghostty (explicit terminfo entries)
-//   - TERM_PROGRAM=ghostty, WezTerm, iTerm.app (well-known terminal IDs)
+//   - TERM_PROGRAM=ghostty, WezTerm, kitty, iTerm.app (well-known terminal IDs)
 //
 // Anything else returns false; consumers can override via
 // ForceKittyCapability if they have out-of-band knowledge.
@@ -267,13 +265,13 @@ func buildKittyQueryAPC(id int) string {
 // timeout sometimes fires first even though the terminal responded
 // immediately. Two CompareAndSwaps cover both starting states
 // (Unknown after probe-but-no-tick, Unsupported after tick-but-late-
-// response) without overriding a Forced(Supported) that's already set.
+// response) without overriding a Forced(Supported|Unsupported) state.
 func recordKittyResponse(ev uv.KittyGraphicsEvent) tea.Cmd {
 	if ev.Options.ID == kittySharedProbeID {
 		recordKittySharedResponse(string(ev.Payload) == "OK")
 		return nil
 	}
-	if ev.Options.ID != kittyProbeID {
+	if ev.Options.ID != kittyProbeID || defaultTerminalSession.isKittyForced() {
 		return nil
 	}
 	if kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilitySupported)) ||
