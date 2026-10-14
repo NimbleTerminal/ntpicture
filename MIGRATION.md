@@ -28,8 +28,9 @@
 - A native example, browser workspace and temporary consumer compatibility
   checks.
 - Glyph rendering prepares directly at half-block resolution and emits ANSI
-  without runtime pixterm (`5c0bf14`), with fit/anchor comparison tests and
-  benchmarks. Keep this optimization covered during consumer migration.
+  without runtime pixterm (`5c0bf14`). Pixterm has also been removed from test
+  dependencies; frozen reference fixtures preserve fit/anchor, transparency,
+  and legacy comparisons. Benchmarks now measure ntpicture's own encoder.
 
 No sibling repository has been modified or released.
 

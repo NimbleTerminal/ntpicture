@@ -8,17 +8,28 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/NimbleMarkets/pixterm/pkg/ansimage"
 )
 
-func referenceGlyph(t *testing.T, src image.Image, bg color.Color) string {
+func glyphFixture(t *testing.T, name string) map[string]string {
 	t.Helper()
-	ai, err := ansimage.NewFromImage(src, bg, ansimage.NoDithering)
+	data, err := os.ReadFile("testdata/" + name + ".json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.TrimRight(ai.RenderExt(false, false), "\n")
+	var values map[string]string
+	if err := json.Unmarshal(data, &values); err != nil {
+		t.Fatal(err)
+	}
+	return values
+}
+
+func fixtureValue(t *testing.T, values map[string]string, key string) string {
+	t.Helper()
+	value, ok := values[key]
+	if !ok {
+		t.Fatalf("missing glyph fixture %q", key)
+	}
+	return value
 }
 
 func TestAppendGlyphRejectsOddHeight(t *testing.T) {
@@ -37,8 +48,8 @@ func TestAppendGlyphRejectsOddHeight(t *testing.T) {
 	}
 }
 
-// The golden covers both crop axes and every anchor. Generate the reference
-// with the shared fit implementation and pixterm, independently of appendGlyph.
+// The golden covers both crop axes and every anchor. Its independent pixterm
+// reference predates dependency removal; see testdata/GLYPH_FIXTURES.md.
 func TestGlyphGolden(t *testing.T) {
 	data, err := os.ReadFile("testdata/glyph.json")
 	if err != nil {
@@ -55,13 +66,9 @@ func TestGlyphGolden(t *testing.T) {
 				t.Run(key, func(t *testing.T) {
 					src := benchImage(size.X, size.Y)
 					bg := color.RGBA{R: 20, G: 30, B: 40, A: 255}
-					prepared := prepareSource(src, fit, 4, 2, 1, 2, bg, anchor)
 					want, ok := golden[key]
 					if !ok {
 						t.Fatal("missing golden")
-					}
-					if referenceGlyph(t, prepared, bg) != want {
-						t.Fatal("reference differs from golden")
 					}
 					m := NewModelWithConfig(Config{Fit: fit, Anchor: anchor, Background: bg})
 					m.SetSize(4, 2)
@@ -75,7 +82,8 @@ func TestGlyphGolden(t *testing.T) {
 	}
 }
 
-func TestGlyphMatchesPixterm(t *testing.T) {
+func TestGlyphCompatibilityFixtures(t *testing.T) {
+	golden := glyphFixture(t, "glyph_compat")
 	rgba := benchImage(8, 8).SubImage(image.Rect(2, 2, 6, 6)).(*image.RGBA)
 	translucent := image.NewNRGBA(image.Rect(3, 5, 7, 9))
 	for y := 5; y < 9; y++ {
@@ -89,8 +97,7 @@ func TestGlyphMatchesPixterm(t *testing.T) {
 				m := NewModelWithConfig(Config{Fit: fit, Background: bg})
 				m.SetSize(4, 2)
 				m.SetImage(src)
-				prepared := prepareSource(src, fit, 4, 2, 1, 2, bg, AnchorCenter)
-				want := referenceGlyph(t, prepared, bg)
+				want := fixtureValue(t, golden, fmt.Sprintf("%T/%v/bg%T:%v/fit%d", src, src.Bounds(), bg, bg, fit))
 				if got := m.View().Content; got != want {
 					t.Fatalf("%T bg %v fit %v: got %q, want %q", src, bg, fit, got, want)
 				}
@@ -151,17 +158,13 @@ func TestGlyphExactSizeSkipsPreparation(t *testing.T) {
 // byte-for-byte. More detailed images are now sampled once at glyph resolution
 // rather than CatmullRom-upscaled and then box-downsampled.
 func TestGlyphLegacyUniform(t *testing.T) {
+	golden := glyphFixture(t, "glyph_legacy_uniform")
 	for _, size := range []image.Point{{8, 4}, {4, 8}} {
 		for fit := FitContain; fit <= FitCover; fit++ {
 			for anchor := AnchorCenter; anchor <= AnchorRight; anchor++ {
 				bg := color.RGBA{R: 20, G: 30, B: 40, A: 255}
 				src := solidImage(size.X, size.Y, color.RGBA{R: 80, G: 120, B: 160, A: 255})
-				legacy := prepareSource(src, fit, 4, 2, 8, 16, bg, anchor)
-				ai, err := ansimage.NewScaledFromImage(legacy, 4, 4, bg, ansimage.ScaleModeResize, ansimage.NoDithering)
-				if err != nil {
-					t.Fatal(err)
-				}
-				want := strings.TrimRight(ai.RenderExt(false, false), "\n")
+				want := fixtureValue(t, golden, fmt.Sprintf("%dx%d/fit%d/anchor%d", size.X, size.Y, fit, anchor))
 				m := NewModelWithConfig(Config{Fit: fit, Anchor: anchor, Background: bg})
 				m.SetSize(4, 2)
 				m.SetImage(src)
