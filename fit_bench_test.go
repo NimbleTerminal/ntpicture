@@ -6,9 +6,11 @@ import (
 	"testing"
 )
 
-// Exercise ordinary image downscaling as well as the aspect mismatch
-// that used to allocate scaler tables for invisible destination pixels.
-// Direct mirrors Kitty's per-job preparation; Scratch mirrors glyph reuse.
+// Exercise ordinary image downscaling, the strategy boundary around
+// coverOverflowLimit, a large downscale, and the aspect mismatches that used
+// to allocate scaler tables for invisible destination pixels in both
+// orientations. Direct mirrors Kitty's per-job preparation; Scratch mirrors
+// glyph reuse.
 func BenchmarkFitCover(b *testing.B) {
 	for _, tc := range []struct {
 		name           string
@@ -16,7 +18,11 @@ func BenchmarkFitCover(b *testing.B) {
 	}{
 		{"Terminal", image.Pt(800, 600), image.Pt(640, 320)},
 		{"Glyph", image.Pt(800, 600), image.Pt(80, 40)},
+		{"LargeDownscale", image.Pt(3200, 2400), image.Pt(640, 320)},
+		{"Overflow3.75Scaler", image.Pt(800, 600), image.Pt(640, 128)},
+		{"Overflow5Transform", image.Pt(800, 600), image.Pt(640, 96)},
 		{"ExtremeAspect", image.Pt(1024, 1), image.Pt(1, 128)},
+		{"ExtremeAspectTall", image.Pt(1, 1024), image.Pt(128, 1)},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			src := benchImage(tc.source.X, tc.source.Y)

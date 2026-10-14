@@ -355,28 +355,72 @@ when its previous-composite argument already supplies the needed positions.
 
 ```sh
 CGO_ENABLED=0 go test . -run '^$' -bench '^BenchmarkFitCover$' \
-  -benchmem -benchtime=100ms -count=3
+  -benchmem -benchtime=1s -count=5
 ```
 
-The cases use synthetic 800×600 inputs rendered to a 640×320 terminal
-raster or 80×40 glyph raster, plus a 1,024×1 input rendered to 1×128. `Direct`
+The cases use synthetic inputs: 800×600 rendered to a 640×320 terminal raster
+or 80×40 glyph raster, a 3200×2400 input rendered to 640×320, 800×600 rendered
+to 640×128 and 640×96 (3.75× and 5× overflow, either side of the strategy
+boundary), and 1,024×1 and 1×1,024 inputs rendered to 1×128 and 128×1. `Direct`
 uses per-job preparation, as Kitty does; `Scratch` exercises glyph-style buffer
 reuse. These measure preparation only, excluding encoding and terminal output.
 
-On 2026-10-13, Apple M5 Max, darwin/arm64, three short samples compared the
-renderer at `b12e0a8` with `acfa695`'s fit.go supplied through a temporary Go
-overlay. Median `Direct` measurements were:
+`coverTo` chooses between two x/image facilities. `CatmullRom.Scale` is
+separable and fast but allocates a float64 row buffer of 32 bytes per pixel of
+(circumscribed width × source height) plus weight tables for every column and
+row of the circumscribed rectangle, and its horizontal pass visits every
+column of that rectangle, visible or not. `CatmullRom.Transform` visits only
+visible pixels and allocates nothing proportional to the overflow, but
+evaluates a two-dimensional kernel per pixel. Both keep the same fractional
+mapping, anchors, kernel support at crop boundaries and compositing; the unit
+tests compare both against an independent naive resampler. The scaler is used
+while the circumscribed area is at most `coverOverflowLimit` (4) times the
+visible target, so its buffer is at most 4× what an equal-size `FitFill`
+already allocates; larger overflows use Transform. A same-size rectangle is a
+clipped copy.
 
-| Case | Before | After | Before bytes/op | After bytes/op |
-| --- | ---: | ---: | ---: | ---: |
-| Terminal | 4.84 ms | 17.45 ms | 13,250,801 | 819,408 |
-| Glyph | 3.02 ms | 9.67 ms | 1,655,798 | 14,352 |
-| Extreme aspect | 2.24 ms | 0.0038 ms | 17,823,482 | 688 |
+The threshold comes from a 2026-10-14 experiment on Apple M5 Max, darwin/arm64
+(temporary benchmark, 320×160 visible target, source dimensions chosen to
+produce each downscale and overflow ratio, medians of 200 ms runs):
 
-The affine sampling path removes allocations proportional to invisible output,
-but ordinary downscaling is roughly 3–4× slower in this run. This is an open
-performance follow-up, not a reason to restore unbounded scaler allocation.
-Evaluate a bounded separable scaling path or a measured, allocation-limited
-fast path. Preserve anchor and sampling tests, including translucent pixels and
-nonzero source origins. Repeat longer benchmark runs before choosing a design;
-these short local measurements are diagnostic, not portable latency guarantees.
+| Downscale | Overflow | Scale | Transform | Scale B/op |
+| ---: | ---: | ---: | ---: | ---: |
+| 0.5× (upscale) | 1.5 / 4 / 8 | 0.6 / 1.0 / 1.7 ms | 2.9 ms | 1.3 / 3.4 / 6.8 MB |
+| 1.25× | 1.5 / 4 / 8 | 1.1 / 2.5 / 4.7 ms | 4.3 ms | 3.1 / 8.3 / 16.6 MB |
+| 2.5× | 1.5 / 4 / 8 | 3.6 / 8.7 / 17.1 ms | 12.5 ms | 6.3 / 16.6 / 33.2 MB |
+| 10× | 1.5 / 4 / 8 | 49 / 127 / 254 ms | 154 ms | 25 / 66 / 132 MB |
+
+Transform allocated under 1 KB in every case. Scale wins by 1.2–2.9× at 4×
+overflow and loses between 4× and 8× for every downscale, while its buffer
+grows linearly with overflow, so 4 bounds both the wasted work and the memory.
+
+On 2026-10-14, Apple M5 Max, darwin/arm64, medians of five one-second runs
+compared `7a81181` (Transform for every overflowing rectangle, from `e5811e4`)
+with this strategy:
+
+| Case | Before | After | Before B/op | After B/op | Allocations before → after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Terminal Direct | 17.52 ms | 4.90 ms | 819,409 | 13,250,804 | 5 → 9 |
+| Terminal Scratch | 17.44 ms | 4.33 ms | 144 | 44,547 | 3 → 1 |
+| Glyph Direct | 9.68 ms | 3.03 ms | 14,352 | 1,655,793 | 5 → 9 |
+| Glyph Scratch | 9.63 ms | 2.92 ms | 720 | 3,769 | 3 → 1 |
+| LargeDownscale Direct | 167.61 ms | 45.29 ms | 819,632 | 50,360,564 | 5 → 9 |
+| LargeDownscale Scratch | 167.93 ms | 45.16 ms | 368 | 1,890,582 | 3 → 1 |
+| Overflow3.75Scaler Direct | 7.12 ms | 3.84 ms | 327,888 | 12,759,282 | 5 → 9 |
+| Overflow3.75Scaler Scratch | 7.12 ms | 3.67 ms | 144 | 37,717 | 3 → 1 |
+| Overflow5Transform Direct | 5.39 ms | 5.28 ms | 245,969 | 245,969 | 5 → 5 |
+| Overflow5Transform Scratch | 5.39 ms | 5.26 ms | 144 | 144 | 3 → 3 |
+| ExtremeAspect Direct | 3.9 µs | 3.8 µs | 688 | 688 | 5 → 5 |
+| ExtremeAspectTall Direct | 4.2 µs | 4.0 µs | 688 | 688 | 5 → 5 |
+
+Ordinary cover latency is back to the pre-`e5811e4` figures (4.84 ms and
+3.02 ms were recorded then), and the extreme-aspect cases keep their bounded
+allocation. The cost is the scaler's row buffer in `Direct` mode: 32 bytes per
+pixel of visible width × source height, so 13 MB for an 800×600 source and
+50 MB for 3200×2400. That buffer is inherent to `CatmullRom.Scale` and is the
+same one `FitFill` and `FitContain` allocate for the same source; the `Scratch`
+path reuses it through the scaler's pool. Reducing it would require reusing
+scalers across Kitty jobs or a different resampler, which this change does not
+attempt. These local measurements are diagnostic, not portable latency
+guarantees. Preserve anchor and sampling tests, including translucent pixels
+and nonzero source origins, when revisiting this.

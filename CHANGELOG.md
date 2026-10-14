@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Restore ordinary `FitCover` preparation speed by using the separable scaler
+  while the circumscribed rectangle is at most four times the visible target,
+  keeping bounded allocation for extreme aspect mismatches.
+
 - Add a live framebuffer demo that streams a procedurally rendered scene with
   stable Kitty IDs, an explicit terminal session, paced off-loop rendering with
   stale-result rejection, viewport panning, resolution steps, pause, keep-screen

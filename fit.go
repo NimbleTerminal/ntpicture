@@ -145,6 +145,25 @@ func containTo(src image.Image, sb, target image.Rectangle, bg color.Color, scra
 	return out
 }
 
+// coverOverflowLimit bounds the circumscribed rectangle, relative to the
+// visible target, for which the separable scaler is used. Kernel.Scale
+// allocates a float64 row buffer of cw×sh×32 bytes and weight tables for every
+// destination column and row, and its horizontal pass visits every column of
+// the overflowing rectangle, so its cost grows with the invisible area.
+// Kernel.Transform visits only visible pixels but evaluates a two-dimensional
+// kernel per pixel. Measured on Apple M5 Max (see DEVELOP.md), Transform
+// becomes faster between 4× and 8× overflow for 1.25×–10× downscales and is
+// within 1.7× at 8× overflow for upscales, while Scale's buffer at 4×
+// overflow is at most 4× the buffer an equal-size FitFill already needs.
+const coverOverflowLimit = 4
+
+// coverUsesScaler reports whether the separable scaler keeps its allocation
+// within coverOverflowLimit times the visible target. Inputs are int64 and
+// compared in float64 so enormous rectangles cannot overflow the comparison.
+func coverUsesScaler(cw, ch, tw, th int64) bool {
+	return float64(cw)*float64(ch) <= coverOverflowLimit*float64(tw)*float64(th)
+}
+
 // coverTo computes the AR-preserving circumscribed rect (one axis matches
 // target, the other overflows), fills target with bg, then draws src into
 // the circumscribed rect with draw.Over. Target-bound clipping crops the
@@ -153,12 +172,13 @@ func coverTo(src image.Image, sb, target image.Rectangle, bg color.Color, anchor
 	if coversTarget(src, sb, target) {
 		return src
 	}
-	tw, th := target.Dx(), target.Dy()
-	sw, sh := sb.Dx(), sb.Dy()
+	tw, th := int64(target.Dx()), int64(target.Dy())
+	sw, sh := int64(sb.Dx()), int64(sb.Dy())
 
 	// Circumscribed rect: scale source so it covers target preserving AR.
 	// Compare cross products: if sw/sh > tw/th, source is wider — height-bind.
-	var cw, ch int
+	// Products of bounded image dimensions fit int64 on every platform.
+	var cw, ch int64
 	if sw*th > sh*tw {
 		// Width overflows: bind height to target, width grows past target.
 		ch = th
@@ -168,13 +188,8 @@ func coverTo(src image.Image, sb, target image.Rectangle, bg color.Color, anchor
 		cw = tw
 		ch = sh * tw / sw
 	}
-	if cw < 1 {
-		cw = 1
-	}
-	if ch < 1 {
-		ch = 1
-	}
-	var ox, oy int
+	cw, ch = max(cw, 1), max(ch, 1)
+	var ox, oy int64
 	switch anchor {
 	case AnchorTop:
 		ox = (tw - cw) / 2
@@ -192,14 +207,15 @@ func coverTo(src image.Image, sb, target image.Rectangle, bg color.Color, anchor
 		ox = (tw - cw) / 2
 		oy = (th - ch) / 2
 	}
-	dst := image.Rect(ox, oy, ox+cw, oy+ch)
 	out := scratch.target(target)
 	draw.Draw(out, target, &image.Uniform{C: bg}, image.Point{}, draw.Src)
-	// Transform visits only visible destination pixels. Scale/NewScaler allocate
-	// tables and scratch for the entire overflowing rectangle, which can be
-	// enormous even when both the input and visible output are small. Retain
-	// the original fractional mapping and kernel support at crop boundaries.
-	if dst.In(target) || dst.Size() == sb.Size() {
+	// A same-size rect is a clipped copy, and a bounded overflow uses the
+	// separable scaler, whose rect dimensions then fit int. Larger overflows use
+	// Transform, which visits only visible destination pixels and never allocates
+	// for the invisible rectangle. Both keep the original fractional mapping and
+	// kernel support at crop boundaries; only speed and scratch size differ.
+	if (cw == sw && ch == sh) || coverUsesScaler(cw, ch, tw, th) {
+		dst := image.Rect(int(ox), int(oy), int(ox+cw), int(oy+ch))
 		place(out, dst, src, sb, scratch)
 	} else {
 		sx, sy := float64(cw)/float64(sw), float64(ch)/float64(sh)
