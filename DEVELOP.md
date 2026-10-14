@@ -12,6 +12,7 @@ task test                # native tests
 task test-no-cgo          # direct transport fallback
 task build-ex-still       # bin/ntpicture-still
 task run-still
+task build-examples       # all native demos, including bin/ntpicture-framebuffer
 task build-wasm test-wasm # web/demos/*.wasm and tests under Node
 task consumers           # optional; requires local sibling repositories
 task clean               # remove generated artifacts and installed QA tools
@@ -94,6 +95,14 @@ and result for these checks:
   source offsets after resize, replacement, and keep-screen.
 - Lifecycle: exercise rapid updates and stale messages while closing/reopening
   pictures; ensure messages route only to their owning instance.
+- Framebuffer: run `./bin/ntpicture-framebuffer` (or `?demo=framebuffer`).
+  Verify the status reports the actual backend and transport, resize while
+  playing, step `]`/`[` and confirm the target pixel dimensions change while
+  the cell footprint and cube proportions do not, pause and pan with arrows
+  and confirm no new transmission (the status generation is unchanged and the
+  yellow raster border scrolls into view), toggle `g`, then exit with `Q`
+  (frame retained) and separately with `q` (cleared). Repeat with
+  `NTCHARTS_KITTY=unsupported` and confirm resolution controls disappear.
 
 Unit tests cover stale results, geometry, encoding, and cleanup. Animation
 acceptance also covers GIF/WebP pause/resume, loop completion, frame seeking,
@@ -149,6 +158,29 @@ shared-memory failure/fallback in the browser; deterministic cancellation during
 transmission; hide/show; sustained streaming; and each renderer's full lifecycle
 matrix. Native visual verification remains outstanding.
 
+The framebuffer example's unit tests cover stale-result rejection after resize,
+resolution changes and pause, cancellation of the running render, viewport
+panning without preparation or Kitty output, zero-sized layouts, glyph raster
+dimensions, capability-gated help, and keep/quit teardown. Node smoke checks
+run the real WASM program; they do not look at pixels.
+
+#### 2026-10-14 (automated only)
+
+The live framebuffer demo was checked on macOS 27.0.0 with Go 1.27.2 and Node
+26 from the working tree, without a visual pass: the Chrome extension could not
+open the local site in this session and no Kitty terminal was driven
+interactively. Automated evidence: `task check-site` (Node smoke of all five
+demos including framebuffer pause, pan, and keep-screen exit), native and WASM
+unit tests with the race detector, and a pseudo-terminal run of
+`bin/ntpicture-framebuffer`. With `NTCHARTS_KITTY=supported` and an answered
+cell-size query, that run transmitted 57 zlib frames under one stable image ID
+at 480×248 px for 120×31 cells, used a fresh ID at 720×372 px with the same
+cells after `]`, another after a resize to 150×39 cells, and deleted all three
+IDs on `q`; shared memory fell back to direct transport because the pseudo
+terminal answered no probe. Glyph mode produced half-block rows at
+cols × 2 rows. Visual verification of the framebuffer in a real Kitty terminal
+and in the browser renderers remains outstanding.
+
 For a native operator check, first run `task build-examples` from the repository
 root. Then run `./bin/ntpicture-animation` in Kitty (or record Ghostty
 separately), resize while playing, alternate Space and comma/period/Home, then
@@ -179,13 +211,14 @@ playback packages.
 
 ## Browser demo site
 
-`task build-examples` builds still, simple, grid, and animation into `bin/`. To
-run one without building all four, use `GOWORK=off go -C examples run ./grid`
-(or `./simple`, `./still`, `./animation`). These examples use booba.Run for both
+`task build-examples` builds still, simple, grid, animation, and framebuffer
+into `bin/`. To run one without building all five, use
+`GOWORK=off go -C examples run ./grid` (or `./simple`, `./still`,
+`./animation`, `./framebuffer`). These examples use booba.Run for both
 native and browser execution and `Picture` for ownership, command routing, and
 cleanup.
 
-`task build-wasm-site` compiles all four into `web/demos/`, exports the booba
+`task build-wasm-site` compiles all five into `web/demos/`, exports the booba
 and ghostty-web runtime using the pinned `go tool booba-assets` in the examples
 module, and copies license notices. The exporter uses the active toolchain's
 wasm_exec.js. Source HTML/CSS/JS and browser license texts are tracked;
@@ -195,8 +228,8 @@ generated runtime assets and binaries are ignored and removed by `task clean`.
 site URLs are relative so the same artifact works under GitHub Pages' repository
 prefix. Example navigation reloads the page, giving each Go WASM program and
 image registry a fresh lifetime. `?demo=still`, `?demo=simple`, and `?demo=grid`
-select the example; `?demo=animation` selects GIF/WebP playback. Unknown names
-select still.
+select the example; `?demo=animation` selects GIF/WebP playback and
+`?demo=framebuffer` the continuously rendered scene. Unknown names select still.
 
 CI validates the site files and WASM binaries, then starts each real demo under
 Node, exercises its booba input/resize bridge, and verifies a clean exit. These
@@ -224,8 +257,10 @@ The browser opts in with `allowOSC7501Actions` and uses `installActionBar`;
 buttons send normal encoded key events, with the first alias preferred. The
 grid's rendering toggle is advertised only after Kitty support is confirmed.
 Smoke tests acknowledge the status query, decode the real action snapshot, and
-quit via its advertised gesture. Browser click/touch verification remains part
-of manual acceptance.
+quit via its advertised gesture. The framebuffer smoke check also verifies that
+frames keep arriving, that Space pauses, that an arrow pans while paused, that
+the Node run advertises no resolution controls (no Kitty reply), and keep-screen
+exit. Browser click/touch verification remains part of manual acceptance.
 
 Dependency refresh: the fork revision `v2.0.0-20261010153813-5097f2f73229`
 returned by `@latest` fails to compile for js/wasm (missing platform methods).

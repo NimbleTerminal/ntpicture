@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a live framebuffer demo that streams a procedurally rendered scene with
+  stable Kitty IDs, an explicit terminal session, paced off-loop rendering with
+  stale-result rejection, viewport panning, resolution steps, pause, keep-screen
+  exit, and matching booba browser controls.
+
 - Default playback to stable Kitty IDs with a fresh-ID opt-out; carry frame
   deadlines across rendering to avoid cumulative playback slowdown.
 - Report Kitty capability resolution as a Bubble Tea message and ignore invalid

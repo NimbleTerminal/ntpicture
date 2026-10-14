@@ -361,19 +361,24 @@ ctrl.SetViewport(ntpicture.Viewport{Y: 2, Width: 30, Height: 8})
 ## Examples and browser demo
 
 ```sh
-task build-examples       # bin/ntpicture-{still,simple,grid,animation}
+task build-examples       # bin/ntpicture-{still,simple,grid,animation,framebuffer}
 task serve-wasm-site      # http://localhost:8000/web/
 ```
 
-The site runs four examples locally in the browser through booba: a generated
+The site runs five examples locally in the browser through booba: a generated
 still image, the embedded-image viewer ported from NTCharts, its interactive
-`GridImage` board, and side-by-side GIF/WebP playback from Gloss. The same
-programs run natively. Use arrows/WASD/HJKL in the grid, `g` to switch rendering
+`GridImage` board, side-by-side GIF/WebP playback from Gloss, and a live
+framebuffer that streams a procedurally rendered scene with stable Kitty IDs,
+pausing, viewport panning and resolution changes. The same programs run
+natively. Use arrows/WASD/HJKL in the grid, `g` to switch rendering
 modes, and `q` to quit. Restart reloads a fresh browser session. Booba action
 buttons above the terminal come from the same Go help bindings as the keyboard
 controls; the grid exposes movement and, when Kitty is available, rendering
 mode. Animation exposes play/pause, frame stepping, first-frame seeking, and
 keep-screen exit. Use the keyboard’s `q` to clear and quit the animation demo.
+The framebuffer exposes pause, panning, recentering, Kitty-only resolution
+steps, the rendering toggle, and keep-screen exit; see
+[examples/framebuffer](./examples/framebuffer/README.md) for its producer policy.
 
 Examples have their own Go module; booba stays out of the library's dependency
 graph. The NTCharts URL, heatmap, and chart adapters remain NTCharts examples.

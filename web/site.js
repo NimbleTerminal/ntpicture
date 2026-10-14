@@ -5,6 +5,7 @@ const demos = {
   simple: 'Embedded image',
   grid: 'Interactive grid',
   animation: 'GIF & WebP playback',
+  framebuffer: 'Live framebuffer',
 };
 const requested = new URLSearchParams(location.search).get('demo');
 const demo = Object.hasOwn(demos, requested) ? requested : 'still';
@@ -24,6 +25,9 @@ if (demo === 'grid') {
 }
 if (demo === 'animation') {
   document.querySelector('#help').textContent = 'Space pauses/plays both clips · comma/period steps · Home returns to frame one · Q keeps the screen and quits · q clears and quits. Buttons above control playback and keep-screen exit; use the keyboard for q.';
+}
+if (demo === 'framebuffer') {
+  document.querySelector('#help').textContent = 'Space pauses/plays · arrows/WASD/HJKL pan the viewport · c recenters · [ and ] change Kitty resolution · g toggles glyph/Kitty · Q keeps the screen and quits · q clears and quits. Pause, then pan: the image is re-addressed, not retransmitted.';
 }
 function failed(error) {
   status.dataset.error = '';

@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 const demo = process.argv[2];
-assert.ok(['still', 'simple', 'grid', 'animation'].includes(demo));
+assert.ok(['still', 'simple', 'grid', 'animation', 'framebuffer'].includes(demo));
 vm.runInThisContext(await readFile('web/wasm_exec.js', 'utf8'));
 const go = new Go();
 const composite = process.argv.includes('composite');
@@ -61,6 +61,34 @@ try {
     const stepped = bubbletea_read();
     // Restart may leave the screen identical when already on frame one.
     if (!composite) assert.ok(stepped.length > 0, 'paused animation can step frames');
+    bubbletea_write(' ');
+  }
+  if (demo === 'framebuffer') {
+    for (const label of ['Pause', 'Up', 'Down', 'Left', 'Right', 'Center view', 'Keep screen & quit']) {
+      assert.ok(snapshot.actions.some(action => action.label === label && action.enabled), `${label} action`);
+    }
+    // Node answers no Kitty query, so glyph output is active and the
+    // resolution controls must not be advertised.
+    assert.ok(!snapshot.actions.some(action => action.label === 'Higher resolution' && action.enabled), 'resolution hidden without Kitty');
+    // Fresh glyph rows after startup show that rendered frames keep arriving.
+    let frames = '';
+    for (let n = 0; n < 100 && !frames.includes('▄'); n++) {
+      await delay(25);
+      frames += bubbletea_read();
+    }
+    assert.ok(frames.includes('▄'), 'producer delivered frames');
+    bubbletea_write(' ');
+    let paused = '';
+    for (let n = 0; n < 100 && !paused.includes('paused'); n++) {
+      await delay(25);
+      paused += bubbletea_read();
+    }
+    assert.ok(paused.includes('paused'), 'framebuffer pauses through input bridge');
+    // While paused, only the viewport changes; the redraw proves the pan.
+    bubbletea_read();
+    bubbletea_write('\x1b[C');
+    await delay(100);
+    assert.ok(bubbletea_read().length > 0, 'paused viewport pans');
     bubbletea_write(' ');
   }
   bubbletea_resize(44, 18);

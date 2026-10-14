@@ -66,7 +66,7 @@ tasks:
     desc: Build all native demos
     cmds:
       - mkdir -p bin
-      - for: [still, simple, grid, animation]
+      - for: [still, simple, grid, animation, framebuffer]
         cmd: go -C examples build -mod=readonly -o ../bin/ntpicture-{{.ITEM}} ./{{.ITEM}}
   build-wasm:
     desc: Build all browser demos
@@ -77,7 +77,7 @@ tasks:
       CGO_ENABLED: '0'
     cmds:
       - mkdir -p web/demos
-      - for: [still, simple, grid, animation]
+      - for: [still, simple, grid, animation, framebuffer]
         cmd: go -C examples build -mod=readonly -o ../web/demos/{{.ITEM}}.wasm ./{{.ITEM}}
   notices:
     desc: Regenerate dependency and browser runtime notices
@@ -100,10 +100,11 @@ tasks:
     cmds:
       - node --check web/site.js
       - node scripts/check-site.mjs
-      - for: [still, simple, grid, animation]
+      - for: [still, simple, grid, animation, framebuffer]
         cmd: node scripts/smoke-demo.mjs {{.ITEM}}
       - node scripts/smoke-demo.mjs animation keep
       - node scripts/smoke-demo.mjs animation composite
+      - node scripts/smoke-demo.mjs framebuffer keep
   serve-wasm-site:
     desc: Serve demos at http://localhost:8000/web/
     cmds:
