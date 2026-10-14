@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/draw"
 	"math"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -64,6 +65,19 @@ func compositeRectOK(r image.Rectangle) bool {
 // replaced clips restart at the supplied Player, and removed keys are dropped.
 // Construction/composition belongs off the UI loop for large canvases.
 func NewComposite(ctx context.Context, base image.Image, regions []Region, previous *Composite) (*Composite, error) {
+	return newComposite(ctx, base, regions, previous, true)
+}
+
+// NewCompositeImmutable avoids copying base pixels. The caller must keep base
+// and any backing storage immutable for the entire lifetime of this composite
+// and all positions/windows derived from it. Region metadata is still copied,
+// and outputs remain read-only views. All NewComposite bounds apply.
+func NewCompositeImmutable(ctx context.Context, base image.Image, regions []Region, previous *Composite) (*Composite, error) {
+	return newComposite(ctx, base, regions, previous, false)
+}
+
+func newComposite(ctx context.Context, base image.Image, regions []Region, previous *Composite, copyBase bool) (*Composite, error) {
+
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -82,9 +96,12 @@ func NewComposite(ctx context.Context, base image.Image, regions []Region, previ
 			s.positions[r.Key] = compositePosition{player: r.Player, due: r.Player.Delay()}
 		}
 	}
-	owned := image.NewRGBA(base.Bounds())
-	draw.Draw(owned, owned.Bounds(), base, base.Bounds().Min, draw.Src)
-	s.base = readOnlyImage{owned}
+	if copyBase {
+		owned := image.NewRGBA(base.Bounds())
+		draw.Draw(owned, owned.Bounds(), imageview.Unwrap(base), base.Bounds().Min, draw.Src)
+		base = owned
+	}
+	s.base = imageview.New(base)
 	if previous != nil {
 		s.carry(previous)
 	}
@@ -131,6 +148,16 @@ func (s *Composite) WithPositions(ctx context.Context, others ...*Composite) (*C
 	n := s.copy()
 	for _, other := range others {
 		n.carry(other)
+	}
+	unchanged := true
+	for key, p := range n.positions {
+		if p != s.positions[key] {
+			unchanged = false
+			break
+		}
+	}
+	if unchanged {
+		return s, ctx.Err()
 	}
 	return n.compose(ctx)
 }
@@ -211,7 +238,7 @@ func (s *Composite) compose(ctx context.Context) (*Composite, error) {
 		return s, nil
 	}
 	out := image.NewRGBA(s.base.Bounds())
-	draw.Draw(out, out.Bounds(), s.base, s.base.Bounds().Min, draw.Src)
+	draw.Draw(out, out.Bounds(), imageview.Unwrap(s.base), s.base.Bounds().Min, draw.Src)
 	for _, r := range s.regions {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -225,10 +252,11 @@ func (s *Composite) compose(ctx context.Context) (*Composite, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.frame = readOnlyImage{out}
+	s.frame = imageview.New(out)
 	return s, nil
 }
 func scaleComposite(dst draw.Image, rect image.Rectangle, src image.Image, bounds image.Rectangle, op draw.Op) {
+	src = imageview.Unwrap(src)
 	switch {
 	case rect.Size() == bounds.Size():
 		draw.Draw(dst, rect, src, bounds.Min, op)
@@ -266,7 +294,7 @@ func (s *Composite) Window(ctx context.Context, r image.Rectangle, size image.Po
 	base := image.NewRGBA(bounds)
 	scaleComposite(base, bounds, s.base, r, draw.Src)
 	fx, fy := float64(size.X)/float64(r.Dx()), float64(size.Y)/float64(r.Dy())
-	n := &Composite{base: readOnlyImage{base}, positions: map[string]compositePosition{}}
+	n := &Composite{base: imageview.New(base), positions: map[string]compositePosition{}}
 	for _, region := range s.regions {
 		if err := ctx.Err(); err != nil {
 			return nil, err

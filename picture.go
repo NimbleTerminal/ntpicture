@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math/rand/v2"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -215,7 +216,7 @@ func (p *Picture) SetImage(img image.Image) tea.Cmd {
 	}
 	b := img.Bounds()
 	snapshot := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	draw.Draw(snapshot, snapshot.Bounds(), img, b.Min, draw.Src)
+	draw.Draw(snapshot, snapshot.Bounds(), imageview.Unwrap(img), b.Min, draw.Src)
 	return p.SetImageImmutable(snapshot)
 }
 

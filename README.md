@@ -247,7 +247,10 @@ ctrl := playback.NewSource(source, playback.Options{})
 cmd := ctrl.Restart() // resets all regions; preserves pause state
 ```
 
-Construction snapshots base pixels and region metadata. Each canvas and region
+Construction snapshots base pixels and region metadata. If the host already
+owns an immutable base, `NewCompositeImmutable` skips the base copy; its pixels
+must remain unchanged for all derived positions and windows. Region metadata
+is still copied and public images remain read-only. Each canvas and region
 is bounded to 32 Mi pixels, with at most 1,024 region entries. These bounds are
 not an aggregate memory budget: base, output, players, older positions, and
 scaler scratch may coexist. Hosts retain their smaller document-specific limits.
@@ -259,7 +262,9 @@ clone. Advance/reset accept a context and report errors. A failed composite
 advance leaves its published position unchanged; `RegionError` wraps the
 underlying `FrameError`. Playback pauses and reports the error in `Status.Err`.
 Cancellation is checked between regions; a running scaler/codec must finish.
-Rate scaling belongs to the controller and is applied once.
+Rate scaling belongs to the controller and is applied once. When a tick only
+changes loop bookkeeping and retains the same immutable image, the controller
+skips picture preparation and transmission.
 
 `Status.Source` supplies the current immutable source position. `Status.Player`
 is populated only for a standalone player. Composites have no single frame
@@ -269,8 +274,11 @@ Existing `playback.New`, `SetPlayer`, and standalone seeking remain supported.
 For relayout, pass the previous composite to `NewComposite`, or call
 `WithPositions(ctx, windows...)` before constructing the new layout. Positions
 carry only when both key and clip identity match; replaced clips start at their
-supplied player, and removed keys are discarded. `WithPositions` recomposes its
-image, so its returned pixels and playback positions agree. Later arguments win.
+supplied player, and removed keys are discarded. `WithPositions` recomposes
+when positions change, so its returned pixels and
+playback positions agree; unchanged positions reuse the original image. Later
+arguments win. For a single previous composite, pass it directly to the
+constructor instead of merging and then immediately recomposing a new layout.
 
 ### Window versus Viewport
 

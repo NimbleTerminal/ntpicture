@@ -6,6 +6,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -284,5 +285,30 @@ func TestCompositeCancellationDuringLazyDecode(t *testing.T) {
 	}
 	if source.positions["lazy"].player.Frame() != 1 {
 		t.Fatal("cancelled work changed published position")
+	}
+}
+
+func TestCompositeImmutableBaseOwnership(t *testing.T) {
+	base := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	s, err := NewCompositeImmutable(context.Background(), base, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := s.WithPositions(context.Background(), s)
+	if err != nil || same != s {
+		t.Fatal("no-op position merge recomposed the image")
+	}
+	if imageview.Unwrap(s.base) != base {
+		t.Fatal("immutable constructor copied the base")
+	}
+	if _, ok := s.Image().(interface{ Set(int, int, color.Color) }); ok {
+		t.Fatal("immutable constructor exposed mutation")
+	}
+	copied, err := NewComposite(context.Background(), s.Image(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageview.Unwrap(copied.base) == base {
+		t.Fatal("copying constructor stopped taking a snapshot")
 	}
 }

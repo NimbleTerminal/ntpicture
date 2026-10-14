@@ -241,3 +241,26 @@ func TestCompositeSourcePlaybackAndRestart(t *testing.T) {
 		t.Fatal("closed controller retained source")
 	}
 }
+
+func TestCompositeUnchangedTickSkipsPictureSubmission(t *testing.T) {
+	p := testPlayer(t)
+	// Offset the second region's delay while keeping both finite.
+	frame := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	slow, err := animation.NewPlayer(&animation.Clip{Bounds: frame.Bounds(), LoopCount: -1, Frames: []animation.ClipFrame{{Image: frame, Delay: 3 * time.Millisecond}, {Image: frame, Delay: 3 * time.Millisecond}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := animation.NewComposite(context.Background(), image.NewRGBA(image.Rect(0, 0, 4, 2)), []animation.Region{{Rect: image.Rect(0, 0, 2, 2), Player: p, Key: "fast"}, {Rect: image.Rect(2, 0, 4, 2), Player: slow, Key: "slow"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewSource(source, Options{Wait: func(context.Context, time.Duration) bool { return true }})
+	c.SetSize(4, 2)
+	drive(t, c, c.SetSource(source))
+	// Initial image, fast frame two, slow frame two. Finishing the fast clip
+	// while the slow one waits must not submit the unchanged composition.
+	if got := c.pic.Status().Generation; got != 4 { // SetSize plus three image submissions.
+		t.Fatalf("unchanged tick submitted a picture: generation=%d", got)
+	}
+	drive(t, c, c.Close())
+}

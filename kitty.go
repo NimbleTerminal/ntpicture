@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -67,6 +68,7 @@ func buildKittyAPC(img image.Image, id, cols, rows int, format KittyFormat, z ..
 }
 
 func (transport kittyTransport) buildKittyAPC(img image.Image, id, cols, rows int, format KittyFormat, z ...int) string {
+	img = imageview.Unwrap(img)
 	if format == KittyFormatRGBA {
 		b := img.Bounds()
 		data := kittyRGBABytes(img)
@@ -126,6 +128,7 @@ func (transport kittyTransport) buildKittyZlibAPC(img image.Image, id, cols, row
 
 // kittyRGBBytes returns an opaque img as tightly packed RGB rows.
 func kittyRGBBytes(img image.Image) []byte {
+	img = imageview.Unwrap(img)
 	b := img.Bounds()
 	out := make([]byte, 0, 3*b.Dx()*b.Dy())
 	if src, ok := img.(*image.RGBA); ok {
@@ -222,6 +225,7 @@ func kittyRGBABytes(img image.Image) []byte {
 // memory uses this directly, avoiding an intermediate full-frame allocation.
 // NRGBA rows are copied; RGBA pixels are un-premultiplied where translucent.
 func writeKittyRGBA(out []byte, img image.Image) {
+	img = imageview.Unwrap(img)
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	rowBytes := 4 * w

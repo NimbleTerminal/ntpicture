@@ -277,3 +277,33 @@ position carry-over after relayout, and cancellation during lazy decoding.
 `Composite.Window` changes pixels and remaps regions; `Picture.SetViewport`
 only clips prepared cells. Test both separately and together under Kitty,
 glyph fallback, and the browser renderers. Record visual results here.
+
+## Compositor performance
+
+Run:
+
+```sh
+go test ./animation -run '^$' -bench 'Benchmark(ReadOnlyPageDraw|Composite)' -benchmem
+```
+
+The 1600×2100 page cases cover external drawing
+of read-only views, advancing a small region on a large page, and both copying
+and immutable-base relayout. Compare allocation counts as well as timings.
+
+A local macOS/Apple M5 Max check with `-benchtime=3x` found:
+
+| Operation | Before | After | Allocations before → after |
+| --- | ---: | ---: | ---: |
+| Public read-only page draw | 34.9 ms | 13.2 ms | 3,360,000 → 0 |
+| Composite page advance | 31.3 ms | 1.22 ms | 3,403,210 → 10 |
+| Copying composite relayout | 30.9 ms | 1.26 ms | 3,403,211 → 11 |
+
+The new immutable-base relayout measured 0.55 ms and 9 allocations. These short
+samples diagnose the wrapper regression, not portable latency guarantees. A
+full composed output still needs a page-sized allocation. Public views implement
+RGBA64At; trusted internal rendering unwraps only our own private view type to
+recover concrete-image fast paths. No public mutable-image accessor is exposed.
+
+WithPositions intentionally recomposes changed positions for snapshot consistency;
+no-op merges reuse the original snapshot. Avoid merging just before a constructor
+when its previous-composite argument already supplies the needed positions.

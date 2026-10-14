@@ -5,6 +5,8 @@ package playback
 import (
 	"context"
 	"errors"
+	"image"
+	"reflect"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -270,6 +272,7 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 					c.paused = true
 				}
 			} else if m.source != nil {
+				unchanged := c.source != nil && sameImage(c.source.Image(), m.source.Image())
 				c.setSource(m.source)
 				c.finished = !m.more || c.source.Delay() <= 0
 				if m.more {
@@ -284,7 +287,9 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 							c.nextDue = c.now()
 						}
 					}
-					cmds = append(cmds, c.pic.SetImageImmutable(c.source.Image()))
+					if !unchanged {
+						cmds = append(cmds, c.pic.SetImageImmutable(c.source.Image()))
+					}
 				}
 			}
 		}
@@ -327,3 +332,9 @@ func (c *Controller) SetViewport(v picture.Viewport) { c.pic.SetViewport(v) }
 
 // ResetViewport restores the complete picture view.
 func (c *Controller) ResetViewport() { c.pic.ResetViewport() }
+
+// Custom image implementations need not be comparable. Unknown identities are
+// conservatively resubmitted; immutable sources may reuse an image to skip work.
+func sameImage(a, b image.Image) bool {
+	return a != nil && b != nil && reflect.ValueOf(a).Comparable() && reflect.ValueOf(b).Comparable() && a == b
+}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 	"time"
 )
 
@@ -21,19 +21,14 @@ type Player struct {
 }
 
 // Image is a read-only snapshot; later positions never mutate its pixels.
-func (p *Player) Image() image.Image { return readOnlyImage{p.canvas} }
+func (p *Player) Image() image.Image { return imageview.New(p.canvas) }
 
 // Err reports a lazy failure from Next or Restart. Prefer context methods to
 // receive errors directly. A failed frame is skipped; its disposal still applies.
 func (p *Player) Err() error { return p.err }
 
-type readOnlyImage struct{ img image.Image }
-
-func (r readOnlyImage) Bounds() image.Rectangle { return r.img.Bounds() }
-func (r readOnlyImage) ColorModel() color.Model { return r.img.ColorModel() }
-func (r readOnlyImage) At(x, y int) color.Color { return r.img.At(x, y) }
-func (p *Player) Frame() int                    { return p.frame + 1 }
-func (p *Player) Frames() int                   { return len(p.data.Frames) }
+func (p *Player) Frame() int  { return p.frame + 1 }
+func (p *Player) Frames() int { return len(p.data.Frames) }
 func (p *Player) Delay() time.Duration {
 	return p.data.Frames[p.frame].Delay
 }
@@ -188,6 +183,6 @@ func (f ClipFrame) paint(ctx context.Context, canvas draw.Image) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	draw.Draw(canvas, f.Rect, img, img.Bounds().Min, f.Blend)
+	draw.Draw(canvas, f.Rect, imageview.Unwrap(img), img.Bounds().Min, f.Blend)
 	return ctx.Err()
 }

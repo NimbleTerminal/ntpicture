@@ -3,6 +3,7 @@ package ntpicture
 import (
 	"image"
 	"image/color"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 
 	"golang.org/x/image/draw"
 )
@@ -25,6 +26,7 @@ func prepareSource(src image.Image, fit FitMode, cols, rows, cellW, cellH int, b
 }
 
 func prepareSourceWithScratch(src image.Image, fit FitMode, cols, rows, cellW, cellH int, bg color.Color, anchor FitAnchor, scratch *fitScratch) image.Image {
+	src = imageview.Unwrap(src)
 	if cols <= 0 || rows <= 0 || cellW <= 0 || cellH <= 0 {
 		return nil
 	}

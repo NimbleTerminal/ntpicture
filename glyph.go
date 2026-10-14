@@ -2,6 +2,7 @@ package ntpicture
 
 import (
 	"image"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 	"strconv"
 )
 
@@ -14,6 +15,7 @@ import (
 // It panics if the image height is odd; callers must prepare complete pairs
 // of pixel rows (View does this with a 1x2 cell size).
 func appendGlyph(buf []byte, src image.Image) []byte {
+	src = imageview.Unwrap(src)
 	bounds := src.Bounds()
 	if bounds.Dy()%2 != 0 {
 		panic("ntpicture: appendGlyph requires an even-height prepared image")
