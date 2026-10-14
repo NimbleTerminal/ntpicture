@@ -175,14 +175,7 @@ type kittyGeom struct {
 
 var nextModelID atomic.Uint64
 
-// NewModel returns a low-level Model with default Config.
-func NewModel() Model {
-	return NewModelWithConfig(Config{})
-}
-
-// NewModelWithConfig returns a Model with the supplied Config. Zero/nil fields
-// are filled with defaults.
-func NewModelWithConfig(cfg Config) Model {
+func normalizeConfig(cfg Config) Config {
 	if cfg.KittyID <= 0 {
 		cfg.KittyID = DefaultKittyID
 	}
@@ -198,6 +191,20 @@ func NewModelWithConfig(cfg Config) Model {
 	if math.IsNaN(cfg.KittyResolutionFactor) || cfg.KittyResolutionFactor <= 0 || cfg.KittyResolutionFactor > 1 {
 		cfg.KittyResolutionFactor = 1.0
 	}
+	cfg.KittyFormat = normalizeKittyFormat(cfg.KittyFormat)
+	cfg.KittyMedium = normalizeKittyMedium(cfg.KittyMedium)
+	return cfg
+}
+
+// NewModel returns a low-level Model with default Config.
+func NewModel() Model {
+	return NewModelWithConfig(Config{})
+}
+
+// NewModelWithConfig returns a Model with the supplied Config. Zero/nil fields
+// are filled with defaults.
+func NewModelWithConfig(cfg Config) Model {
+	cfg = normalizeConfig(cfg)
 	return Model{
 		modelID:               nextModelID.Add(1),
 		kittyZ:                cfg.KittyZ,
@@ -207,8 +214,8 @@ func NewModelWithConfig(cfg Config) Model {
 		cellPixelW:            cfg.CellPixelWidth,
 		cellPixelH:            cfg.CellPixelHeight,
 		kittyResolutionFactor: cfg.KittyResolutionFactor,
-		kittyFormat:           normalizeKittyFormat(cfg.KittyFormat),
-		kittyMedium:           normalizeKittyMedium(cfg.KittyMedium),
+		kittyFormat:           cfg.KittyFormat,
+		kittyMedium:           cfg.KittyMedium,
 		kittyShared:           &kittySharedState{},
 		fit:                   cfg.Fit,
 		anchor:                cfg.Anchor,
@@ -417,7 +424,7 @@ func (m *Model) KittyResolutionFactor() float64 { return m.kittyResolutionFactor
 // Out-of-range values clamp to 1.0. Returns a render Cmd if the factor
 // changed and a Kitty image is currently placed; otherwise nil.
 func (m *Model) SetKittyResolutionFactor(f float64) tea.Cmd {
-	if f <= 0 || f > 1 {
+	if math.IsNaN(f) || f <= 0 || f > 1 {
 		f = 1.0
 	}
 	if f == m.kittyResolutionFactor {
@@ -551,14 +558,13 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		m.kittyGrid = msg.grid
 		return nil
 	case uv.CellSizeEvent:
-		if msg.Width > 0 && msg.Height > 0 {
-			defaultTerminalSession.state.CellPixelWidth, defaultTerminalSession.state.CellPixelHeight = msg.Width, msg.Height
+		if msg.Width <= 0 || msg.Height <= 0 {
+			return nil
 		}
+		_ = defaultTerminalSession.Update(msg)
 		return m.SetCellPixelSize(msg.Width, msg.Height)
-	case uv.KittyGraphicsEvent:
-		return recordKittyResponse(msg)
-	case kittyProbeTickMsg:
-		return recordKittyTimeout()
+	case uv.KittyGraphicsEvent, kittyProbeTickMsg:
+		return defaultTerminalSession.Update(msg)
 	}
 	return nil
 }
@@ -570,6 +576,16 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 // every tea.Msg to Model.Update as usual.
 func RequestCellSize() tea.Cmd {
 	return tea.Raw(ansi.WindowOp(16))
+}
+
+func prepareGlyphFrame(img image.Image, cfg Config, cols, rows int, scratch *fitScratch, buf []byte) (string, []byte) {
+	// Half-blocks can display only one horizontal and two vertical pixels
+	// per cell. Fit at that resolution instead of scaling to Kitty pixels
+	// and immediately downsampling again.
+	rendered := prepareSourceWithScratch(img, cfg.Fit, cols, rows, 1, 2, cfg.Background, cfg.Anchor, scratch)
+	buf = appendGlyph(buf[:0], rendered)
+	// Copy: previously returned Views must remain immutable when scratch is reused.
+	return string(buf), buf
 }
 
 // View returns the rendered image as a tea.View, or an empty view if there is
@@ -600,13 +616,13 @@ func (m *Model) View() tea.View {
 		return tea.NewView(m.glyphCache)
 	}
 
-	// Half-blocks can display only one horizontal and two vertical pixels
-	// per cell. Fit at that resolution instead of scaling to Kitty pixels
-	// and immediately downsampling again.
-	rendered := prepareSourceWithScratch(m.img, m.fit, m.cols, m.rows, 1, 2, m.background, m.anchor, &m.glyphFit)
-	m.glyphBuf = appendGlyph(m.glyphBuf[:0], rendered)
-	// Copy: previously returned Views must remain immutable when scratch is reused.
-	out := string(m.glyphBuf)
+	cfg := Config{
+		Fit:        m.fit,
+		Anchor:     m.anchor,
+		Background: m.background,
+	}
+	out, buf := prepareGlyphFrame(m.img, cfg, m.cols, m.rows, &m.glyphFit, m.glyphBuf)
+	m.glyphBuf = buf
 	m.glyphCache = out
 	m.glyphKey = key
 	return tea.NewView(out)
@@ -628,6 +644,73 @@ func (m *Model) kittyCellPixelSize() (int, int) {
 		max(1, int(float64(m.cellPixelH)*m.kittyResolutionFactor))
 }
 
+type kittyPrepareParams struct {
+	modelID    uint64
+	seq        uint64
+	img        image.Image
+	cfg        Config
+	cols, rows int
+	cpw, cph   int
+	rasterSize image.Point
+	prevGeom   kittyGeom
+	transport  kittyTransport
+	shared     *kittySharedState
+}
+
+func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg, bool) {
+	if ctx.Err() != nil {
+		return KittyFrameMsg{}, false
+	}
+	var prepared image.Image
+	if p.rasterSize.X > 0 && p.rasterSize.Y > 0 {
+		prepared = prepareSource(p.img, p.cfg.Fit, p.rasterSize.X, p.rasterSize.Y, 1, 1, p.cfg.Background, p.cfg.Anchor)
+	} else {
+		prepared = prepareSource(p.img, p.cfg.Fit, p.cols, p.rows, p.cpw, p.cph, p.cfg.Background, p.cfg.Anchor)
+	}
+	if prepared == nil || ctx.Err() != nil {
+		return KittyFrameMsg{}, false
+	}
+	actualMedium, actualFormat := KittyMediumDirect, p.cfg.KittyFormat
+	var apc string
+	var object *kittyshm.Object
+	if p.cfg.KittyMedium == KittyMediumSharedMemory && p.transport.shared {
+		var err error
+		apc, object, err = p.transport.buildKittySharedMemoryAPC(prepared, p.cfg.KittyID, p.cols, p.rows, p.cfg.KittyZ)
+		if err == nil {
+			actualMedium, actualFormat = KittyMediumSharedMemory, KittyFormatRGBA
+		}
+	}
+	if actualMedium == KittyMediumDirect {
+		// Yield around expensive direct encoding, including shared-memory
+		// fallback, so browser events can drain. Native yields are no-ops.
+		yieldToJS()
+		apc = p.transport.buildKittyAPC(prepared, p.cfg.KittyID, p.cols, p.rows, p.cfg.KittyFormat, p.cfg.KittyZ)
+		yieldToJS()
+	}
+	if ctx.Err() != nil {
+		_ = object.Unlink()
+		return KittyFrameMsg{}, false
+	}
+	if !p.shared.replace(p.seq, object) {
+		return KittyFrameMsg{}, false
+	}
+	currGeom := kittyGeom{cols: p.cols, rows: p.rows, cellPixelW: p.cpw, cellPixelH: p.cph, fit: p.cfg.Fit, anchor: p.cfg.Anchor}
+	if p.prevGeom != (kittyGeom{}) && p.prevGeom != currGeom {
+		apc = p.transport.kittyDeleteImage(p.cfg.KittyID) + apc
+	}
+	grid := buildKittyGrid(p.cols, p.rows, p.cfg.KittyID)
+	return KittyFrameMsg{
+		modelID:      p.modelID,
+		ID:           p.cfg.KittyID,
+		Seq:          p.seq,
+		APC:          apc,
+		Grid:         grid,
+		Format:       actualFormat,
+		Medium:       actualMedium,
+		sharedMemory: object,
+	}, true
+}
+
 func (m *Model) renderCmd() tea.Cmd {
 	return m.renderCmdContext(context.Background())
 }
@@ -646,66 +729,39 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 	// CatmullRom scale + bg compositing, plus buildKittyAPC's PNG encode)
 	// to the returned closure so SetImage/SetSize/SetFit/SetAnchor/Update return
 	// immediately and bubbletea runs the render off the main loop.
-	img, bg := m.img, m.background
-	modelID, id, cols, rows, seq := m.modelID, m.kittyID, m.cols, m.rows, m.seq
-	fit := m.fit
-	anchor := m.anchor
-	format, medium, z := m.kittyFormat, m.kittyMedium, m.kittyZ
-	shared := m.kittyShared
+	cpw, cph := m.kittyCellPixelSize()
 	transport := legacyTransport()
 	if m.transport != nil {
 		transport = *m.transport
 	}
-	shared.begin(seq)
-	// Apply kittyResolutionFactor to the cell-pixel dims used for the
-	// transmitted image. The placement rectangle (cols × rows cells) is
-	// unchanged, so the terminal upscales the smaller source image to
-	// fill the cell area on display.
-	cpw, cph := m.kittyCellPixelSize()
-	raster := m.rasterSize
-	prevGeom := m.lastRenderedGeom
+	params := kittyPrepareParams{
+		modelID: m.modelID,
+		seq:     m.seq,
+		img:     m.img,
+		cfg: Config{
+			KittyZ:      m.kittyZ,
+			KittyID:     m.kittyID,
+			Background:  m.background,
+			Fit:         m.fit,
+			Anchor:      m.anchor,
+			KittyFormat: m.kittyFormat,
+			KittyMedium: m.kittyMedium,
+		},
+		cols:       m.cols,
+		rows:       m.rows,
+		cpw:        cpw,
+		cph:        cph,
+		rasterSize: m.rasterSize,
+		prevGeom:   m.lastRenderedGeom,
+		transport:  transport,
+		shared:     m.kittyShared,
+	}
+	params.shared.begin(params.seq)
 	return func() tea.Msg {
-		if ctx.Err() != nil {
+		msg, ok := prepareKittyFrame(ctx, params)
+		if !ok {
 			return nil
 		}
-		var prepared image.Image
-		if raster.X > 0 && raster.Y > 0 {
-			prepared = prepareSource(img, fit, raster.X, raster.Y, 1, 1, bg, anchor)
-		} else {
-			prepared = prepareSource(img, fit, cols, rows, cpw, cph, bg, anchor)
-		}
-		if prepared == nil || ctx.Err() != nil {
-			return nil
-		}
-		actualMedium, actualFormat := KittyMediumDirect, format
-		var apc string
-		var object *kittyshm.Object
-		if medium == KittyMediumSharedMemory && transport.shared {
-			var err error
-			apc, object, err = transport.buildKittySharedMemoryAPC(prepared, id, cols, rows, z)
-			if err == nil {
-				actualMedium, actualFormat = KittyMediumSharedMemory, KittyFormatRGBA
-			}
-		}
-		if actualMedium == KittyMediumDirect {
-			// Yield around expensive direct encoding, including shared-memory
-			// fallback, so browser events can drain. Native yields are no-ops.
-			yieldToJS()
-			apc = transport.buildKittyAPC(prepared, id, cols, rows, format, z)
-			yieldToJS()
-		}
-		if ctx.Err() != nil {
-			_ = object.Unlink()
-			return nil
-		}
-		if !shared.replace(seq, object) {
-			return nil
-		}
-		currGeom := kittyGeom{cols: cols, rows: rows, cellPixelW: cpw, cellPixelH: cph, fit: fit, anchor: anchor}
-		if prevGeom != (kittyGeom{}) && prevGeom != currGeom {
-			apc = transport.kittyDeleteImage(id) + apc
-		}
-		grid := buildKittyGrid(cols, rows, id)
-		return KittyFrameMsg{modelID: modelID, ID: id, Seq: seq, APC: apc, Grid: grid, Format: actualFormat, Medium: actualMedium, sharedMemory: object}
+		return msg
 	}
 }

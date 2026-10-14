@@ -106,17 +106,7 @@ var (
 // graphics, or an error (ErrKittyProbePending, ErrKittyNotDetected, or
 // ErrKittyProbeTimeout) saying why Toggle into Kitty mode is blocked.
 func KittyUnavailable() error {
-	switch KittySupported() {
-	case KittyCapabilitySupported:
-		return nil
-	case KittyCapabilityUnsupported:
-		if KittyEnvSignalled() {
-			return ErrKittyProbeTimeout
-		}
-		return ErrKittyNotDetected
-	default:
-		return ErrKittyProbePending
-	}
+	return DefaultTerminalSession().unavailable()
 }
 
 // ForceKittyCapability sets the process-wide Kitty graphics capability,
@@ -127,6 +117,9 @@ func KittyUnavailable() error {
 // Model.Init so the probe is skipped; NTCHARTS_KITTY=supported|unsupported
 // does the same from the environment.
 func ForceKittyCapability(c KittyCapability) {
+	if c == KittyCapabilityUnsupported {
+		kittyEnvSignalled.Store(false)
+	}
 	kittyCap.Store(int32(c))
 }
 

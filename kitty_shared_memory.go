@@ -62,20 +62,24 @@ func kittySharedUsable() bool {
 // kittySharedProbeable reports whether this process has a medium to query.
 func kittySharedProbeable() bool { return runtime.GOOS != "js" && kittyshm.Supported() }
 
-// kittySharedQueryAPC returns a Kitty query (a=q) naming a one-pixel shared
-// object, or "" when there is nothing to probe. Only a terminal that can read
-// the object replies OK.
-func kittySharedQueryAPC() string {
+// buildKittySharedProbeAPC returns a Kitty query (a=q) naming a one-pixel
+// shared object, or "" when there is nothing to probe.
+func buildKittySharedProbeAPC(id int, transport kittyTransport) (string, *kittyshm.Object) {
 	if !kittySharedProbeable() {
-		return ""
+		return "", nil
 	}
 	obj, err := kittyshm.Create(4, func([]byte) error { return nil })
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	_ = kittySharedProbe.Swap(obj).Unlink()
 	name := base64.StdEncoding.EncodeToString([]byte(obj.Name))
-	return tmuxWrap(fmt.Sprintf("\x1b_Ga=q,t=s,f=32,s=1,v=1,S=4,i=%d;%s\x1b\\", kittySharedProbeID, name))
+	return transport.wrap(fmt.Sprintf("\x1b_Ga=q,t=s,f=32,s=1,v=1,S=4,i=%d;%s\x1b\\", id, name)), obj
+}
+
+func kittySharedQueryAPC() string {
+	apc, obj := buildKittySharedProbeAPC(kittySharedProbeID, legacyTransport())
+	_ = kittySharedProbe.Swap(obj).Unlink()
+	return apc
 }
 
 // recordKittySharedResponse resolves the shared-memory query. A late OK
@@ -159,6 +163,30 @@ func (s *kittySharedState) replace(seq uint64, obj *kittyshm.Object) bool {
 	s.retired = kept
 	s.object, s.submitted = obj, false
 	return true
+}
+
+func (s *kittySharedState) retire(seq uint64) *kittyshm.Object {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq = seq
+	var pending *kittyshm.Object
+	if s.submitted && s.object != nil {
+		s.object.Retire()
+		if !s.object.Done() {
+			pending = s.object
+		}
+	} else {
+		_ = s.object.Unlink()
+	}
+	s.object, s.submitted = nil, false
+	for _, old := range s.retired {
+		old.Retire()
+	}
+	s.retired = nil
+	return pending
 }
 
 func (s *kittySharedState) clear(seq uint64) {

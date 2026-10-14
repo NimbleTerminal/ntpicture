@@ -174,8 +174,7 @@ func New(opts Options) *Picture {
 		opts.Render.CellPixelWidth, opts.Render.CellPixelHeight = state.CellPixelWidth, state.CellPixelHeight
 	}
 	// Normalize all renderer defaults once and preserve them across replacements.
-	m := NewModelWithConfig(opts.Render)
-	opts.Render = m.config()
+	opts.Render = normalizeConfig(opts.Render)
 	opts.Render.Background = color.RGBA64Model.Convert(opts.Render.Background)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Picture{opts: opts, visible: true, lifetime: ctx, closeCancel: cancel}
@@ -555,12 +554,10 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		if v.Width <= 0 || v.Height <= 0 {
 			return nil
 		}
-		defaultTerminalSession.state.CellPixelWidth, defaultTerminalSession.state.CellPixelHeight = v.Width, v.Height
+		_ = defaultTerminalSession.Update(v)
 		return p.SetTerminal(p.mode == PictureKitty, v.Width, v.Height)
-	case uv.KittyGraphicsEvent:
-		return recordKittyResponse(v)
-	case kittyProbeTickMsg:
-		return recordKittyTimeout()
+	case uv.KittyGraphicsEvent, kittyProbeTickMsg:
+		return defaultTerminalSession.Update(v)
 	}
 	return nil
 }

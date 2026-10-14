@@ -1,12 +1,10 @@
 package ntpicture
 
 import (
-	"fmt"
 	"image"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/ansi/kitty"
 )
 
 // Viewport selects a cell rectangle within a Picture's full SetSize dimensions.
@@ -73,14 +71,7 @@ func (p *Picture) viewportView() string {
 			if front.model.mode == PictureKitty {
 				// Explicit source row/column diacritics make a clipped grid refer to the
 				// original virtual placement; no bitmap slice or new transmission is needed.
-				id := front.model.kittyID
-				fmt.Fprintf(&out, "\x1b[38;2;%d;%d;%dm", id>>16&255, id>>8&255, id&255)
-				for x := rect.Min.X; x < rect.Min.X+width; x++ {
-					out.WriteRune(kitty.Placeholder)
-					out.WriteRune(kitty.Diacritic(y))
-					out.WriteRune(kitty.Diacritic(x))
-				}
-				out.WriteString("\x1b[39m")
+				writeKittyGridRow(&out, front.model.kittyID, y, rect.Min.X, rect.Min.X+width)
 			} else if y < len(lines) {
 				out.WriteString(ansi.Cut(lines[y], rect.Min.X, rect.Min.X+width))
 				out.WriteString("\x1b[0m")

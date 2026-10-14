@@ -1,10 +1,9 @@
 package ntpicture
 
 import (
-	"encoding/base64"
-	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -54,6 +53,7 @@ type terminalSessionTick struct{ session *TerminalSession }
 // input to sessions for other terminals. Probe replies and timeouts are scoped.
 // Close releases probe resources; pictures retain their own placement cleanup.
 type TerminalSession struct {
+	mu                        sync.Mutex
 	state                     TerminalState
 	started                   bool
 	closed                    atomic.Bool
@@ -74,6 +74,23 @@ var terminalProbeIDs atomic.Uint32
 // the default session; its lifetime is the process lifetime.
 func DefaultTerminalSession() *TerminalSession { return defaultTerminalSession }
 
+func envTerminalConfig() (tmux bool, kitty KittyCapability, kittyForced bool) {
+	tmux = os.Getenv("TMUX") != ""
+	switch os.Getenv("NTCHARTS_TMUX_PASSTHROUGH") {
+	case "1", "true", "on", "yes":
+		tmux = true
+	case "0", "false", "off", "no":
+		tmux = false
+	}
+	switch os.Getenv("NTCHARTS_KITTY") {
+	case "supported", "true", "1", "on", "yes":
+		kitty, kittyForced = KittyCapabilitySupported, true
+	case "unsupported", "false", "0", "off", "no":
+		kitty, kittyForced = KittyCapabilityUnsupported, true
+	}
+	return tmux, kitty, kittyForced
+}
+
 // NewTerminalSession snapshots environment defaults; subsequent package-level
 // overrides affect only the compatibility session. Call Init to start discovery.
 func NewTerminalSession(opts TerminalOptions) *TerminalSession {
@@ -82,28 +99,18 @@ func NewTerminalSession(opts TerminalOptions) *TerminalSession {
 		CellPixelWidth: opts.CellPixelWidth, CellPixelHeight: opts.CellPixelHeight,
 	}}
 	if s.state.CellPixelWidth <= 0 {
-		s.state.CellPixelWidth = 8
+		s.state.CellPixelWidth = defaultCellPixelW
 	}
 	if s.state.CellPixelHeight <= 0 {
-		s.state.CellPixelHeight = 16
+		s.state.CellPixelHeight = defaultCellPixelH
 	}
-	s.state.TmuxPassthrough = os.Getenv("TMUX") != ""
-	switch os.Getenv("NTCHARTS_TMUX_PASSTHROUGH") {
-	case "1", "true", "on", "yes":
-		s.state.TmuxPassthrough = true
-	case "0", "false", "off", "no":
-		s.state.TmuxPassthrough = false
-	}
+	tmux, envKitty, _ := envTerminalConfig()
+	s.state.TmuxPassthrough = tmux
 	if opts.TmuxPassthrough != nil {
 		s.state.TmuxPassthrough = *opts.TmuxPassthrough
 	}
 	if s.state.Kitty == KittyCapabilityUnknown {
-		switch os.Getenv("NTCHARTS_KITTY") {
-		case "supported", "true", "1", "on", "yes":
-			s.state.Kitty = KittyCapabilitySupported
-		case "unsupported", "false", "0", "off", "no":
-			s.state.Kitty = KittyCapabilityUnsupported
-		}
+		s.state.Kitty = envKitty
 	}
 	s.kittyForced = s.state.Kitty != KittyCapabilityUnknown
 	s.sharedForced = s.state.SharedMemory != KittyCapabilityUnknown
@@ -113,12 +120,17 @@ func NewTerminalSession(opts TerminalOptions) *TerminalSession {
 }
 
 func (s *TerminalSession) Snapshot() TerminalState {
-	state := s.state
+	var state TerminalState
 	if s.legacy {
+		s.mu.Lock()
+		state = s.state
+		s.mu.Unlock()
 		state.Kitty = KittySupported()
 		state.SharedMemory = KittyCapability(kittySharedCap.Load())
 		state.TmuxPassthrough = tmuxPassthroughEnabled.Load()
 		state.EnvSignalled = KittyEnvSignalled()
+	} else {
+		state = s.state
 	}
 	if runtime.GOOS == "js" && !s.sharedForced {
 		state.SharedMemory = KittyCapabilityUnsupported
@@ -127,10 +139,10 @@ func (s *TerminalSession) Snapshot() TerminalState {
 		}
 	}
 	if state.CellPixelWidth <= 0 {
-		state.CellPixelWidth = 8
+		state.CellPixelWidth = defaultCellPixelW
 	}
 	if state.CellPixelHeight <= 0 {
-		state.CellPixelHeight = 16
+		state.CellPixelHeight = defaultCellPixelH
 	}
 	return state
 }
@@ -169,14 +181,10 @@ func (s *TerminalSession) Init() tea.Cmd {
 	}
 	if s.state.Kitty != KittyCapabilityUnsupported && !s.sharedForced && runtime.GOOS != "js" {
 		s.state.SharedMemory = KittyCapabilityUnsupported
-		if kittySharedProbeable() {
-			obj, err := kittyshm.Create(4, func([]byte) error { return nil })
-			if err == nil {
-				s.probe = obj
-				s.state.SharedMemory = KittyCapabilityUnknown
-				name := base64.StdEncoding.EncodeToString([]byte(obj.Name))
-				query = transport.wrap(fmt.Sprintf("\x1b_Ga=q,t=s,f=32,s=1,v=1,S=4,i=%d;%s\x1b\\", s.probeID+1, name)) + query
-			}
+		if sharedAPC, obj := buildKittySharedProbeAPC(s.probeID+1, transport); obj != nil {
+			s.probe = obj
+			s.state.SharedMemory = KittyCapabilityUnknown
+			query = sharedAPC + query
 		}
 	}
 	cmds := []tea.Cmd{s.notification(), func() tea.Msg {
@@ -203,8 +211,22 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 	if s.closed.Load() {
 		return nil
 	}
+	if s.legacy {
+		switch v := msg.(type) {
+		case uv.CellSizeEvent:
+			if v.Width > 0 && v.Height > 0 {
+				s.mu.Lock()
+				s.state.CellPixelWidth, s.state.CellPixelHeight = v.Width, v.Height
+				s.mu.Unlock()
+			}
+		case uv.KittyGraphicsEvent:
+			return recordKittyResponse(v)
+		case kittyProbeTickMsg:
+			return recordKittyTimeout()
+		}
+		return nil
+	}
 	before := s.Snapshot()
-	var legacy tea.Cmd
 	switch v := msg.(type) {
 	case uv.CellSizeEvent:
 		if v.Width <= 0 || v.Height <= 0 {
@@ -212,10 +234,6 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 		}
 		s.state.CellPixelWidth, s.state.CellPixelHeight = v.Width, v.Height
 	case uv.KittyGraphicsEvent:
-		if s.legacy {
-			legacy = recordKittyResponse(v)
-			break
-		}
 		if !s.started {
 			return nil
 		}
@@ -243,15 +261,11 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 		}
 		_ = s.probe.Unlink()
 		s.probe = nil
-	case kittyProbeTickMsg:
-		if s.legacy {
-			legacy = recordKittyTimeout()
-		}
 	}
 	if before != s.Snapshot() {
-		return tea.Batch(legacy, s.notification())
+		return s.notification()
 	}
-	return legacy
+	return nil
 }
 
 // Close cancels queued probe output and unlinks a pending probe immediately.

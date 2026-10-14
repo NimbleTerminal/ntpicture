@@ -8,7 +8,6 @@ import (
 	"image/color"
 	"image/png"
 	"nimbleterminal.dev/ntpicture/internal/imageview"
-	"os"
 	"strings"
 	"sync/atomic"
 
@@ -23,22 +22,10 @@ func init() {
 }
 
 func parseEnvOverrides() {
-	// Parse tmux passthrough env override
-	switch os.Getenv("NTCHARTS_TMUX_PASSTHROUGH") {
-	case "1", "true", "on", "yes":
-		tmuxPassthroughEnabled.Store(true)
-	case "0", "false", "off", "no":
-		tmuxPassthroughEnabled.Store(false)
-	default:
-		tmuxPassthroughEnabled.Store(os.Getenv("TMUX") != "")
-	}
-
-	// Parse Kitty capability env override
-	switch os.Getenv("NTCHARTS_KITTY") {
-	case "supported", "true", "1", "on", "yes":
-		ForceKittyCapability(KittyCapabilitySupported)
-	case "unsupported", "false", "0", "off", "no":
-		ForceKittyCapability(KittyCapabilityUnsupported)
+	tmux, kitty, kittyForced := envTerminalConfig()
+	tmuxPassthroughEnabled.Store(tmux)
+	if kittyForced {
+		ForceKittyCapability(kitty)
 	}
 }
 
@@ -309,25 +296,22 @@ func (transport kittyTransport) buildKittyPNGAPC(data []byte, id, cols, rows int
 	return buf.String()
 }
 
+func writeKittyGridRow(sb *strings.Builder, imageID, y, x0, x1 int) {
+	fmt.Fprintf(sb, "\x1b[38;2;%d;%d;%dm", (imageID>>16)&0xff, (imageID>>8)&0xff, imageID&0xff)
+	rowDia := kitty.Diacritic(y)
+	for x := x0; x < x1; x++ {
+		sb.WriteRune(kitty.Placeholder)
+		sb.WriteRune(rowDia)
+		sb.WriteRune(kitty.Diacritic(x))
+	}
+	sb.WriteString("\x1b[39m")
+}
+
 func buildKittyGrid(cols, rows, imageID int) string {
-	r := (imageID >> 16) & 0xff
-	g := (imageID >> 8) & 0xff
-	b := imageID & 0xff
-	sgr := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
-	reset := "\x1b[39m"
-
 	var sb strings.Builder
-	sb.Grow((cols*4 + len(sgr) + len(reset) + 1) * rows)
-
+	sb.Grow((cols*4 + 26) * rows)
 	for y := 0; y < rows; y++ {
-		sb.WriteString(sgr)
-		rowDia := kitty.Diacritic(y)
-		for x := 0; x < cols; x++ {
-			sb.WriteRune(kitty.Placeholder)
-			sb.WriteRune(rowDia)
-			sb.WriteRune(kitty.Diacritic(x))
-		}
-		sb.WriteString(reset)
+		writeKittyGridRow(&sb, imageID, y, 0, cols)
 		if y < rows-1 {
 			sb.WriteByte('\n')
 		}
