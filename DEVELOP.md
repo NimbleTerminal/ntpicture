@@ -263,3 +263,17 @@ limits, ownership, cancellation, error indexing, independent message owners,
 coalesced seeks, and presentation pacing. `go test -race ./animation ./playback`
 runs those packages without requiring native shared memory. The browser smoke
 check also exercises pause and frame stepping in the two-animation demo.
+
+## Composite animation checks
+
+The animation demo also accepts `--composite`; its browser URL is
+`?demo=animation&composite=1`. `task check-site` exercises its real WASM startup,
+actions, pause/restart input, resize, and quit alongside the standalone demo.
+These smoke checks do not establish visual correctness.
+
+Before migrating Gloss regions, verify mixed-rate GIF/WebP regions in one
+picture, transparent/disposed frames revealing the base, window rescaling,
+position carry-over after relayout, and cancellation during lazy decoding.
+`Composite.Window` changes pixels and remaps regions; `Picture.SetViewport`
+only clips prepared cells. Test both separately and together under Kitty,
+glyph fallback, and the browser renderers. Record visual results here.

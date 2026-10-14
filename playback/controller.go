@@ -1,9 +1,10 @@
-// Package playback schedules animation.Player positions through ntpicture.Picture.
+// Package playback schedules immutable animation sources through ntpicture.Picture.
 // Hosts own key bindings, layout, visibility decisions, and aggregate budgets.
 package playback
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,7 +24,12 @@ type Options struct {
 	// Picture.ClearOnReplace also overrides stable-ID reuse.
 	FreshIDs bool
 }
+
+// ErrNotSeekable reports frame seeking on a source without one frame sequence.
+var ErrNotSeekable = errors.New("playback: source does not support frame seeking")
+
 type Status struct {
+	Source                 animation.Source  // Immutable current source position; may lead presentation.
 	Player                 *animation.Player // Immutable current position; presentation may still be pending.
 	Paused, Finished, Busy bool
 	Rate                   float64
@@ -35,6 +41,8 @@ type Status struct {
 // Message ownership is private; unrelated and stale results are ignored.
 type Controller struct {
 	pic                               *picture.Picture
+	source                            animation.Source
+	restart                           bool
 	player                            *animation.Player
 	wait                              Wait
 	now                               func() time.Time
@@ -51,19 +59,39 @@ type job struct {
 	due    time.Time
 }
 type result struct {
+	source animation.Source
 	owner  *Controller
 	job    *job
-	player *animation.Player
 	more   bool
 	err    error
 }
 
+// New preserves the standalone-player API, including frame seeking.
 func New(player *animation.Player, options Options) *Controller {
+	if player == nil {
+		return NewSource(nil, options)
+	}
+	return NewSource(player, options)
+}
+
+// NewSource schedules immutable player or composite positions through a Picture.
+// Custom sources must meet animation.Source's ownership/cancellation contract.
+func NewSource(source animation.Source, options Options) *Controller {
 	if options.Wait == nil {
 		options.Wait = wait
 	}
 	options.Picture.StableID = !options.FreshIDs
-	return &Controller{now: time.Now, pic: picture.New(options.Picture), player: player, wait: options.Wait, visible: true, rate: 1}
+	c := &Controller{now: time.Now, pic: picture.New(options.Picture), wait: options.Wait, visible: true, rate: 1}
+	c.setSource(source)
+	return c
+}
+func (c *Controller) setSource(source animation.Source) {
+	c.player, _ = source.(*animation.Player)
+	if p, ok := source.(*animation.Player); ok && p == nil {
+		source = nil
+	}
+	c.source = source
+	c.finished = source != nil && source.Delay() <= 0
 }
 func wait(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
@@ -77,13 +105,13 @@ func wait(ctx context.Context, d time.Duration) bool {
 }
 func (c *Controller) Init() tea.Cmd {
 	var cmd tea.Cmd
-	if c.player != nil {
-		cmd = c.pic.SetImageImmutable(c.player.Image())
+	if c.source != nil {
+		cmd = c.pic.SetImageImmutable(c.source.Image())
 	}
 	return tea.Batch(c.pic.Init(), cmd)
 }
 func (c *Controller) Status() Status {
-	return Status{Player: c.player, Paused: c.paused, Finished: c.finished, Busy: c.job != nil, Rate: c.rate, Err: c.err}
+	return Status{Source: c.source, Player: c.player, Paused: c.paused, Finished: c.finished, Busy: c.job != nil, Rate: c.rate, Err: c.err}
 }
 func (c *Controller) View() string { return c.pic.View() }
 func (c *Controller) cancel() {
@@ -93,18 +121,40 @@ func (c *Controller) cancel() {
 	}
 }
 func (c *Controller) SetPlayer(p *animation.Player) tea.Cmd {
+	if p == nil {
+		return c.SetSource(nil)
+	}
+	return c.SetSource(p)
+}
+
+// SetSource replaces playback, cancelling/coalescing any off-loop work.
+func (c *Controller) SetSource(source animation.Source) tea.Cmd {
 	if c.closed {
 		return nil
 	}
 	c.cancel()
 	c.pending = nil
-	c.player = p
-	c.finished = false
+	c.restart = false
 	c.err = nil
-	if p == nil {
+	c.setSource(source)
+	if c.source == nil {
 		return c.pic.SetImage(nil)
 	}
-	return c.pic.SetImageImmutable(p.Image())
+	return c.pic.SetImageImmutable(c.source.Image())
+}
+
+// Restart resets the entire source, including every composite region.
+// The current paused state is preserved. Work runs off the event loop.
+func (c *Controller) Restart() tea.Cmd {
+	if c.closed || c.source == nil {
+		return nil
+	}
+	c.cancel()
+	c.pending = nil
+	c.restart = true
+	c.finished = false
+	c.err = nil
+	return c.schedule()
 }
 func (c *Controller) SetSize(cols, rows int) tea.Cmd {
 	c.err = nil
@@ -125,8 +175,7 @@ func (c *Controller) Pause(paused bool) tea.Cmd {
 	c.paused = paused
 	c.cancel()
 	if !paused && c.finished {
-		frame := 1
-		c.pending = &frame
+		c.restart = true
 		c.finished = false
 	}
 	return c.schedule()
@@ -142,12 +191,20 @@ func (c *Controller) SetRate(rate float64) tea.Cmd {
 	return c.schedule()
 }
 
-// Seek selects a one-based frame, pauses, and resets loop counting. Pending
+// Seek selects a standalone player’s one-based frame, pauses, and resets loops.
+// Composite/custom sources pause with ErrNotSeekable in Status.Err. Pending
 // seeks coalesce, and a cancelled codec call must return before another starts.
 func (c *Controller) Seek(frame int) tea.Cmd {
-	if c.closed || c.player == nil {
+	if c.closed || c.source == nil {
 		return nil
 	}
+	if c.player == nil {
+		c.err = ErrNotSeekable
+		c.paused = true
+		c.cancel()
+		return nil
+	}
+	c.restart = false
 	c.paused = true
 	c.finished = false
 	c.err = nil
@@ -156,33 +213,36 @@ func (c *Controller) Seek(frame int) tea.Cmd {
 	return c.schedule()
 }
 func (c *Controller) schedule() tea.Cmd {
-	if c.closed || !c.visible || c.player == nil || c.job != nil || c.err != nil {
+	if c.closed || !c.visible || c.source == nil || c.job != nil || c.err != nil {
 		return nil
 	}
-	target := c.pending
-	if target == nil {
+	target, restart := c.pending, c.restart
+	if target == nil && !restart {
 		s := c.pic.Status()
 		if c.paused || c.finished || s.Busy || s.Presented == 0 || s.Generation != s.Presented {
 			return nil
 		}
 	}
 	c.pending = nil
+	c.restart = false
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{ctx: ctx, cancel: cancel}
 	c.job = j
-	p, waiter, now := c.player, c.wait, c.now
-	if target == nil {
+	p, source, waiter, now := c.player, c.source, c.wait, c.now
+	if target == nil && !restart {
 		if c.nextDue.IsZero() {
-			c.nextDue = now().Add(time.Duration(float64(p.Delay()) / c.rate))
+			c.nextDue = now().Add(time.Duration(float64(source.Delay()) / c.rate))
 		}
 		j.due = c.nextDue
 	}
 	return func() tea.Msg {
 		out := result{owner: c, job: j, more: true}
-		if target != nil {
-			out.player, out.err = p.Seek(ctx, *target)
+		if restart {
+			out.source, out.err = source.Reset(ctx)
+		} else if target != nil {
+			out.source, out.err = p.Seek(ctx, *target)
 		} else if waiter(ctx, max(0, j.due.Sub(now()))) {
-			out.player, out.more, out.err = p.NextContext(ctx)
+			out.source, out.more, out.err = source.Advance(ctx)
 		} else {
 			out.err = context.Canceled
 		}
@@ -203,22 +263,28 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 			if m.err != nil {
 				c.err = m.err
 				c.paused = true
-			} else if m.player != nil {
-				c.player = m.player
+			} else if m.source == nil {
 				c.finished = !m.more
+				if m.more {
+					c.err = errors.New("playback: source returned no next position")
+					c.paused = true
+				}
+			} else if m.source != nil {
+				c.setSource(m.source)
+				c.finished = !m.more || c.source.Delay() <= 0
 				if m.more {
 					if !m.job.due.IsZero() {
 						// Carry the timeline through composition and transmission.
 						// If composition alone overruns, rebase rather than building
 						// an unbounded catch-up debt. Never skip frames or overlap jobs.
 						base := m.job.due
-						delay := time.Duration(float64(m.player.Delay()) / c.rate)
+						delay := time.Duration(float64(c.source.Delay()) / c.rate)
 						c.nextDue = base.Add(delay)
 						if c.nextDue.Before(c.now()) {
 							c.nextDue = c.now()
 						}
 					}
-					cmds = append(cmds, c.pic.SetImageImmutable(m.player.Image()))
+					cmds = append(cmds, c.pic.SetImageImmutable(c.source.Image()))
 				}
 			}
 		}
@@ -251,6 +317,8 @@ func (c *Controller) stop() {
 	c.cancel()
 	c.pending = nil
 	c.player = nil
+	c.source = nil
+	c.restart = false
 	c.job = nil
 }
 

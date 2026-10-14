@@ -229,6 +229,79 @@ MiB input, 32 Mi canvas pixels, 1,000 frames, and 64 MiB GIF frame storage.
 Lazy failures identify the frame and pause playback through `ctrl.Status().Err`.
 Hosts still own controls, visibility decisions, and aggregate resource budgets.
 
+## Composing several animations
+
+`animation.Composite` combines an immutable base image with pixel rectangles
+containing players. It advances regions at their earliest due time, preserving
+independent delays and loop counts. Repeated opaque keys share a playback
+position and must refer to the same clip; slice order determines paint order.
+
+```go
+source, err := animation.NewComposite(ctx, base, []animation.Region{
+    {Key: "left", Rect: image.Rect(0, 0, 240, 180), Player: gifPlayer},
+    {Key: "right", Rect: image.Rect(240, 0, 480, 180), Player: webpPlayer},
+}, nil)
+if err != nil { return err }
+ctrl := playback.NewSource(source, playback.Options{})
+// Init, Update, SetSize, Pause, SetRate, Keep, and Close work as before.
+cmd := ctrl.Restart() // resets all regions; preserves pause state
+```
+
+Construction snapshots base pixels and region metadata. Each canvas and region
+is bounded to 32 Mi pixels, with at most 1,024 region entries. These bounds are
+not an aggregate memory budget: base, output, players, older positions, and
+scaler scratch may coexist. Hosts retain their smaller document-specific limits.
+Construction, window creation, and position merging can do substantial work;
+run them off the UI loop and reject stale results before `SetSource`.
+
+`animation.Source` uses immutable positions, so off-loop work needs no mutable
+clone. Advance/reset accept a context and report errors. A failed composite
+advance leaves its published position unchanged; `RegionError` wraps the
+underlying `FrameError`. Playback pauses and reports the error in `Status.Err`.
+Cancellation is checked between regions; a running scaler/codec must finish.
+Rate scaling belongs to the controller and is applied once.
+
+`Status.Source` supplies the current immutable source position. `Status.Player`
+is populated only for a standalone player. Composites have no single frame
+number: `Seek` pauses with `playback.ErrNotSeekable`; use `Restart` instead.
+Existing `playback.New`, `SetPlayer`, and standalone seeking remain supported.
+
+For relayout, pass the previous composite to `NewComposite`, or call
+`WithPositions(ctx, windows...)` before constructing the new layout. Positions
+carry only when both key and clip identity match; replaced clips start at their
+supplied player, and removed keys are discarded. `WithPositions` recomposes its
+image, so its returned pixels and playback positions agree. Later arguments win.
+
+### Window versus Viewport
+
+These operations act at different stages:
+
+- **`Composite.Window(ctx, pixelRect, pixelSize)` creates a new pixel source.**
+  It crops/resamples the base once, remaps intersecting animation regions, and
+  carries their playback positions. Future frames compose and transmit this
+  smaller source. Zero size retains the intersected rectangle's pixel size;
+  empty windows return an error. Regions within two pixels of native size snap
+  to that size to avoid repeated resampling. Mild scaling uses ApproxBiLinear;
+  larger changes use CatmullRom. Snapping/resampling can change edge pixels.
+- **`Picture.SetViewport(Viewport{...})` clips presentation of an existing source.**
+  It selects prepared Kitty placeholders or glyph cells without resampling,
+  encoding, allocating another image ID, or transmitting another bitmap merely
+  because the viewport moved. It retains the full source. For a changing
+  animation, subsequent frames still compose/encode that full source.
+
+Use `Window` to reduce the pixel work for a small animated overlay. Use
+`Viewport` to scroll a prepared picture cheaply. They can be combined. Gloss
+owns document-to-region mapping, overlay grouping, visibility, and budgets;
+ntpicture does not decide which document window should be shown.
+
+```go
+window, err := source.Window(ctx, image.Rect(0, 0, 240, 180), image.Pt(120, 90))
+if err != nil { return err }
+cmd := ctrl.SetSource(window) // new pixels; requires preparation/transmission
+ctrl.SetViewport(ntpicture.Viewport{Y: 2, Width: 30, Height: 8})
+// Viewport only selects cells from that prepared window.
+```
+
 ## Examples and browser demo
 
 ```sh

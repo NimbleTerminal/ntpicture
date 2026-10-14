@@ -67,7 +67,7 @@ func TestCancelledSeekCoalescesAndRejectsOtherOwners(t *testing.T) {
 	if other.player.Frame() != 1 {
 		t.Fatal("foreign result consumed")
 	}
-	drive(t, c, c.Update(result{owner: c, job: old, player: c.player, more: true}))
+	drive(t, c, c.Update(result{owner: c, job: old, source: c.player, more: true}))
 	if c.player.Frame() != 1 || c.job != nil || !c.paused {
 		t.Fatalf("coalesced seek: %+v", c.Status())
 	}
@@ -207,5 +207,37 @@ func TestPlaybackControlsResetDeadline(t *testing.T) {
 		if !c.nextDue.IsZero() {
 			t.Fatal("control retained stale playback timeline")
 		}
+	}
+}
+
+func TestCompositeSourcePlaybackAndRestart(t *testing.T) {
+	p := testPlayer(t)
+	source, err := animation.NewComposite(context.Background(), image.NewRGBA(image.Rect(0, 0, 4, 2)), []animation.Region{{Rect: image.Rect(0, 0, 2, 2), Player: p, Key: "a"}, {Rect: image.Rect(2, 0, 4, 2), Player: p, Key: "b"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewSource(source, Options{Wait: func(context.Context, time.Duration) bool { return true }})
+	c.SetSize(4, 2)
+	drive(t, c, c.SetSource(source))
+	if !c.Status().Finished || c.Status().Player != nil || c.Status().Source == nil || c.View() == "" {
+		t.Fatal("composite did not finish")
+	}
+	drive(t, c, c.Pause(true))
+	drive(t, c, c.Restart())
+	if c.Status().Finished || !c.Status().Paused {
+		t.Fatal("restart lost pause or failed to reset")
+	}
+	c.Seek(2)
+	if c.Status().Err != ErrNotSeekable {
+		t.Fatal("composite exposed meaningless frame seeking")
+	}
+	drive(t, c, c.Restart())
+	drive(t, c, c.Pause(false))
+	if !c.Status().Finished {
+		t.Fatal("composite did not resume")
+	}
+	drive(t, c, c.Close())
+	if c.Status().Source != nil {
+		t.Fatal("closed controller retained source")
 	}
 }

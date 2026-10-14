@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -131,6 +132,19 @@ func (m model) View() tea.View {
 	return v
 }
 func main() {
+	if slices.Contains(os.Args, "--composite") {
+		m, err := initialCompositeModel()
+		if err == nil {
+			defer m.session.Close()
+			defer m.controller.Close()
+			err = demohelp.Run(m, "Composite animation")
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	m, err := initialModel()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

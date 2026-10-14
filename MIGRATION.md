@@ -127,11 +127,19 @@ but do not install it in NTCharts.
 
 ## Remaining architecture work
 
-Generic multi-region rectangular composition is still in Gloss. Extract it when
-migrating typeset regions; document destinations, deduplication, cell mapping
-and reflow remain application policy. The demo currently uses two independent
-controllers. Gloss supplies keys, seek-bar UI, preview behavior, exports,
-loading/layout, selection, search and aggregate budgets.
+Generic rectangular composition is now in animation.Composite, scheduled through
+animation.Source and playback.NewSource. Player implements the same immutable,
+context-aware source contract; standalone constructors/seeking remain available.
+Window crops/resamples a pixel source to reduce future composition/transmission;
+Viewport clips its prepared cell presentation without retransmitting pixels just
+for scrolling. See README's "Window versus Viewport" section for both APIs.
+
+Gloss still needs to migrate its compositor consumers and remove internal/animate.
+Keep document destinations, deduplication, the eight-destination/64 MiB budgets,
+overlay grouping (including glyph mode), cell mapping, reflow, controls, exports,
+and visibility policy in Gloss. Transfer positions by key and clip identity;
+reloads replace clip identity. WithPositions now recomposes a consistent image,
+so hosts must run it off-loop rather than assume Gloss's metadata-only cost.
 
 Explicit TerminalSession now isolates discovery, cell geometry, tmux wrapping,
 and shared-memory capability for pictures that opt in. Legacy Model and package

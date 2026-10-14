@@ -8,6 +8,8 @@ const demo = process.argv[2];
 assert.ok(['still', 'simple', 'grid', 'animation'].includes(demo));
 vm.runInThisContext(await readFile('web/wasm_exec.js', 'utf8'));
 const go = new Go();
+const composite = process.argv.includes('composite');
+if (composite) go.argv = ['animation', '--composite'];
 let exitCode;
 go.exit = code => { exitCode = code; };
 const { instance } = await WebAssembly.instantiate(await readFile(`web/demos/${demo}.wasm`), go.importObject);
@@ -44,7 +46,7 @@ try {
     assert.equal(right.keys[right.preferred].key, 'right');
   }
   if (demo === 'animation') {
-    for (const label of ['Pause', 'Previous frame', 'Next frame', 'First frame', 'Keep screen & quit']) {
+    for (const label of (composite ? ['Pause', 'First frame', 'Keep screen & quit'] : ['Pause', 'Previous frame', 'Next frame', 'First frame', 'Keep screen & quit'])) {
       assert.ok(snapshot.actions.some(action => action.label === label && action.enabled), `${label} action`);
     }
     bubbletea_write(' ');
@@ -54,9 +56,11 @@ try {
       paused += bubbletea_read();
     }
     assert.ok(paused.includes('paused'), 'animation pauses through input bridge');
-    bubbletea_write('.');
+    bubbletea_write(composite ? '\x1b[H' : '.');
     await delay(100);
-    assert.ok(bubbletea_read().length > 0, 'paused animation can step frames');
+    const stepped = bubbletea_read();
+    // Restart may leave the screen identical when already on frame one.
+    if (!composite) assert.ok(stepped.length > 0, 'paused animation can step frames');
     bubbletea_write(' ');
   }
   bubbletea_resize(44, 18);

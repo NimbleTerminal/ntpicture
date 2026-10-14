@@ -30,6 +30,10 @@ function failed(error) {
 }
 async function main() {
   const go = new Go();
+  if (demo === 'animation' && new URLSearchParams(location.search).get('composite') === '1') {
+    go.argv = ['animation', '--composite'];
+    document.querySelector('#help').textContent = 'One picture containing GIF and WebP regions. Space pauses/plays · Home restarts · Q keeps the screen · q clears and quits.';
+  }
   const response = await fetch(`demos/${demo}.wasm`);
   if (!response.ok) throw new Error(`Download failed (${response.status})`);
   const { instance } = await WebAssembly.instantiateStreaming(response, go.importObject);
