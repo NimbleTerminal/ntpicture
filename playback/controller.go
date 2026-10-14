@@ -54,6 +54,7 @@ type Controller struct {
 	paused, finished, visible, closed bool
 	rate                              float64
 	err                               error
+	presentationErr                   error
 }
 type job struct {
 	ctx    context.Context
@@ -113,7 +114,11 @@ func (c *Controller) Init() tea.Cmd {
 	return tea.Batch(c.pic.Init(), cmd)
 }
 func (c *Controller) Status() Status {
-	return Status{Source: c.source, Player: c.player, Paused: c.paused, Finished: c.finished, Busy: c.job != nil, Rate: c.rate, Err: c.err}
+	err := c.err
+	if err == nil {
+		err = c.presentationErr
+	}
+	return Status{Source: c.source, Player: c.player, Paused: c.paused, Finished: c.finished, Busy: c.job != nil, Rate: c.rate, Err: err}
 }
 func (c *Controller) View() string { return c.pic.View() }
 func (c *Controller) cancel() {
@@ -138,6 +143,7 @@ func (c *Controller) SetSource(source animation.Source) tea.Cmd {
 	c.pending = nil
 	c.restart = false
 	c.err = nil
+	c.presentationErr = nil
 	c.setSource(source)
 	if c.source == nil {
 		return c.pic.SetImage(nil)
@@ -156,16 +162,18 @@ func (c *Controller) Restart() tea.Cmd {
 	c.restart = true
 	c.finished = false
 	c.err = nil
+	c.presentationErr = nil
 	return c.schedule()
 }
 func (c *Controller) SetSize(cols, rows int) tea.Cmd {
-	c.err = nil
-	return c.pic.SetSize(cols, rows)
+	return c.presentation(c.pic.SetSize(cols, rows))
 }
 func (c *Controller) SetTerminal(kitty bool, width, height int) tea.Cmd {
-	return c.pic.SetTerminal(kitty, width, height)
+	return c.presentation(c.pic.SetTerminal(kitty, width, height))
 }
-func (c *Controller) SetMode(mode picture.PictureMode) tea.Cmd { return c.pic.SetMode(mode) }
+func (c *Controller) SetMode(mode picture.PictureMode) tea.Cmd {
+	return c.presentation(c.pic.SetMode(mode))
+}
 func (c *Controller) SetVisible(visible bool) tea.Cmd {
 	c.visible = visible
 	if !visible {
@@ -210,12 +218,13 @@ func (c *Controller) Seek(frame int) tea.Cmd {
 	c.paused = true
 	c.finished = false
 	c.err = nil
+	c.presentationErr = nil
 	c.cancel()
 	c.pending = &frame
 	return c.schedule()
 }
 func (c *Controller) schedule() tea.Cmd {
-	if c.closed || !c.visible || c.source == nil || c.job != nil || c.err != nil {
+	if c.closed || !c.visible || c.source == nil || c.job != nil || c.err != nil || c.presentationErr != nil {
 		return nil
 	}
 	target, restart := c.pending, c.restart
@@ -253,6 +262,9 @@ func (c *Controller) schedule() tea.Cmd {
 }
 func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 	cmds := []tea.Cmd{c.pic.Update(msg)}
+	if c.pic.Status().Err == nil {
+		c.presentationErr = nil
+	}
 	switch m := msg.(type) {
 	case result:
 		if m.owner != c || m.job != c.job {
@@ -294,8 +306,8 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 			}
 		}
 	case picture.ErrorMsg:
-		if m.Owner == c.pic && m.Generation == c.pic.Status().Generation {
-			c.err = m.Err
+		if m.Owner == c.pic && m.Generation == c.pic.Status().Generation && errors.Is(c.pic.Status().Err, m.Err) {
+			c.presentationErr = m.Err
 			c.cancel()
 		}
 	}
@@ -343,4 +355,14 @@ func sameImage(a, b image.Image) bool {
 func (c *Controller) RasterGeometry() picture.RasterGeometry { return c.pic.RasterGeometry() }
 
 // SetResolution changes Kitty encoding resolution without changing cell layout.
-func (c *Controller) SetResolution(factor float64) tea.Cmd { return c.pic.SetResolution(factor) }
+func (c *Controller) SetResolution(factor float64) tea.Cmd {
+	return c.presentation(c.pic.SetResolution(factor))
+}
+
+// A successful presentation correction must not clear a source/decoder failure.
+func (c *Controller) presentation(cmd tea.Cmd) tea.Cmd {
+	if c.pic.Status().Err == nil {
+		c.presentationErr = nil
+	}
+	return tea.Batch(cmd, c.schedule())
+}

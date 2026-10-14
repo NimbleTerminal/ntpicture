@@ -264,3 +264,36 @@ func TestCompositeUnchangedTickSkipsPictureSubmission(t *testing.T) {
 	}
 	drive(t, c, c.Close())
 }
+
+func TestResolutionCorrectionRecoversPresentationError(t *testing.T) {
+	for _, kitty := range []bool{false, true} {
+		c := New(testPlayer(t), Options{Wait: func(context.Context, time.Duration) bool { return true }})
+		c.paused = true
+		c.SetSize(2, 2)
+		c.SetTerminal(kitty, 8, 16)
+		drive(t, c, c.SetPlayer(c.player))
+		stale := c.SetResolution(0)()
+		drive(t, c, c.Update(stale))
+		if c.Status().Err == nil {
+			t.Fatal("missing validation error")
+		}
+		drive(t, c, c.SetResolution(.5))
+		drive(t, c, c.Update(stale)) // Late validation must not poison the corrected state.
+		drive(t, c, c.Pause(false))
+		if c.Status().Err != nil || !c.Status().Finished {
+			t.Fatalf("correction did not resume: %+v", c.Status())
+		}
+		drive(t, c, c.Close())
+	}
+}
+
+func TestResolutionCorrectionPreservesSourceError(t *testing.T) {
+	c := New(testPlayer(t), Options{})
+	defer c.Close()
+	c.err = ErrNotSeekable
+	drive(t, c, c.SetResolution(0))
+	drive(t, c, c.SetResolution(.5))
+	if c.Status().Err != ErrNotSeekable {
+		t.Fatal("presentation correction cleared source error")
+	}
+}
