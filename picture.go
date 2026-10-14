@@ -362,6 +362,11 @@ func (p *Picture) geometryError() error {
 	if h <= 0 || w > MaxImagePixels/h {
 		return errors.New("ntpicture: prepared image exceeds pixel limit")
 	}
+	// Glyph preparation uses two pixel rows per cell regardless of terminal
+	// geometry. Check before multiplication, including on 32-bit platforms.
+	if p.mode == PictureGlyph && (p.rows > MaxImagePixels/2 || p.cols > MaxImagePixels/(2*p.rows)) {
+		return errors.New("ntpicture: glyph raster exceeds pixel limit")
+	}
 	// Every placeholder needs a distinct row/column diacritic. The low-level
 	// legacy model leaves this to its caller; Picture validates before allocating.
 	if p.mode == PictureKitty && (kitty.Diacritic(p.cols-1) == kitty.Diacritic(0) && p.cols > 1 || kitty.Diacritic(p.rows-1) == kitty.Diacritic(0) && p.rows > 1) {

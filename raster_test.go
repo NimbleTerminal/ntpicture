@@ -134,3 +134,19 @@ func TestResolutionKeepRestoresRaster(t *testing.T) {
 		t.Fatalf("keep changed raster: %q", raw)
 	}
 }
+
+func TestGlyphRasterLimitUsesEffectiveDimensions(t *testing.T) {
+	p := New(Options{Render: Config{CellPixelWidth: 1, CellPixelHeight: 1}})
+	defer p.Close()
+	cmd := p.SetSize(8192, 4096)
+	if cmd == nil || p.Status().Err == nil {
+		t.Fatal("accepted a glyph raster larger than MaxImagePixels")
+	}
+	if p.RasterGeometry().Cells != (image.Point{}) {
+		t.Fatal("invalid dimensions were retained")
+	}
+	p.SetSize(8192, 2048)
+	if p.Status().Err != nil || p.RasterGeometry().Pixels != image.Pt(8192, 4096) {
+		t.Fatal("rejected boundary-sized raster")
+	}
+}
