@@ -51,10 +51,7 @@ func (p *Picture) SetResolution(factor float64) tea.Cmd {
 		return nil
 	}
 	if math.IsNaN(factor) || math.IsInf(factor, 0) || factor <= 0 || factor > 1 {
-		err := errors.New("ntpicture: resolution factor must be finite and in (0,1]")
-		p.err = err
-		generation := p.generation
-		return func() tea.Msg { return ErrorMsg{p, generation, err} }
+		return p.reportError(errors.New("ntpicture: resolution factor must be finite and in (0,1]"))
 	}
 	before := p.RasterGeometry().Pixels
 	p.opts.Render.KittyResolutionFactor = factor

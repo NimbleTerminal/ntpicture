@@ -68,7 +68,7 @@ func TestResolutionPayloadAndStablePlacement(t *testing.T) {
 		t.Fatal("identical rounded target scheduled work")
 	}
 	drivePicture(t, p, p.SetImageImmutable(img))
-	if p.front.model.kittyID != front.model.kittyID {
+	if p.front.cfg.KittyID != front.cfg.KittyID {
 		t.Fatal("same raster lost stable ID")
 	}
 	front = p.front
@@ -80,7 +80,7 @@ func TestResolutionPayloadAndStablePlacement(t *testing.T) {
 		t.Fatal("query returned retained dimensions")
 	}
 	msgs = drivePicture(t, p, cmd)
-	if !strings.Contains(output(msgs), "s=32,v=26") || p.front.model.kittyID == front.model.kittyID {
+	if !strings.Contains(output(msgs), "s=32,v=26") || p.front.cfg.KittyID == front.cfg.KittyID {
 		t.Fatal("new raster did not use new dimensions and placement")
 	}
 	if p.RasterGeometry().Cells != image.Pt(7, 3) {
@@ -116,7 +116,7 @@ func TestResolutionCancelsStalePreparation(t *testing.T) {
 	stale := p.SetImage(testPixels(color.RGBA{R: 255, A: 255}))()
 	drivePicture(t, p, p.SetResolution(.3))
 	drivePicture(t, p, p.Update(stale))
-	if p.Status().Busy || p.front.model.rasterSize != image.Pt(19, 15) {
+	if p.Status().Busy || p.front.rasterSize != image.Pt(19, 15) {
 		t.Fatal("stale work replaced new target")
 	}
 }

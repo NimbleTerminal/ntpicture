@@ -85,10 +85,10 @@ func TestPictureRetainsFrontAndPreservesConfig(t *testing.T) {
 	if p.front == front || p.Status().Busy || !strings.Contains(output(msgs), "o=z") || !strings.Contains(output(msgs), "z=-3") {
 		t.Fatal("replacement not committed with requested encoding")
 	}
-	if p.front.model.fit != FitFill || p.front.model.anchor != AnchorBottom {
+	if p.front.cfg.Fit != FitFill || p.front.cfg.Anchor != AnchorBottom {
 		t.Fatal("render configuration lost")
 	}
-	if !strings.Contains(output(msgs), kittyDeleteImage(front.model.kittyID)) {
+	if !strings.Contains(output(msgs), kittyDeleteImage(front.cfg.KittyID)) {
 		t.Fatal("old placement not retired")
 	}
 }
@@ -109,7 +109,7 @@ func TestPictureSnapshotsAndIndependentOwners(t *testing.T) {
 		t.Fatal("mutable input was retained")
 	}
 	drivePicture(t, q, q.SetImage(img))
-	if p.front.model.kittyID == q.front.model.kittyID {
+	if p.front.cfg.KittyID == q.front.cfg.KittyID {
 		t.Fatal("pictures allocated the same ID")
 	}
 }
@@ -145,7 +145,7 @@ func TestPictureCloseAfterTransmissionAcceptance(t *testing.T) {
 	p := testPicture(true)
 	frame := p.SetImage(testPixels(color.RGBA{R: 255, A: 255}))()
 	transmit := p.Update(frame)
-	id := p.job.placement.model.kittyID
+	id := p.job.placement.cfg.KittyID
 	// Simulate output emitted, then removal before completion. A host need not
 	// route further messages to this component for the delete to be emitted.
 	seq := reflect.ValueOf(transmit())
@@ -174,7 +174,7 @@ func TestPictureHideResizeAndClearPolicy(t *testing.T) {
 		t.Fatal("old front not clipped to resized area")
 	}
 	drivePicture(t, p, resize)
-	if p.front == old || p.front.model.cols != 1 {
+	if p.front == old || p.front.cols != 1 {
 		t.Fatal("resize not committed")
 	}
 	drivePicture(t, p, p.SetVisible(false))
@@ -278,15 +278,15 @@ func TestPictureLateReplacementCannotRetireLatest(t *testing.T) {
 	if p.Status().Busy || p.front.image.At(0, 0) != (color.RGBA{B: 255, A: 255}) {
 		t.Fatal("late completion lost newest image")
 	}
-	if strings.Contains(output(messages), kittyDeleteImage(p.front.model.kittyID)) {
+	if strings.Contains(output(messages), kittyDeleteImage(p.front.cfg.KittyID)) {
 		t.Fatal("stale cleanup deleted the newest placement")
 	}
 }
 
 func TestPictureRetirementKeepsNewerPlacements(t *testing.T) {
 	p := testPicture(true)
-	old := &picturePlacement{model: NewModel(), retireAt: time.Now().Add(-time.Second)}
-	newer := &picturePlacement{model: NewModel(), retireAt: time.Now().Add(time.Hour)}
+	old := &picturePlacement{retireAt: time.Now().Add(-time.Second)}
+	newer := &picturePlacement{retireAt: time.Now().Add(time.Hour)}
 	old.active.Store(true)
 	newer.active.Store(true)
 	p.retired = []*picturePlacement{old, newer}
@@ -320,7 +320,7 @@ func TestPictureKeepFreezesPresentedView(t *testing.T) {
 		}
 		if kitty {
 			raw := output(messages)
-			if strings.Contains(raw, kittyDeleteImage(front.model.kittyID)) || strings.Contains(raw, "a=T") != (p.medium == KittyMediumSharedMemory) || strings.Contains(raw, "t=s") {
+			if strings.Contains(raw, kittyDeleteImage(front.cfg.KittyID)) || strings.Contains(raw, "a=T") != (p.medium == KittyMediumSharedMemory) || strings.Contains(raw, "t=s") {
 				t.Fatalf("keep must only retransmit shared fronts without deleting front: %q", raw)
 			}
 		}
@@ -342,7 +342,7 @@ func TestPictureKeepRejectsAcceptedReplacement(t *testing.T) {
 	messages := drivePicture(t, p, p.Keep())
 	messages = append(messages, drivePicture(t, p, seq.Index(1).Interface().(tea.Cmd))...)
 	raw := output(messages)
-	if !strings.Contains(raw, kittyDeleteImage(job.placement.model.kittyID)) || strings.Contains(raw, kittyDeleteImage(front.model.kittyID)) || p.View() != view {
+	if !strings.Contains(raw, kittyDeleteImage(job.placement.cfg.KittyID)) || strings.Contains(raw, kittyDeleteImage(front.cfg.KittyID)) || p.View() != view {
 		t.Fatal("late replacement was kept or retired the retained front")
 	}
 }
@@ -385,5 +385,37 @@ func TestKeepDirectFrontNeedsNoTransmission(t *testing.T) {
 		if p.View() != view {
 			t.Fatal("lost direct view")
 		}
+	}
+}
+
+func TestPictureGlyphResizeShrinkPreservesANSIReset(t *testing.T) {
+	p := testPicture(false)
+	defer func() { drivePicture(t, p, p.Close()) }()
+	drivePicture(t, p, p.SetSize(3, 2))
+	drivePicture(t, p, p.SetImage(testPixels(color.RGBA{R: 255, G: 64, B: 32, A: 255})))
+	// Shrink horizontally while the 3x2 front is still retained before replacement completes.
+	_ = p.SetSize(2, 2)
+	for i, row := range strings.Split(p.View(), "\n") {
+		if !strings.HasSuffix(row, "\x1b[0m") {
+			t.Fatalf("row %d missing trailing ANSI reset after resize shrink: %q", i, row)
+		}
+	}
+}
+
+func TestPictureInvalidGeometryPreservesPendingAndHiddenSource(t *testing.T) {
+	p := testPicture(true)
+	defer func() { drivePicture(t, p, p.Close()) }()
+	drivePicture(t, p, p.SetVisible(false))
+	drivePicture(t, p, p.SetImage(testPixels(color.RGBA{R: 255, A: 255})))
+	// Invalid SetSize / SetTerminal while hidden (front == nil) must not wipe p.img.
+	if cmd := p.SetSize(int(^uint(0)>>1), 2); cmd == nil || p.Status().Err == nil || p.img == nil {
+		t.Fatal("invalid SetSize wiped hidden source or missed error")
+	}
+	if cmd := p.SetTerminal(true, 0, 10); cmd == nil || p.Status().Err == nil || p.img == nil {
+		t.Fatal("invalid SetTerminal wiped hidden source or missed error")
+	}
+	drivePicture(t, p, p.SetVisible(true))
+	if p.View() == "" {
+		t.Fatal("hidden source lost after invalid geometry calls")
 	}
 }

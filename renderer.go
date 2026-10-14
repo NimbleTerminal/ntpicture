@@ -145,10 +145,6 @@ type Model struct {
 	kittyFormat KittyFormat
 	kittyMedium KittyMedium
 	kittyShared *kittySharedState
-	transport   *kittyTransport // immutable settings captured for an explicit session
-
-	// Picture-only whole-raster override; zero preserves legacy sizing.
-	rasterSize image.Point
 
 	// lastRenderedGeom records the (cols, rows, cellPixelW, cellPixelH)
 	// of the most recently *applied* KittyFrame — i.e. the geometry
@@ -727,10 +723,6 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 	// to the returned closure so SetImage/SetSize/SetFit/SetAnchor/Update return
 	// immediately and bubbletea runs the render off the main loop.
 	cpw, cph := m.kittyCellPixelSize()
-	transport := legacyTransport()
-	if m.transport != nil {
-		transport = *m.transport
-	}
 	params := kittyPrepareParams{
 		modelID:    m.modelID,
 		seq:        m.seq,
@@ -746,9 +738,8 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 		rows:       m.rows,
 		cpw:        cpw,
 		cph:        cph,
-		rasterSize: m.rasterSize,
 		prevGeom:   m.lastRenderedGeom,
-		transport:  transport,
+		transport:  legacyTransport(),
 		shared:     m.kittyShared,
 	}
 	params.shared.begin(params.seq)

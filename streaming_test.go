@@ -47,7 +47,7 @@ func TestStableIDCancelledPreparation(t *testing.T) {
 	p := testPicture(true)
 	p.opts.StableID = true
 	drivePicture(t, p, p.SetImage(testPixels(color.RGBA{A: 255})))
-	id, view := p.front.model.kittyID, p.View()
+	id, view := p.front.cfg.KittyID, p.View()
 	pending := p.SetImage(testPixels(color.RGBA{R: 255, A: 255}))
 	p.SetImage(testPixels(color.RGBA{B: 255, A: 255}))
 	messages := drivePicture(t, p, pending)
@@ -63,7 +63,7 @@ func TestStableIDAcceptedOutputKeepAndClose(t *testing.T) {
 			p := testPicture(true)
 			p.opts.StableID = true
 			drivePicture(t, p, p.SetImage(testPixels(color.RGBA{A: 255})))
-			id, view := p.front.model.kittyID, p.View()
+			id, view := p.front.cfg.KittyID, p.View()
 			prepared := p.SetImage(testPixels(color.RGBA{R: 255, A: 255}))()
 			seq := reflect.ValueOf(p.Update(prepared)())
 			seq.Index(0).Interface().(tea.Cmd)() // Accepted output may have updated the ID.
@@ -93,9 +93,9 @@ func TestStableIDClearOnReplaceTakesPrecedence(t *testing.T) {
 	p.opts.StableID = true
 	p.opts.ClearOnReplace = true
 	drivePicture(t, p, p.SetImage(testPixels(color.RGBA{A: 255})))
-	id := p.front.model.kittyID
+	id := p.front.cfg.KittyID
 	messages := drivePicture(t, p, p.SetImage(testPixels(color.RGBA{R: 255, A: 255})))
-	if p.front.model.kittyID == id || !strings.Contains(output(messages), kittyDeleteImage(id)) {
+	if p.front.cfg.KittyID == id || !strings.Contains(output(messages), kittyDeleteImage(id)) {
 		t.Fatal("stream bypassed clear policy")
 	}
 	drivePicture(t, p, p.Close())

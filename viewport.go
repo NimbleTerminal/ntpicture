@@ -51,30 +51,34 @@ func (v Viewport) bounds(cols, rows int) image.Rectangle {
 	return image.Rect(v.X, v.Y, v.X+min(v.Width, cols-v.X), v.Y+min(v.Height, rows-v.Y))
 }
 
-func (p *Picture) viewportView() string {
-	rect := p.viewport.bounds(p.cols, p.rows)
+func (p *Picture) renderViewport(v Viewport) string {
+	rect := v.bounds(p.cols, p.rows)
 	if rect.Empty() {
 		return ""
 	}
 	front := p.front
 	var lines []string
-	if front.model.mode != PictureKitty {
+	if front.mode != PictureKitty {
 		lines = strings.Split(front.grid, "\n")
 	}
 	var out strings.Builder
 	for y := rect.Min.Y; y < rect.Max.Y; y++ {
-		width := max(0, min(rect.Max.X, front.model.cols)-rect.Min.X)
-		if y >= front.model.rows {
+		width := max(0, min(rect.Max.X, front.cols)-rect.Min.X)
+		if y >= front.rows {
 			width = 0
 		}
 		if width > 0 {
-			if front.model.mode == PictureKitty {
+			if front.mode == PictureKitty {
 				// Explicit source row/column diacritics make a clipped grid refer to the
 				// original virtual placement; no bitmap slice or new transmission is needed.
-				writeKittyGridRow(&out, front.model.kittyID, y, rect.Min.X, rect.Min.X+width)
+				writeKittyGridRow(&out, front.cfg.KittyID, y, rect.Min.X, rect.Min.X+width)
 			} else if y < len(lines) {
-				out.WriteString(ansi.Cut(lines[y], rect.Min.X, rect.Min.X+width))
-				out.WriteString("\x1b[0m")
+				if rect.Min.X == 0 && width == front.cols {
+					out.WriteString(lines[y])
+				} else {
+					out.WriteString(ansi.Cut(lines[y], rect.Min.X, rect.Min.X+width))
+					out.WriteString("\x1b[0m")
+				}
 			}
 		}
 		out.WriteString(strings.Repeat(" ", rect.Dx()-width))

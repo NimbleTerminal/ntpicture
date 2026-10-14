@@ -182,3 +182,35 @@ func TestQueryKittySupportForcedFlatBatch(t *testing.T) {
 		t.Fatal("missing known capability")
 	}
 }
+
+func TestPictureNativeSharedMemoryRetiresSubmittedFrames(t *testing.T) {
+	original := tmuxPassthroughEnabled.Load()
+	SetTmuxPassthrough(false)
+	defer SetTmuxPassthrough(original)
+	resetKittySharedCap(t)
+	kittySharedCap.Store(int32(KittyCapabilitySupported))
+
+	p := testPicture(true)
+	p.opts.Render.KittyMedium = KittyMediumSharedMemory
+	drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
+	firstObj := p.front.kittyShared.object
+	if p.Status().Medium != KittyMediumSharedMemory || firstObj == nil || firstObj.Done() {
+		t.Fatalf("expected active shared-memory front: %+v", p.Status())
+	}
+
+	// Replacing a committed frame must retire (poll consumption), not immediately unlink.
+	drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
+	secondObj := p.front.kittyShared.object
+	if firstObj.Done() {
+		t.Fatal("submitted Picture frame was unlinked immediately on replacement before terminal could read")
+	}
+	if secondObj == nil || secondObj.Done() {
+		t.Fatal("replacement shared-memory frame not active")
+	}
+
+	// Close must unlink both retired and current shared-memory objects.
+	drivePicture(t, p, p.Close())
+	if !firstObj.Done() || !secondObj.Done() {
+		t.Fatal("Close leaked shared-memory buffers")
+	}
+}

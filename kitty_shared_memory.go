@@ -192,3 +192,20 @@ func (s *kittySharedState) submit(seq uint64, obj *kittyshm.Object) bool {
 	s.submitted = true
 	return true
 }
+
+func (s *kittySharedState) retire() *kittyshm.Object {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	obj, submitted := s.object, s.submitted
+	s.object, s.submitted = nil, false
+	if !submitted {
+		_ = obj.Unlink()
+		return nil
+	}
+	obj.Retire()
+	return obj
+}

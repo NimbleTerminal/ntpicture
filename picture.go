@@ -8,15 +8,14 @@ import (
 	"image/color"
 	"image/draw"
 	"math/rand/v2"
-	"nimbleterminal.dev/ntpicture/internal/imageview"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
+	"nimbleterminal.dev/ntpicture/internal/kittyshm"
 )
 
 // MaxImagePixels bounds snapshots and prepared images in Picture. Model retains
@@ -116,21 +115,27 @@ type Picture struct {
 	format                KittyFormat
 	medium                KittyMedium
 	retired               []*picturePlacement
+	retiredSHM            []*kittyshm.Object
 	retirementPending     bool
 	lifetime              context.Context
 	closeCancel           context.CancelFunc
 }
 
 type picturePlacement struct {
-	model      Model
-	image      image.Image
-	grid       string
-	generation uint64
-	retireAt   time.Time
-	active     atomic.Bool
-	lease      *pictureImageID
-	ownsID     bool
-	delete     tea.Cmd // Immutable; safe to use after the owner has been removed.
+	cfg         Config
+	mode        PictureMode
+	cols, rows  int
+	rasterSize  image.Point
+	transport   kittyTransport
+	kittyShared *kittySharedState
+	image       image.Image
+	grid        string
+	generation  uint64
+	retireAt    time.Time
+	active      atomic.Bool
+	lease       *pictureImageID
+	ownsID      bool
+	delete      tea.Cmd // Immutable; safe to use after the owner has been removed.
 }
 
 // A streaming replacement borrows its front's ID until commit. Cleanup of a
@@ -178,12 +183,6 @@ func New(opts Options) *Picture {
 	opts.Render.Background = color.RGBA64Model.Convert(opts.Render.Background)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Picture{opts: opts, visible: true, lifetime: ctx, closeCancel: cancel}
-}
-
-func (m *Model) config() Config {
-	return Config{KittyID: m.kittyID, KittyZ: m.kittyZ, Background: m.background,
-		Fit: m.fit, Anchor: m.anchor, CellPixelWidth: m.cellPixelW, CellPixelHeight: m.cellPixelH,
-		KittyResolutionFactor: m.kittyResolutionFactor, KittyFormat: m.kittyFormat, KittyMedium: m.kittyMedium}
 }
 
 func (p *Picture) Init() tea.Cmd {
@@ -241,6 +240,11 @@ func checkImage(img image.Image) error {
 	}
 	return nil
 }
+func (p *Picture) reportError(err error) tea.Cmd {
+	p.err = err
+	generation := p.generation
+	return func() tea.Msg { return ErrorMsg{p, generation, err} }
+}
 func (p *Picture) failSubmission(err error) tea.Cmd {
 	p.generation++
 	p.err = err
@@ -257,8 +261,7 @@ func (p *Picture) failSubmission(err error) tea.Cmd {
 	if p.opts.ClearOnReplace {
 		clear = p.clearFront()
 	}
-	generation := p.generation
-	return tea.Batch(clear, func() tea.Msg { return ErrorMsg{p, generation, err} })
+	return tea.Batch(clear, p.reportError(err))
 }
 
 func (p *Picture) SetSize(cols, rows int) tea.Cmd {
@@ -274,7 +277,7 @@ func (p *Picture) SetSize(cols, rows int) tea.Cmd {
 	if cols > 0 && rows > 0 {
 		if err := p.geometryError(); err != nil {
 			p.cols, p.rows = oldCols, oldRows
-			return p.failSubmission(err)
+			return p.reportError(err)
 		}
 	}
 	return p.changed()
@@ -287,7 +290,7 @@ func (p *Picture) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 		return nil
 	}
 	if cellWidth <= 0 || cellHeight <= 0 {
-		return p.failSubmission(errors.New("ntpicture: invalid cell geometry"))
+		return p.reportError(errors.New("ntpicture: invalid cell geometry"))
 	}
 	mode := PictureGlyph
 	if kitty {
@@ -304,7 +307,7 @@ func (p *Picture) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 		if err := p.geometryError(); err != nil {
 			p.mode = oldMode
 			*c = oldConfig
-			return p.failSubmission(err)
+			return p.reportError(err)
 		}
 	}
 	return p.changed()
@@ -318,9 +321,7 @@ func (p *Picture) SetMode(mode PictureMode) tea.Cmd {
 	}
 	if mode == PictureKitty {
 		if err := p.session().unavailable(); err != nil {
-			p.err = err
-			generation := p.generation
-			return func() tea.Msg { return ErrorMsg{p, generation, err} }
+			return p.reportError(err)
 		}
 	}
 	cw, ch := p.CellPixelSize()
@@ -383,18 +384,16 @@ func (p *Picture) schedule() tea.Cmd {
 		return nil
 	}
 	if err := p.geometryError(); err != nil {
-		p.err = err
-		generation := p.generation
-		return func() tea.Msg { return ErrorMsg{p, generation, err} }
+		return p.reportError(err)
 	}
 	cfg := p.opts.Render
 	raster := p.RasterGeometry().Pixels
 	var lease *pictureImageID
 	if p.opts.StableID && !p.opts.ClearOnReplace && p.mode == PictureKitty && p.front != nil &&
-		p.front.model.mode == PictureKitty && p.front.model.cols == p.cols && p.front.model.rows == p.rows &&
-		p.front.model.cellPixelW == cfg.CellPixelWidth && p.front.model.cellPixelH == cfg.CellPixelHeight && p.front.model.rasterSize == raster {
+		p.front.mode == PictureKitty && p.front.cols == p.cols && p.front.rows == p.rows &&
+		p.front.cfg.CellPixelWidth == cfg.CellPixelWidth && p.front.cfg.CellPixelHeight == cfg.CellPixelHeight && p.front.rasterSize == raster {
 		lease = p.front.lease
-		cfg.KittyID = p.front.model.kittyID
+		cfg.KittyID = p.front.cfg.KittyID
 	}
 	if p.mode == PictureKitty && lease == nil {
 		id, err := p.opts.NextID()
@@ -402,18 +401,22 @@ func (p *Picture) schedule() tea.Cmd {
 			err = ErrImageIDExhausted
 		}
 		if err != nil {
-			p.err = err
-			generation := p.generation
-			return func() tea.Msg { return ErrorMsg{p, generation, err} }
+			return p.reportError(err)
 		}
 		cfg.KittyID = id
 	}
-	placement := &picturePlacement{model: NewModelWithConfig(cfg), image: p.img, generation: p.generation}
 	transport := p.session().transport()
-	placement.model.transport = &transport
-	placement.model.rasterSize = raster
-	placement.model.mode = p.mode
-	placement.model.cols, placement.model.rows = p.cols, p.rows
+	placement := &picturePlacement{
+		cfg:         cfg,
+		mode:        p.mode,
+		cols:        p.cols,
+		rows:        p.rows,
+		rasterSize:  raster,
+		transport:   transport,
+		kittyShared: &kittySharedState{},
+		image:       p.img,
+		generation:  p.generation,
+	}
 	placement.active.Store(true)
 	if p.mode == PictureKitty {
 		placement.lease = lease
@@ -433,17 +436,42 @@ func (p *Picture) schedule() tea.Cmd {
 	ctx, cancel := context.WithCancel(p.lifetime)
 	job := &pictureJob{placement: placement, ctx: ctx, cancel: cancel}
 	p.job = job
-	placement.model.img = p.img
-	placement.model.seq++
-	render := placement.model.renderCmdContext(ctx)
-	// The render captures Model fields before leaving the event loop.
+	img, mode, cols, rows := p.img, p.mode, p.cols, p.rows
+	var params kittyPrepareParams
+	if mode == PictureKitty {
+		cpw := max(1, int(float64(cfg.CellPixelWidth)*cfg.KittyResolutionFactor))
+		cph := max(1, int(float64(cfg.CellPixelHeight)*cfg.KittyResolutionFactor))
+		params = kittyPrepareParams{
+			seq:        1,
+			img:        img,
+			kittyZ:     cfg.KittyZ,
+			kittyID:    cfg.KittyID,
+			background: cfg.Background,
+			fit:        cfg.Fit,
+			anchor:     cfg.Anchor,
+			format:     cfg.KittyFormat,
+			medium:     cfg.KittyMedium,
+			cols:       cols,
+			rows:       rows,
+			cpw:        cpw,
+			cph:        cph,
+			rasterSize: raster,
+			transport:  transport,
+			shared:     placement.kittyShared,
+		}
+		params.shared.begin(params.seq)
+	}
 	return func() tea.Msg {
 		var frame tea.Msg
 		if ctx.Err() == nil {
-			if render != nil {
-				frame = render()
+			if mode == PictureKitty {
+				if msg, ok := prepareKittyFrame(ctx, params); ok {
+					frame = msg
+				}
 			} else {
-				frame = placement.model.View().Content
+				var scratch fitScratch
+				rendered := prepareSourceWithScratch(img, cfg.Fit, cols, rows, 1, 2, cfg.Background, cfg.Anchor, &scratch)
+				frame = string(appendGlyph(nil, rendered))
 			}
 		}
 		return picturePrepared{p, job, frame}
@@ -492,12 +520,9 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			j.cancel()
 			p.job = nil
 			cleanup := p.dispose(j.placement)
-			err := errors.New("ntpicture: image preparation failed")
-			p.err = err
-			generation := p.generation
-			return tea.Batch(cleanup, func() tea.Msg { return ErrorMsg{p, generation, err} })
+			return tea.Batch(cleanup, p.reportError(errors.New("ntpicture: image preparation failed")))
 		}
-		if f.sharedMemory != nil && !j.placement.model.kittyShared.submit(f.Seq, f.sharedMemory) {
+		if f.sharedMemory != nil && !j.placement.kittyShared.submit(f.Seq, f.sharedMemory) {
 			j.cancel()
 			p.job = nil
 			return tea.Batch(p.dispose(j.placement), p.failSubmission(errors.New("ntpicture: shared image was retired before transmission")))
@@ -540,7 +565,7 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		kept := p.retired[:0]
 		for _, f := range p.retired {
 			if !now.Before(f.retireAt) {
-				cmds = append(cmds, p.dispose(f))
+				cmds = append(cmds, p.retirePlacement(f))
 			} else {
 				kept = append(kept, f)
 			}
@@ -572,13 +597,13 @@ func (p *Picture) commit(j *pictureJob, format KittyFormat, medium KittyMedium) 
 			j.placement.ownsID = true
 		}
 		if p.opts.RetireDelay < 0 || p.mode == PictureGlyph {
-			cleanup = p.dispose(old)
+			cleanup = p.retirePlacement(old)
 		} else {
 			old.retireAt = time.Now().Add(p.opts.RetireDelay)
 			p.retired = append(p.retired, old)
 			// Bound retained images even when the event loop outruns its timer.
 			if len(p.retired) > 2 {
-				cleanup = p.dispose(p.retired[0])
+				cleanup = p.retirePlacement(p.retired[0])
 				p.retired = p.retired[1:]
 			}
 		}
@@ -608,6 +633,39 @@ func (p *Picture) retireLater() tea.Cmd {
 		}
 	}
 }
+func (p *Picture) trackRetiredSHM(obj *kittyshm.Object) {
+	kept := p.retiredSHM[:0]
+	for _, o := range p.retiredSHM {
+		if !o.Done() {
+			kept = append(kept, o)
+		}
+	}
+	clear(p.retiredSHM[len(kept):])
+	p.retiredSHM = kept
+	if obj != nil && !obj.Done() {
+		p.retiredSHM = append(p.retiredSHM, obj)
+	}
+}
+func (p *Picture) clearRetiredSHM() {
+	for _, o := range p.retiredSHM {
+		_ = o.Unlink()
+	}
+	clear(p.retiredSHM)
+	p.retiredSHM = nil
+}
+func (p *Picture) retirePlacement(f *picturePlacement) tea.Cmd {
+	if f == nil {
+		return nil
+	}
+	f.active.Store(false)
+	if f.ownsID && f.lease != nil {
+		f.lease.active.Store(false)
+	}
+	if f.mode == PictureKitty {
+		p.trackRetiredSHM(f.kittyShared.retire())
+	}
+	return f.delete
+}
 func (p *Picture) dispose(f *picturePlacement) tea.Cmd {
 	if f == nil {
 		return nil
@@ -616,19 +674,19 @@ func (p *Picture) dispose(f *picturePlacement) tea.Cmd {
 	if f.ownsID && f.lease != nil {
 		f.lease.active.Store(false)
 	}
-	// Kitty preparation only reads captured inputs and its synchronized resource
-	// tracker. A glyph View touches Model caches, so don't mutate that model here.
-	if f.model.mode == PictureKitty {
-		_ = f.model.SetImage(nil)
+	if f.mode == PictureKitty {
+		f.kittyShared.clear(1)
 	}
 	return f.delete
 }
 func (p *Picture) clearFront() tea.Cmd {
+	p.clearRetiredSHM()
 	cmd := p.dispose(p.front)
 	p.front = nil
 	return cmd
 }
 func (p *Picture) clearRetired() tea.Cmd {
+	p.clearRetiredSHM()
 	var cmds []tea.Cmd
 	for _, f := range p.retired {
 		cmds = append(cmds, p.dispose(f))
@@ -643,50 +701,16 @@ func (p *Picture) View() string {
 	if p.closed {
 		return p.keptView
 	}
-	if p.closed || !p.visible || p.front == nil || p.cols == 0 || p.rows == 0 {
+	if !p.visible || p.front == nil || p.cols == 0 || p.rows == 0 {
 		return ""
 	}
 	if p.viewportSet {
-		return p.viewportView()
+		return p.renderViewport(p.viewport)
 	}
-	if p.front.model.cols == p.cols && p.front.model.rows == p.rows {
+	if p.front.cols == p.cols && p.front.rows == p.rows {
 		return p.front.grid
 	}
-	return fitGrid(p.front.grid, p.front.model.cols, p.cols, p.rows)
-}
-
-// fitGrid preserves placeholder cells without repeatedly measuring their
-// combining marks during resize bursts. Glyph rows use ANSI-aware truncation.
-func fitGrid(grid string, cols, w, h int) string {
-	lines := strings.Split(grid, "\n")
-	lines = lines[:min(len(lines), h)]
-	for i, line := range lines {
-		switch {
-		case cols > w:
-			n, end := 0, -1
-			for offset, r := range line {
-				if r != kitty.Placeholder {
-					continue
-				}
-				if n == w {
-					end = offset
-					break
-				}
-				n++
-			}
-			if end >= 0 {
-				lines[i] = line[:end] + "\x1b[39m"
-			} else if n == 0 {
-				lines[i] = ansi.Truncate(line, w, "")
-			}
-		case cols < w:
-			lines[i] = line + strings.Repeat(" ", w-cols)
-		}
-	}
-	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", w))
-	}
-	return strings.Join(lines, "\n")
+	return p.renderViewport(Viewport{Width: p.cols, Height: p.rows})
 }
 
 // Keep permanently stops work while preserving the last presented View and
@@ -710,25 +734,39 @@ func (p *Picture) Keep() tea.Cmd {
 	front := p.front
 	p.front = nil // Close must never delete the kept terminal ID.
 	cleanup := p.Close()
-	if front == nil || front.model.mode != PictureKitty {
+	if front == nil || front.mode != PictureKitty {
 		return cleanup
 	}
 	if p.medium == KittyMediumDirect && outputDone == nil {
 		// The terminal already owns these pixels. Only shared-memory fronts or
 		// an accepted borrower of this ID need an exit-time retransmission.
-		_ = front.model.SetImage(nil)
+		front.kittyShared.clear(1)
 		return cleanup
 	}
 	// Capture the committed geometry and source, including during a resize.
-	// A fresh renderer avoids geometry-change deletion of the retained ID.
-	cfg := front.model.config()
-	cfg.KittyMedium = KittyMediumDirect
-	m := NewModelWithConfig(cfg)
-	m.transport = front.model.transport
-	m.rasterSize = front.model.rasterSize
-	m.mode, m.cols, m.rows = PictureKitty, front.model.cols, front.model.rows
-	m.img = front.image
-	render := m.renderCmdContext(context.Background())
+	// Fresh parameters avoid geometry-change deletion of the retained ID.
+	cfg := front.cfg
+	cpw := max(1, int(float64(cfg.CellPixelWidth)*cfg.KittyResolutionFactor))
+	cph := max(1, int(float64(cfg.CellPixelHeight)*cfg.KittyResolutionFactor))
+	params := kittyPrepareParams{
+		seq:        1,
+		img:        front.image,
+		kittyZ:     cfg.KittyZ,
+		kittyID:    cfg.KittyID,
+		background: cfg.Background,
+		fit:        cfg.Fit,
+		anchor:     cfg.Anchor,
+		format:     cfg.KittyFormat,
+		medium:     KittyMediumDirect,
+		cols:       front.cols,
+		rows:       front.rows,
+		cpw:        cpw,
+		cph:        cph,
+		rasterSize: front.rasterSize,
+		transport:  front.transport,
+		shared:     &kittySharedState{},
+	}
+	params.shared.begin(params.seq)
 	generation := p.presented
 	keep := func() tea.Msg {
 		// Drain accepted output before restoring the committed frame under an
@@ -736,8 +774,8 @@ func (p *Picture) Keep() tea.Cmd {
 		if outputDone != nil {
 			<-outputDone
 		}
-		defer func() { _ = front.model.SetImage(nil) }()
-		frame, ok := render().(KittyFrameMsg)
+		defer front.kittyShared.clear(1)
+		frame, ok := prepareKittyFrame(context.Background(), params)
 		if !ok || frame.APC == "" {
 			return ErrorMsg{p, generation, errors.New("ntpicture: keep-screen preparation failed")}
 		}
