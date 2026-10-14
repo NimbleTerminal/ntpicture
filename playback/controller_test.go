@@ -358,3 +358,27 @@ func TestResolutionCorrectionPreservesSourceError(t *testing.T) {
 		t.Fatal("presentation correction cleared source error")
 	}
 }
+
+func TestPauseAndSetRatePreserveInFlightSeekAndRestart(t *testing.T) {
+	c := New(testPlayer(t), Options{Wait: func(context.Context, time.Duration) bool { return true }})
+	defer c.Close()
+	c.SetSize(2, 2)
+	drive(t, c, c.Init())
+
+	// Start a Seek, then call SetRate and Pause(true) before the seek worker runs.
+	seekCmd := c.Seek(2)
+	c.SetRate(2)
+	c.Pause(true)
+	drive(t, c, seekCmd)
+	if c.Status().Player.Frame() != 2 || !c.Status().Paused {
+		t.Fatalf("in-flight seek was dropped by SetRate/Pause: frame=%d paused=%v", c.Status().Player.Frame(), c.Status().Paused)
+	}
+
+	// Start a Restart while paused at frame 2, then call SetRate before the restart worker runs.
+	restartCmd := c.Restart()
+	c.SetRate(1.5)
+	drive(t, c, restartCmd)
+	if c.Status().Player.Frame() != 1 || !c.Status().Paused {
+		t.Fatalf("in-flight restart was dropped by SetRate: frame=%d paused=%v", c.Status().Player.Frame(), c.Status().Paused)
+	}
+}

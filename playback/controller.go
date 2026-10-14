@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	picture "nimbleterminal.dev/ntpicture"
 	"nimbleterminal.dev/ntpicture/animation"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 )
 
 // Wait must honor cancellation. Nil uses a cancellable timer.
@@ -177,6 +178,8 @@ func (c *Controller) SetMode(mode picture.PictureMode) tea.Cmd {
 func (c *Controller) SetVisible(visible bool) tea.Cmd {
 	c.visible = visible
 	if !visible {
+		c.pending = nil
+		c.restart = false
 		c.cancel()
 	}
 	return tea.Batch(c.pic.SetVisible(visible), c.schedule())
@@ -234,8 +237,6 @@ func (c *Controller) schedule() tea.Cmd {
 			return nil
 		}
 	}
-	c.pending = nil
-	c.restart = false
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{ctx: ctx, cancel: cancel}
 	c.job = j
@@ -277,6 +278,8 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 		m.job.cancel()
 		c.job = nil
 		if !c.closed && !cancelled {
+			c.pending = nil
+			c.restart = false
 			if m.err != nil {
 				c.err = m.err
 				c.paused = true
@@ -351,7 +354,13 @@ func (c *Controller) ResetViewport() { c.pic.ResetViewport() }
 // Custom image implementations need not be comparable. Unknown identities are
 // conservatively resubmitted; immutable sources may reuse an image to skip work.
 func sameImage(a, b image.Image) bool {
-	return a != nil && b != nil && reflect.ValueOf(a).Comparable() && reflect.ValueOf(b).Comparable() && a == b
+	if a == nil || b == nil {
+		return false
+	}
+	if eq, ok := imageview.Same(a, b); ok {
+		return eq
+	}
+	return reflect.ValueOf(a).Comparable() && reflect.ValueOf(b).Comparable() && a == b
 }
 
 // RasterGeometry reports the picture's full preparation target before clipping.

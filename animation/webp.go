@@ -176,25 +176,30 @@ func webpUint24(b []byte) uint32 { return uint32(b[0]) | uint32(b[1])<<8 | uint3
 // pixels are additional allocations. A still
 // WebP counts as one decoded frame of its own size.
 func PreflightWebP(data []byte) (Stats, error) {
+	s, _, err := preflightWebP(data)
+	return s, err
+}
+
+func preflightWebP(data []byte) (Stats, *webpAnimation, error) {
 	if len(data) > MaxFileBytes {
-		return Stats{}, ErrTooLarge
+		return Stats{}, nil, ErrTooLarge
 	}
 	if !IsAnimatedWebP(data) {
 		cfg, err := webp.DecodeConfig(bytes.NewReader(data))
 		if err != nil {
-			return Stats{}, err
+			return Stats{}, nil, err
 		}
 		if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxPixels/cfg.Height {
-			return Stats{}, fmt.Errorf("WebP canvas exceeds %d pixels", MaxPixels)
+			return Stats{}, nil, fmt.Errorf("WebP canvas exceeds %d pixels", MaxPixels)
 		}
-		return Stats{Bounds: image.Rect(0, 0, cfg.Width, cfg.Height), Frames: 1, Bytes: cfg.Width * cfg.Height * 4}, nil
+		return Stats{Bounds: image.Rect(0, 0, cfg.Width, cfg.Height), Frames: 1, Bytes: cfg.Width * cfg.Height * 4}, nil, nil
 	}
 	a, err := parseWebPAnimation(data)
 	if err != nil {
-		return Stats{}, err
+		return Stats{}, nil, err
 	}
 	stats := Stats{Bounds: a.bounds, Frames: len(a.frames), Bytes: a.bounds.Dx()*a.bounds.Dy()*4 + len(data)}
-	return stats, nil
+	return stats, a, nil
 }
 
 // DecodeWebP decodes a WebP file. An animation becomes a Player when animate
@@ -207,21 +212,10 @@ func DecodeWebP(data []byte, animate bool) (image.Image, *Player, error) {
 	}
 	return DecodeContext(context.Background(), data, Options{Animate: animate})
 }
-func decodeWebP(ctx context.Context, data []byte, animate bool) (image.Image, *Player, error) {
-	if len(data) > MaxFileBytes {
-		return nil, nil, ErrTooLarge
-	}
-	if !IsAnimatedWebP(data) {
-		if _, err := PreflightWebP(data); err != nil {
-			return nil, nil, err
-		}
+func decodeWebP(ctx context.Context, data []byte, a *webpAnimation, animate bool) (image.Image, *Player, error) {
+	if a == nil {
 		img, err := webp.Decode(contextReader{ctx, bytes.NewReader(data)})
 		return img, nil, err
-	}
-	data = bytes.Clone(data)
-	a, err := parseWebPAnimation(data)
-	if err != nil {
-		return nil, nil, err
 	}
 	frames := a.frames
 	if !animate {
@@ -233,6 +227,7 @@ func decodeWebP(ctx context.Context, data []byte, animate bool) (image.Image, *P
 	if a.alpha {
 		clip.Background = color.Transparent
 	}
+	var cloned []byte
 	for i, f := range frames {
 		cf := ClipFrame{Rect: f.rect, Delay: f.delay, Disposal: f.disposal, Blend: f.blend}
 		if i == 0 {
@@ -242,6 +237,11 @@ func decodeWebP(ctx context.Context, data []byte, animate bool) (image.Image, *P
 			}
 			cf.Image = img
 		} else {
+			if cloned == nil {
+				cloned = bytes.Clone(data)
+			}
+			offset := cap(data) - cap(f.data)
+			f.data = cloned[offset : offset+len(f.data)]
 			cf.LoadContext = func(ctx context.Context) (image.Image, error) { return decodeWebPFrameContext(ctx, f) }
 		}
 		clip.Frames = append(clip.Frames, cf)

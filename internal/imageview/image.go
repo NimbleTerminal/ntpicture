@@ -38,3 +38,40 @@ func Unwrap(img image.Image) image.Image {
 	}
 	return img
 }
+
+// Same reports whether two images share or differ in identity without
+// reflection when either is a standard concrete image pointer. When comparable
+// is false, the caller must fall back to reflect.ValueOf.
+func Same(a, b image.Image) (equal, comparable bool) {
+	a, b = Unwrap(a), Unwrap(b)
+	switch x := a.(type) {
+	case *image.NRGBA:
+		y, ok := b.(*image.NRGBA)
+		return ok && x == y, true
+	case *image.RGBA:
+		y, ok := b.(*image.RGBA)
+		return ok && x == y, true
+	case *image.Paletted:
+		y, ok := b.(*image.Paletted)
+		return ok && x == y, true
+	case *image.YCbCr:
+		y, ok := b.(*image.YCbCr)
+		return ok && x == y, true
+	case *image.NRGBA64:
+		y, ok := b.(*image.NRGBA64)
+		return ok && x == y, true
+	case *image.RGBA64:
+		y, ok := b.(*image.RGBA64)
+		return ok && x == y, true
+	case *image.Alpha:
+		y, ok := b.(*image.Alpha)
+		return ok && x == y, true
+	case *image.Gray:
+		y, ok := b.(*image.Gray)
+		return ok && x == y, true
+	case *image.Uniform:
+		y, ok := b.(*image.Uniform)
+		return ok && x == y, true
+	}
+	return false, false
+}

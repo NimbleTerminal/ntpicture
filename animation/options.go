@@ -44,42 +44,51 @@ type Options struct {
 
 // PreflightWithLimits checks metadata and storage bounds before pixel allocation.
 func PreflightWithLimits(ctx context.Context, data []byte, limits Limits) (Stats, error) {
+	s, _, err := preflightWithLimits(ctx, data, limits)
+	return s, err
+}
+
+func preflightWithLimits(ctx context.Context, data []byte, limits Limits) (Stats, *webpAnimation, error) {
 	l, err := limits.normalized()
 	if err != nil {
-		return Stats{}, err
+		return Stats{}, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return Stats{}, err
+		return Stats{}, nil, err
 	}
 	if len(data) > l.MaxInputBytes {
-		return Stats{}, ErrTooLarge
+		return Stats{}, nil, ErrTooLarge
 	}
-	var s Stats
+	var (
+		s    Stats
+		webp *webpAnimation
+	)
 	if isGIF(data) {
 		s, err = preflightGIFContext(ctx, data)
 	} else {
-		s, err = PreflightWebP(data)
+		s, webp, err = preflightWebP(data)
 	}
 	if err != nil {
-		return s, err
+		return s, nil, err
 	}
 	if s.Bounds.Dx() > l.MaxCanvasPixels/s.Bounds.Dy() || s.Frames > l.MaxFrames || (isGIF(data) && s.Bytes > l.MaxGIFFrameBytes) {
-		return s, fmt.Errorf("animation exceeds configured limits")
+		return s, nil, fmt.Errorf("animation exceeds configured limits")
 	}
-	return s, ctx.Err()
+	return s, webp, ctx.Err()
 }
 
 // DecodeContext snapshots input so lazy WebP frames remain valid after the caller
 // reuses its buffer. Cancellation is checked during codec reads and composition;
 // a codec's current computation between reads cannot be forcibly interrupted.
 func DecodeContext(ctx context.Context, data []byte, options Options) (image.Image, *Player, error) {
-	if _, err := PreflightWithLimits(ctx, data, options.Limits); err != nil {
+	_, webp, err := preflightWithLimits(ctx, data, options.Limits)
+	if err != nil {
 		return nil, nil, err
 	}
 	if isGIF(data) {
 		return decodeGIF(ctx, data, options.Animate)
 	}
-	return decodeWebP(ctx, data, options.Animate)
+	return decodeWebP(ctx, data, webp, options.Animate)
 }
 
 type contextReader struct {
