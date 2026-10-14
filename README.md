@@ -49,8 +49,8 @@ glyph output. Rendering options survive every replacement.
 Standalone `Picture` uses fresh IDs by default. For continuously supplied
 mesh/framebuffer images, set `Options.StableID: true`. `playback.New` uses
 stable IDs by default; set `playback.Options{FreshIDs: true}` to opt out.
-With stable IDs, Kitty frames reuse the displayed image ID while cell dimensions and cell pixel
-geometry remain unchanged. The placeholder string stays identical, so Bubble Tea
+With stable IDs, Kitty frames reuse the displayed image ID while cell dimensions,
+cell pixel geometry and encoded raster dimensions remain unchanged. The placeholder string stays identical, so Bubble Tea
 can skip redrawing it and transmit only the image update. Each Picture has its
 own ID; resize, hiding/clearing, and committed mode changes require a new
 placement. `ClearOnReplace` takes precedence.
@@ -102,6 +102,37 @@ Kitty PNG, raw RGBA, zlib and shared-memory output retain the NTCharts wire
 format. Glyph output uses colored half blocks. Fit contain/fill/cover, anchors,
 cell pixel dimensions, placement depth and resolution factors are supported. The
 exact-size `FitFill` path bypasses resampling.
+
+Producers can query `pic.RasterGeometry()` for `Cells`, target `Pixels`, current
+`Mode`, and physical `DisplayAspect`. Use the aspect for the mesh camera and the
+pixel dimensions for its framebuffer; glyph pixels and integer rounding can
+make those ratios differ. Requery after size, mode, terminal geometry or
+resolution changes. The query describes the requested full picture, even while
+an older front is displayed; `Viewport` clipping does not change it.
+
+```go
+// In the event loop, after choosing an adaptive resolution:
+resolutionCmd := pic.SetResolution(0.3)
+g := pic.RasterGeometry()
+// renderMesh is application code; render only when both dimensions are positive.
+frame := renderMesh(g.Pixels.X, g.Pixels.Y, g.DisplayAspect)
+return tea.Batch(resolutionCmd, pic.SetImageImmutable(frame))
+```
+
+Configure `FitFill` and submit an opaque, immutable framebuffer at exactly
+`Pixels` to bypass preparation scaling and compositing. Return both commands:
+the resolution change may have scheduled work that a newer frame supersedes.
+For rendering off the event loop, capture the geometry with the render request
+and reject obsolete producer results in the host.
+
+`SetResolution` accepts a finite factor in `(0, 1]`, relative to terminal pixel
+size. Kitty scales the full raster and rounds each dimension once, to at least
+one pixel. It preserves cell footprint and physical aspect, with unavoidable
+pixel rounding, and retains the front until the new placement is ready. Factors
+that round to the same dimensions do not trigger preparation. Glyph output stays
+at `cols × (2 * rows)`; the factor is saved for a later switch to Kitty. Invalid
+factors report `ErrorMsg` without cancelling pending work. Playback controllers
+forward both methods. Legacy `Model` retains its existing per-cell rounding.
 
 `Picture` bounds source and prepared images to 32 Mi pixels and validates Kitty
 placeholder dimensions. This is a pixel bound, not a total RAM budget: source,

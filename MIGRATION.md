@@ -16,6 +16,11 @@
   borrowers cannot delete the displayed image. Playback now defaults to this
   path, with FreshIDs as an explicit opt-out. Standalone Picture keeps its
   retained-replacement default; continuously supplied framebuffers opt in.
+- Picture and playback expose `RasterGeometry` and runtime `SetResolution` so
+  producers can render at the encoded target without changing cell layout.
+  Kitty rounds the full scaled raster; legacy Model keeps per-cell rounding.
+  ntcharts3d can keep its adaptive policy and camera logic while using these
+  dimensions. Its consumer migration and presentation-cost metrics remain open.
 - Fresh single-ID allocation, failure reporting and bounded Picture geometry.
 - A native example, browser workspace and temporary consumer compatibility
   checks.

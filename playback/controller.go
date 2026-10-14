@@ -338,3 +338,9 @@ func (c *Controller) ResetViewport() { c.pic.ResetViewport() }
 func sameImage(a, b image.Image) bool {
 	return a != nil && b != nil && reflect.ValueOf(a).Comparable() && reflect.ValueOf(b).Comparable() && a == b
 }
+
+// RasterGeometry reports the picture's full preparation target before clipping.
+func (c *Controller) RasterGeometry() picture.RasterGeometry { return c.pic.RasterGeometry() }
+
+// SetResolution changes Kitty encoding resolution without changing cell layout.
+func (c *Controller) SetResolution(factor float64) tea.Cmd { return c.pic.SetResolution(factor) }

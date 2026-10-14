@@ -60,8 +60,8 @@ type Options struct {
 	// ClearOnReplace removes old content immediately, as required for QR codes.
 	// Otherwise the displayed picture remains until its replacement is ready.
 	ClearOnReplace bool
-	// StableID reuses the displayed Kitty image ID while cell geometry is
-	// unchanged, keeping View identical across streaming frames. Pixels update
+	// StableID reuses the displayed Kitty image ID while cell geometry and
+	// raster dimensions are unchanged, keeping View identical. Pixels update
 	// on transmission, before PresentedMsg; output already sent cannot be
 	// recalled. Resize, mode changes, hiding and clearing start a fresh ID.
 	// ClearOnReplace takes precedence. Glyph rendering is unaffected.
@@ -384,10 +384,11 @@ func (p *Picture) schedule() tea.Cmd {
 		return func() tea.Msg { return ErrorMsg{p, generation, err} }
 	}
 	cfg := p.opts.Render
+	raster := p.RasterGeometry().Pixels
 	var lease *pictureImageID
 	if p.opts.StableID && !p.opts.ClearOnReplace && p.mode == PictureKitty && p.front != nil &&
 		p.front.model.mode == PictureKitty && p.front.model.cols == p.cols && p.front.model.rows == p.rows &&
-		p.front.model.cellPixelW == cfg.CellPixelWidth && p.front.model.cellPixelH == cfg.CellPixelHeight {
+		p.front.model.cellPixelW == cfg.CellPixelWidth && p.front.model.cellPixelH == cfg.CellPixelHeight && p.front.model.rasterSize == raster {
 		lease = p.front.lease
 		cfg.KittyID = p.front.model.kittyID
 	}
@@ -406,6 +407,7 @@ func (p *Picture) schedule() tea.Cmd {
 	placement := &picturePlacement{model: NewModelWithConfig(cfg), image: p.img, generation: p.generation}
 	transport := p.session().transport()
 	placement.model.transport = &transport
+	placement.model.rasterSize = raster
 	placement.model.mode = p.mode
 	placement.model.cols, placement.model.rows = p.cols, p.rows
 	placement.active.Store(true)
@@ -719,6 +721,7 @@ func (p *Picture) Keep() tea.Cmd {
 	cfg.KittyMedium = KittyMediumDirect
 	m := NewModelWithConfig(cfg)
 	m.transport = front.model.transport
+	m.rasterSize = front.model.rasterSize
 	m.mode, m.cols, m.rows = PictureKitty, front.model.cols, front.model.rows
 	m.img = front.image
 	render := m.renderCmdContext(context.Background())

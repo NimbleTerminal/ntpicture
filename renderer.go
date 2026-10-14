@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
@@ -95,7 +96,9 @@ type Config struct {
 	// the renderer's per-frame composite cost is the bottleneck (e.g.
 	// browser-WASM with ghostty-web), or when matching the perceived
 	// fidelity of Glyph mode is desirable. Out-of-range values clamp
-	// to 1.0.
+	// to 1.0. Legacy Model rounds per-cell dimensions; Picture scales the
+	// whole raster, rounding once per dimension. Picture.SetResolution changes
+	// this factor at runtime; Picture.RasterGeometry reports the exact target.
 	KittyResolutionFactor float64
 
 	// KittyFormat selects how Kitty frames are transmitted: PNG (default;
@@ -144,6 +147,9 @@ type Model struct {
 	kittyShared *kittySharedState
 	transport   *kittyTransport // immutable settings captured for an explicit session
 
+	// Picture-only whole-raster override; zero preserves legacy sizing.
+	rasterSize image.Point
+
 	// lastRenderedGeom records the (cols, rows, cellPixelW, cellPixelH)
 	// of the most recently *applied* KittyFrame — i.e. the geometry
 	// currently placed on the terminal. renderCmd compares the current
@@ -189,7 +195,7 @@ func NewModelWithConfig(cfg Config) Model {
 	if cfg.CellPixelHeight <= 0 {
 		cfg.CellPixelHeight = defaultCellPixelH
 	}
-	if cfg.KittyResolutionFactor <= 0 || cfg.KittyResolutionFactor > 1 {
+	if math.IsNaN(cfg.KittyResolutionFactor) || cfg.KittyResolutionFactor <= 0 || cfg.KittyResolutionFactor > 1 {
 		cfg.KittyResolutionFactor = 1.0
 	}
 	return Model{
@@ -656,12 +662,18 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 	// unchanged, so the terminal upscales the smaller source image to
 	// fill the cell area on display.
 	cpw, cph := m.kittyCellPixelSize()
+	raster := m.rasterSize
 	prevGeom := m.lastRenderedGeom
 	return func() tea.Msg {
 		if ctx.Err() != nil {
 			return nil
 		}
-		prepared := prepareSource(img, fit, cols, rows, cpw, cph, bg, anchor)
+		var prepared image.Image
+		if raster.X > 0 && raster.Y > 0 {
+			prepared = prepareSource(img, fit, raster.X, raster.Y, 1, 1, bg, anchor)
+		} else {
+			prepared = prepareSource(img, fit, cols, rows, cpw, cph, bg, anchor)
+		}
 		if prepared == nil || ctx.Err() != nil {
 			return nil
 		}
