@@ -6,6 +6,7 @@ import (
 	"nimbleterminal.dev/ntpicture/internal/imageview"
 
 	"golang.org/x/image/draw"
+	"golang.org/x/image/math/f64"
 )
 
 // prepareSource returns an image.Image of bounds (cols*cellW × rows*cellH)
@@ -194,7 +195,17 @@ func coverTo(src image.Image, sb, target image.Rectangle, bg color.Color, anchor
 	dst := image.Rect(ox, oy, ox+cw, oy+ch)
 	out := scratch.target(target)
 	draw.Draw(out, target, &image.Uniform{C: bg}, image.Point{}, draw.Src)
-	place(out, dst, src, sb, scratch)
+	// Transform visits only visible destination pixels. Scale/NewScaler allocate
+	// tables and scratch for the entire overflowing rectangle, which can be
+	// enormous even when both the input and visible output are small. Retain
+	// the original fractional mapping and kernel support at crop boundaries.
+	if dst.In(target) || dst.Size() == sb.Size() {
+		place(out, dst, src, sb, scratch)
+	} else {
+		sx, sy := float64(cw)/float64(sw), float64(ch)/float64(sh)
+		matrix := f64.Aff3{sx, 0, float64(ox) - sx*float64(sb.Min.X), 0, sy, float64(oy) - sy*float64(sb.Min.Y)}
+		draw.CatmullRom.Transform(out, matrix, src, sb, draw.Over, nil)
+	}
 	return out
 }
 
