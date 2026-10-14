@@ -22,6 +22,9 @@
   ntcharts3d can keep its adaptive policy and camera logic while using these
   dimensions. Its consumer migration and presentation-cost metrics remain open.
 - Fresh single-ID allocation, failure reporting and bounded Picture geometry.
+  Glyph bounds use the effective raster independently of terminal cell size.
+  FitCover samples the visible area without allocating the overflowing raster.
+  Playback recovers corrected presentation errors without clearing decode errors.
 - A native example, browser workspace and temporary consumer compatibility
   checks.
 - Glyph rendering prepares directly at half-block resolution and emits ANSI

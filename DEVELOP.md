@@ -81,6 +81,10 @@ and result for these checks:
 - Native Kitty and tmux: show a still, repeatedly replace it, resize, and quit;
   verify retained content during transmission and removal of old placements.
 - Glyph fallback: repeat replacement and resize in a terminal without Kitty.
+- Raster control: vary resolution while resizing and streaming. Verify the cell
+  footprint and camera aspect stay fixed across resolution changes, the old
+  front remains until replacement, and glyph resolution stays at two rows per
+  cell. Reject an invalid factor, correct it, and verify playback recovers.
 - Shared memory: test native and browser paths, direct fallback when
   unavailable, delayed consumption, and cleanup after cancellation or shutdown.
 - Browser host: check the actual booba/ghostty-web Canvas2D/WebGL output,
@@ -234,7 +238,8 @@ checks.
 The animation decoder/player is extracted from Gloss's `internal/animate`;
 `playback.Controller` reuses ntpicture's existing Picture instead of copying
 Gloss's public mutable Animator state or its 1,000-ID reservation scheme. Each
-controller schedules the next delay only after the current picture is presented.
+controller gates the next job on presentation and waits only the time remaining
+on its frame deadline, carrying that deadline through composition and output.
 Slow terminals slow playback rather than accumulate work. Seek and pause cancel
 timers/composition, stale messages cannot replace newer state, and another
 composition cannot start until an old cancelled job returns. Forward all
@@ -254,9 +259,12 @@ construction input; custom lazy loaders must be safe for concurrent calls and
 must not mutate returned images. Prefer LoadContext for cancellation.
 NextContext returns FrameError plus a skipped-frame position on lazy failure;
 callers may choose whether to continue. Controller stops and exposes the error
-in Status. Seek fails immediately on a lazy error. A standard codec computation
-between context-reader calls is not forcibly interruptible; no hard deadline is
-claimed.
+in Status. Presentation corrections do not clear a source/decode failure;
+restart, seek or source replacement are explicit retry paths. Successful
+presentation corrections recover presentation errors, and stale errors cannot
+stop a corrected request. Seek fails immediately on a lazy error. A standard
+codec computation between context-reader calls is not forcibly interruptible;
+no hard deadline is claimed.
 
 GIF/WebP decoding/disposal/loop tests were ported from Gloss. Added tests cover
 limits, ownership, cancellation, error indexing, independent message owners,
@@ -307,3 +315,33 @@ recover concrete-image fast paths. No public mutable-image accessor is exposed.
 WithPositions intentionally recomposes changed positions for snapshot consistency;
 no-op merges reuse the original snapshot. Avoid merging just before a constructor
 when its previous-composite argument already supplies the needed positions.
+
+## Cover preparation benchmarks
+
+```sh
+CGO_ENABLED=0 go test . -run '^$' -bench '^BenchmarkFitCover$' \
+  -benchmem -benchtime=100ms -count=3
+```
+
+The cases use synthetic 800×600 inputs rendered to a 640×320 terminal
+raster or 80×40 glyph raster, plus a 1,024×1 input rendered to 1×128. `Direct`
+uses per-job preparation, as Kitty does; `Scratch` exercises glyph-style buffer
+reuse. These measure preparation only, excluding encoding and terminal output.
+
+On 2026-10-13, Apple M5 Max, darwin/arm64, three short samples compared the
+renderer at `b12e0a8` with `acfa695`'s fit.go supplied through a temporary Go
+overlay. Median `Direct` measurements were:
+
+| Case | Before | After | Before bytes/op | After bytes/op |
+| --- | ---: | ---: | ---: | ---: |
+| Terminal | 4.84 ms | 17.45 ms | 13,250,801 | 819,408 |
+| Glyph | 3.02 ms | 9.67 ms | 1,655,798 | 14,352 |
+| Extreme aspect | 2.24 ms | 0.0038 ms | 17,823,482 | 688 |
+
+The affine sampling path removes allocations proportional to invisible output,
+but ordinary downscaling is roughly 3–4× slower in this run. This is an open
+performance follow-up, not a reason to restore unbounded scaler allocation.
+Evaluate a bounded separable scaling path or a measured, allocation-limited
+fast path. Preserve anchor and sampling tests, including translucent pixels and
+nonzero source origins. Repeat longer benchmark runs before choosing a design;
+these short local measurements are diagnostic, not portable latency guarantees.

@@ -50,10 +50,11 @@ Standalone `Picture` uses fresh IDs by default. For continuously supplied
 mesh/framebuffer images, set `Options.StableID: true`. `playback.New` uses
 stable IDs by default; set `playback.Options{FreshIDs: true}` to opt out.
 With stable IDs, Kitty frames reuse the displayed image ID while cell dimensions,
-cell pixel geometry and encoded raster dimensions remain unchanged. The placeholder string stays identical, so Bubble Tea
-can skip redrawing it and transmit only the image update. Each Picture has its
-own ID; resize, hiding/clearing, and committed mode changes require a new
-placement. `ClearOnReplace` takes precedence.
+cell pixel geometry and encoded raster dimensions remain unchanged. The
+placeholder string stays identical, so Bubble Tea can skip redrawing it and
+transmit only the image update. Each Picture has its own ID; resize,
+hiding/clearing, and committed mode changes require a new placement.
+`ClearOnReplace` takes precedence.
 
 Streaming updates terminal pixels as soon as the transmission arrives, before
 `PresentedMsg`. Cancellation rejects pending work but cannot recall bytes
@@ -68,6 +69,13 @@ painting. `ErrorMsg` reports failed preparation or validation. `Status` exposes
 current generation, last presented generation, busy state, error and actual
 transport. Superseded generations are not presented; a producer coalescing its
 own requests should track the newest `Status().Generation`.
+
+Playback exposes failures through `Status().Err`. A successful size, terminal,
+mode or resolution correction clears a presentation error and permits playback
+to continue, subject to pause and visibility. Late errors from superseded or
+corrected requests are ignored. Source/decode failures remain separate: geometry
+changes do not clear them. Use `Restart`, a valid player `Seek`, or `SetSource`
+to retry or replace the source; restart/seek preserve or set pause as documented.
 
 `SetVisible(false)` cancels work and removes placements while retaining the
 source. `Close` is final and idempotent. Local resources are released even if
@@ -114,7 +122,10 @@ an older front is displayed; `Viewport` clipping does not change it.
 // In the event loop, after choosing an adaptive resolution:
 resolutionCmd := pic.SetResolution(0.3)
 g := pic.RasterGeometry()
-// renderMesh is application code; render only when both dimensions are positive.
+if g.Pixels.X <= 0 || g.Pixels.Y <= 0 {
+    return resolutionCmd
+}
+// Synchronous sketch: renderMesh returns a fresh, immutable framebuffer.
 frame := renderMesh(g.Pixels.X, g.Pixels.Y, g.DisplayAspect)
 return tea.Batch(resolutionCmd, pic.SetImageImmutable(frame))
 ```
@@ -122,8 +133,11 @@ return tea.Batch(resolutionCmd, pic.SetImageImmutable(frame))
 Configure `FitFill` and submit an opaque, immutable framebuffer at exactly
 `Pixels` to bypass preparation scaling and compositing. Return both commands:
 the resolution change may have scheduled work that a newer frame supersedes.
-For rendering off the event loop, capture the geometry with the render request
-and reject obsolete producer results in the host.
+The sketch renders synchronously and is suitable only for inexpensive work.
+For expensive meshes, run rendering in a command that captures the geometry and
+an application request ID. In Update, reject obsolete results and submit the
+accepted immutable frame. Bound producer concurrency separately; Picture's
+preparation limit does not limit application render jobs.
 
 `SetResolution` accepts a finite factor in `(0, 1]`, relative to terminal pixel
 size. Kitty scales the full raster and rounds each dimension once, to at least
@@ -137,7 +151,10 @@ forward both methods. Legacy `Model` retains its existing per-cell rounding.
 `Picture` bounds source and prepared images to 32 Mi pixels and validates Kitty
 placeholder dimensions. This is a pixel bound, not a total RAM budget: source,
 front, retired frames, and encoder/scaler scratch may coexist. Applications own
-aggregate document budgets.
+aggregate document budgets. Glyph validation checks its actual two-pixel-row
+raster independently of terminal cell dimensions. `FitCover` samples only the
+visible destination when the scaled image overflows, preserving its anchor and
+fractional sampling coordinates without allocating the full off-screen raster.
 
 Use `SetTerminal(kitty, cellWidth, cellHeight)` when the host already knows its
 capability and geometry. It does not probe. Otherwise run `Init`, route replies,
