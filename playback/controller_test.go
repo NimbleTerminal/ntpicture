@@ -198,6 +198,67 @@ func TestPlaybackDeadlineIncludesRenderTime(t *testing.T) {
 	c.Close()
 }
 
+func TestPlaybackPresentationOverrunRebasesTimeline(t *testing.T) {
+	now := time.Unix(100, 0)
+	var waits []time.Duration
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	p, err := animation.NewPlayer(&animation.Clip{
+		Bounds:    img.Bounds(),
+		LoopCount: -1,
+		Frames: []animation.ClipFrame{
+			{Image: img, Delay: 10 * time.Millisecond},
+			{Image: img, Delay: 10 * time.Millisecond},
+			{Image: img, Delay: 10 * time.Millisecond},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New(p, Options{Wait: func(_ context.Context, d time.Duration) bool {
+		waits = append(waits, d)
+		now = now.Add(d)
+		return true
+	}})
+	c.now = func() time.Time { return now }
+	c.SetSize(2, 2)
+	overran := false
+	var run func(tea.Cmd)
+	run = func(cmd tea.Cmd) {
+		if cmd == nil {
+			return
+		}
+		msg := cmd()
+		if msg == nil {
+			return
+		}
+		v := reflect.ValueOf(msg)
+		if v.Kind() == reflect.Slice {
+			for i := 0; i < v.Len(); i++ {
+				run(v.Index(i).Interface().(tea.Cmd))
+			}
+			return
+		}
+		// Simulate frame 2's Picture preparation/presentation taking 50ms (> 10ms
+		// frame delay) after Update(result) has already set nextDue.
+		if _, ok := msg.(result); ok && !overran {
+			overran = true
+			next := c.Update(msg)
+			now = now.Add(50 * time.Millisecond)
+			run(next)
+			return
+		}
+		run(c.Update(msg))
+	}
+	run(c.SetPlayer(c.player))
+	// Frame 1 waits 10ms; frame 2 overruns presentation so it waits 0ms;
+	// frame 3 must still receive its full 10ms interval rather than 0ms.
+	want := []time.Duration{10 * time.Millisecond, 0, 10 * time.Millisecond}
+	if !reflect.DeepEqual(waits, want) {
+		t.Fatalf("waits=%v, want %v", waits, want)
+	}
+	c.Close()
+}
+
 func TestPlaybackControlsResetDeadline(t *testing.T) {
 	c := New(testPlayer(t), Options{})
 	defer c.Close()

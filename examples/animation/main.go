@@ -150,6 +150,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	defer m.session.Close()
 	defer m.tracks[0].Close()
 	defer m.tracks[1].Close()
 	if err := demohelp.Run(m, "Animation"); err != nil {

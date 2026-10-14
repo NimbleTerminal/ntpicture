@@ -167,9 +167,8 @@ default-session flow; explicit sessions use `TerminalSessionMsg` as shown below.
 Shared memory uses the unchanged browser registry
 `globalThis.ghosttyKittySharedMemory` (`Map<string, Uint8Array>`), Linux named
 objects, or macOS POSIX shared memory with CGO. Creation/probe failures fall
-back to the configured direct format. Native pending objects retain the 64 MiB
-process cap and abandoned-retirement grace. Browser producer accounting has not
-yet been strengthened beyond the extracted implementation.
+back to the configured direct format. Pending objects enforce a 64 MiB process
+cap across native and browser builds, with native abandoned-retirement grace.
 
 Image ID allocation returns **one** fresh positive 24-bit ID per call, not a
 block. By default all `Picture` instances share `NextImageID`. Hosts mixing
@@ -389,11 +388,12 @@ site, and [NOTICE.md](./NOTICE.md) for the embedded artwork's separate license.
 
 Run `task ci` before submitting changes. It checks formatting and module
 metadata, race tests, direct-transport fallback, vet, native/Windows/WASM
-builds, browser registry tests, and known vulnerabilities. You need Go 1.27.2,
-[Go Task](https://taskfile.dev), Node, a C compiler, and network access for the
-vulnerability scans. `task test` runs native tests without querying the
-vulnerability database. See [DEVELOP.md](./DEVELOP.md) for consumer checks,
-manual acceptance checks, and release preparation.
+builds, browser registry tests, and known vulnerabilities. You need Go 1.27.2
+(the module minimum is Go 1.26.8), [Go Task](https://taskfile.dev), Node, a C
+compiler, and network access for the vulnerability scans. `task test` runs
+native tests without querying the vulnerability database. See
+[DEVELOP.md](./DEVELOP.md) for consumer checks, manual acceptance checks, and
+release preparation.
 
 Contributions and feedback are welcome. Please follow our [Code of
 Conduct](./CODE_OF_CONDUCT.md).

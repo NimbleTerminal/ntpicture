@@ -241,8 +241,11 @@ func (c *Controller) schedule() tea.Cmd {
 	c.job = j
 	p, source, waiter, now := c.player, c.source, c.wait, c.now
 	if target == nil && !restart {
+		current := now()
 		if c.nextDue.IsZero() {
-			c.nextDue = now().Add(time.Duration(float64(source.Delay()) / c.rate))
+			c.nextDue = current.Add(time.Duration(float64(source.Delay()) / c.rate))
+		} else if c.nextDue.Before(current) {
+			c.nextDue = current
 		}
 		j.due = c.nextDue
 	}

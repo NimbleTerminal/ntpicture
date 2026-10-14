@@ -66,8 +66,6 @@ func readInTerminalProcess(t *testing.T, obj *Object, want []byte) {
 	}
 }
 
-func pendingBytes() int { pending.Lock(); defer pending.Unlock(); return pending.bytes }
-
 func TestNativeObjectRoundTrip(t *testing.T) {
 	if !Supported() {
 		t.Fatal("native backend unavailable")

@@ -29,16 +29,27 @@ func TestBrowserObject(t *testing.T) {
 	if _, err := Create(4, func([]byte) error { return fail }); !errors.Is(err, fail) {
 		t.Fatal(err)
 	}
-	if r.Get("size").Int() != 0 {
-		t.Fatal("failed fill published")
+	for _, size := range []int{-1, 0, maxPendingBytes + 1} {
+		if _, err := Create(size, func([]byte) error { t.Fatal("invalid size called fill"); return nil }); err == nil {
+			t.Fatal("invalid size accepted")
+		}
+	}
+	if _, err := Create(4, nil); err == nil {
+		t.Fatal("nil fill accepted")
+	}
+	if r.Get("size").Int() != 0 || pendingBytes() != 0 {
+		t.Fatal("failed fill published or leaked accounting")
 	}
 	want := []byte{1, 2, 3, 4}
 	obj, err := Create(4, func(b []byte) error { copy(b, want); return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !regexp.MustCompile(`^/ntc-[0-9a-f]{20}$`).MatchString(obj.Name) || obj.Size != 4 {
-		t.Fatalf("invalid object: %+v", obj)
+	if !regexp.MustCompile(`^/ntc-[0-9a-f]{20}$`).MatchString(obj.Name) || obj.Size != 4 || pendingBytes() != 4 {
+		t.Fatalf("invalid object: %+v pending=%d", obj, pendingBytes())
+	}
+	if _, err := Create(maxPendingBytes, func([]byte) error { t.Fatal("cap exceeded called fill"); return nil }); err == nil {
+		t.Fatal("pending byte cap not enforced")
 	}
 	got := make([]byte, 4)
 	js.CopyBytesToGo(got, r.Call("get", obj.Name))
@@ -53,7 +64,7 @@ func TestBrowserObject(t *testing.T) {
 	if err := obj.Unlink(); err != nil {
 		t.Fatal(err)
 	}
-	if r.Get("size").Int() != 0 {
-		t.Fatal("entry leaked")
+	if r.Get("size").Int() != 0 || !obj.Done() || pendingBytes() != 0 {
+		t.Fatal("entry or accounting leaked")
 	}
 }

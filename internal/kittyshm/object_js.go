@@ -26,9 +26,16 @@ func Create(size int, fill func([]byte) error) (obj *Object, err error) {
 	if !validRegistry(r) {
 		return nil, ErrUnsupported
 	}
-	if size <= 0 || fill == nil {
-		return nil, fmt.Errorf("invalid shared-memory buffer")
+	release, err := reservePending(size, fill)
+	if err != nil {
+		return nil, err
 	}
+	success := false
+	defer func() {
+		if !success {
+			release()
+		}
+	}()
 	name := newName()
 	// Treat JS allocation/registry errors as failures so the caller can fall back.
 	defer func() {
@@ -47,7 +54,7 @@ func Create(size int, fill func([]byte) error) (obj *Object, err error) {
 	array := js.Global().Get("Uint8Array").New(size)
 	js.CopyBytesToJS(array, data)
 	r.Call("set", name, array)
-	return &Object{Name: name, Size: size, unlink: func() (err error) {
+	obj = &Object{Name: name, Size: size, unlink: func() (err error) {
 		defer func() {
 			if p := recover(); p != nil {
 				if e, ok := p.(js.Error); ok {
@@ -58,6 +65,9 @@ func Create(size int, fill func([]byte) error) (obj *Object, err error) {
 			}
 		}()
 		r.Call("delete", name)
+		release()
 		return nil
-	}}, nil
+	}}
+	success = true
+	return obj, nil
 }

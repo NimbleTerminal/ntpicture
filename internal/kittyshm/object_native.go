@@ -3,7 +3,6 @@
 package kittyshm
 
 import (
-	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -11,33 +10,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Bound unconsumed objects across models. An unavailable/full shared-memory
-// store returns an error so picture can fall back to direct transmission.
-const maxPendingBytes = 64 << 20
-
-var pending struct {
-	sync.Mutex
-	bytes int
-}
-
 // Supported reports local OS support, not the remote terminal's capabilities.
 func Supported() bool { return true }
 
 // Create fills an exclusive, owner-only POSIX shared-memory object. The mapping
 // and descriptor are closed before returning; the name stays valid for readers.
 func Create(size int, fill func([]byte) error) (*Object, error) {
-	if size <= 0 || size > maxPendingBytes || fill == nil {
-		return nil, fmt.Errorf("invalid shared-memory buffer size or fill")
+	release, err := reservePending(size, fill)
+	if err != nil {
+		return nil, err
 	}
-	pending.Lock()
-	if size > maxPendingBytes-pending.bytes {
-		pending.Unlock()
-		return nil, fmt.Errorf("shared-memory pending-byte limit reached")
-	}
-	pending.bytes += size
-	pending.Unlock()
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { pending.Lock(); pending.bytes -= size; pending.Unlock() }) }
 	name := newName()
 	f, err := openSHM(name, true)
 	if err != nil {
