@@ -135,14 +135,14 @@ tasks:
       - task: vulncheck-wasm
   vulncheck-wasm:
     desc: Scan dependencies with the browser fork (requires network)
+    env:
+      GOWORK: '{{.ROOT_DIR}}/wasm.work'
+      GOOS: js
+      GOARCH: wasm
+      CGO_ENABLED: '0'
     cmds:
       - task: vulncheck-install
-      - cmd: '"{{.ROOT_DIR}}/.task/bin/govulncheck" ./... ./examples/...'
-        env:
-          GOWORK: '{{.ROOT_DIR}}/wasm.work'
-          GOOS: js
-          GOARCH: wasm
-          CGO_ENABLED: '0'
+      - '"{{.ROOT_DIR}}/.task/bin/govulncheck" ./... ./examples/...'
   consumers:
     desc: Check temporary copies of local sibling consumers
     cmds: ['python3 scripts/check-consumers.py {{.CLI_ARGS}}']
