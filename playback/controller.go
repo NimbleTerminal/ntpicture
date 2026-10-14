@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	"image/color"
 	"reflect"
 	"time"
 
@@ -28,7 +29,7 @@ type Options struct {
 	FreshIDs bool
 }
 
-// ErrNotSeekable reports frame seeking on a source without one frame sequence.
+// ErrNotSeekable reports frame seeking on a source that is not animation.Seekable.
 var ErrNotSeekable = errors.New("playback: source does not support frame seeking")
 
 type Status struct {
@@ -37,6 +38,15 @@ type Status struct {
 	Paused, Finished, Busy bool
 	Rate                   float64
 	Err                    error
+	// Presented is the position whose image was last committed to output, with
+	// picture.PresentedMsg semantics: ordered output, not terminal
+	// acknowledgement. Use it to export the displayed frame or label controls.
+	// A later position with identical pixels is not resubmitted and becomes
+	// Presented immediately. Nil before the first commit and after clearing;
+	// Keep retains it. A failed or superseded submission never becomes Presented.
+	Presented       animation.Source
+	PresentedPlayer *animation.Player // Presented as a standalone player, if it is one.
+	Picture         picture.Status    // Presentation generations, readiness and errors.
 }
 
 // Controller belongs to one Bubble Tea event loop. Forward every message to
@@ -45,6 +55,7 @@ type Status struct {
 type Controller struct {
 	pic                               *picture.Picture
 	source                            animation.Source
+	seeker                            animation.Seekable
 	restart                           bool
 	player                            *animation.Player
 	wait                              Wait
@@ -56,6 +67,16 @@ type Controller struct {
 	rate                              float64
 	err                               error
 	presentationErr                   error
+	presented                         animation.Source
+	submitted                         *submission // Latest uncommitted submission.
+	clearOnReplace                    bool
+}
+
+// Picture commits only its current generation and cancels superseded work, so
+// only the latest submission can still become presented.
+type submission struct {
+	generation uint64
+	source     animation.Source
 }
 type job struct {
 	ctx    context.Context
@@ -85,7 +106,7 @@ func NewSource(source animation.Source, options Options) *Controller {
 		options.Wait = wait
 	}
 	options.Picture.StableID = !options.FreshIDs
-	c := &Controller{now: time.Now, pic: picture.New(options.Picture), wait: options.Wait, visible: true, rate: 1}
+	c := &Controller{now: time.Now, pic: picture.New(options.Picture), wait: options.Wait, visible: true, rate: 1, clearOnReplace: options.Picture.ClearOnReplace}
 	c.setSource(source)
 	return c
 }
@@ -94,6 +115,7 @@ func (c *Controller) setSource(source animation.Source) {
 	if p, ok := source.(*animation.Player); ok && p == nil {
 		source = nil
 	}
+	c.seeker, _ = source.(animation.Seekable)
 	c.source = source
 	c.finished = source != nil && source.Delay() <= 0
 }
@@ -110,7 +132,7 @@ func wait(ctx context.Context, d time.Duration) bool {
 func (c *Controller) Init() tea.Cmd {
 	var cmd tea.Cmd
 	if c.source != nil {
-		cmd = c.pic.SetImageImmutable(c.source.Image())
+		cmd = c.submit(c.source)
 	}
 	return tea.Batch(c.pic.Init(), cmd)
 }
@@ -119,7 +141,37 @@ func (c *Controller) Status() Status {
 	if err == nil {
 		err = c.presentationErr
 	}
-	return Status{Source: c.source, Player: c.player, Paused: c.paused, Finished: c.finished, Busy: c.job != nil, Rate: c.rate, Err: err}
+	presentedPlayer, _ := c.presented.(*animation.Player)
+	return Status{Source: c.source, Player: c.player, Paused: c.paused, Finished: c.finished, Busy: c.job != nil, Rate: c.rate, Err: err,
+		Presented: c.presented, PresentedPlayer: presentedPlayer, Picture: c.pic.Status()}
+}
+
+// submit hands source's image to Picture and records it for promotion.
+func (c *Controller) submit(source animation.Source) tea.Cmd {
+	if source == nil {
+		// Clearing removes the front synchronously; nothing remains presented.
+		c.presented, c.submitted = nil, nil
+		return c.pic.SetImage(nil)
+	}
+	cmd := c.pic.SetImageImmutable(source.Image())
+	if s := c.pic.Status(); s.Err != nil {
+		// A rejected submission reverts Picture to its front (or clears it).
+		c.submitted = nil
+		if c.clearOnReplace {
+			c.presented = nil
+		}
+	} else {
+		c.submitted = &submission{s.Generation, source}
+	}
+	return cmd
+}
+
+// promote records a commit of the latest submission. Later generations that
+// re-prepare the same image (resize, mode, visibility) also commit it.
+func (c *Controller) promote() {
+	if c.submitted != nil && c.pic.Status().Presented >= c.submitted.generation {
+		c.presented, c.submitted = c.submitted.source, nil
+	}
 }
 func (c *Controller) View() string { return c.pic.View() }
 func (c *Controller) cancel() {
@@ -146,10 +198,7 @@ func (c *Controller) SetSource(source animation.Source) tea.Cmd {
 	c.err = nil
 	c.presentationErr = nil
 	c.setSource(source)
-	if c.source == nil {
-		return c.pic.SetImage(nil)
-	}
-	return c.pic.SetImageImmutable(c.source.Image())
+	return c.submit(c.source)
 }
 
 // Restart resets the entire source, including every composite region.
@@ -204,14 +253,15 @@ func (c *Controller) SetRate(rate float64) tea.Cmd {
 	return c.schedule()
 }
 
-// Seek selects a standalone player’s one-based frame, pauses, and resets loops.
-// Composite/custom sources pause with ErrNotSeekable in Status.Err. Pending
+// Seek selects a seekable source's one-based frame, pauses, and resets loops.
+// Players and custom animation.Seekable sources seek; other sources (such as
+// composites) pause with ErrNotSeekable in Status.Err. Pending
 // seeks coalesce, and a cancelled codec call must return before another starts.
 func (c *Controller) Seek(frame int) tea.Cmd {
 	if c.closed || c.source == nil {
 		return nil
 	}
-	if c.player == nil {
+	if c.seeker == nil {
 		c.err = ErrNotSeekable
 		c.paused = true
 		c.cancel()
@@ -240,7 +290,7 @@ func (c *Controller) schedule() tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{ctx: ctx, cancel: cancel}
 	c.job = j
-	p, source, waiter, now := c.player, c.source, c.wait, c.now
+	seeker, source, waiter, now := c.seeker, c.source, c.wait, c.now
 	if target == nil && !restart {
 		current := now()
 		if c.nextDue.IsZero() {
@@ -255,7 +305,7 @@ func (c *Controller) schedule() tea.Cmd {
 		if restart {
 			out.source, out.err = source.Reset(ctx)
 		} else if target != nil {
-			out.source, out.err = p.Seek(ctx, *target)
+			out.source, out.err = seeker.SeekFrame(ctx, *target)
 		} else if waiter(ctx, max(0, j.due.Sub(now()))) {
 			out.source, out.more, out.err = source.Advance(ctx)
 		} else {
@@ -266,6 +316,7 @@ func (c *Controller) schedule() tea.Cmd {
 }
 func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 	cmds := []tea.Cmd{c.pic.Update(msg)}
+	c.promote()
 	if c.pic.Status().Err == nil {
 		c.presentationErr = nil
 	}
@@ -305,8 +356,13 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 							c.nextDue = c.now()
 						}
 					}
-					if !unchanged {
-						cmds = append(cmds, c.pic.SetImageImmutable(c.source.Image()))
+					switch {
+					case !unchanged:
+						cmds = append(cmds, c.submit(c.source))
+					case c.submitted != nil:
+						c.submitted.source = c.source // Same pixels as the pending image.
+					case c.presented != nil && sameImage(c.presented.Image(), c.source.Image()):
+						c.presented = c.source // Same pixels as the committed image.
 					}
 				}
 			}
@@ -323,6 +379,7 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 // Close cancels work, releases the clip, and returns Picture cleanup commands.
 func (c *Controller) Close() tea.Cmd {
 	c.stop()
+	c.presented = nil
 	return c.pic.Close()
 }
 
@@ -340,9 +397,16 @@ func (c *Controller) stop() {
 	c.cancel()
 	c.pending = nil
 	c.player = nil
+	c.seeker = nil
 	c.source = nil
 	c.restart = false
 	c.job = nil
+	c.submitted = nil
+}
+
+// SetBackground re-prepares the current frame without seeking or restarting playback.
+func (c *Controller) SetBackground(bg color.Color) tea.Cmd {
+	return c.presentation(c.pic.SetBackground(bg))
 }
 
 // SetViewport clips the prepared picture without seeking or restarting playback.

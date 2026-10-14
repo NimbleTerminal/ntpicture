@@ -21,9 +21,31 @@ type Source interface {
 	Reset(context.Context) (Source, error)
 }
 
+// Seekable is a Source with one frame sequence. SeekFrame composes a one-based
+// frame (clamped to [1, Frames]), resets loop counting and returns a new
+// position under the same ownership/cancellation contract; a successful seek
+// returns a non-nil source. Wrappers that transform a Player's image (crop,
+// zoom) can delegate these methods to keep frame seeking.
+type Seekable interface {
+	Source
+	Frame() int
+	Frames() int
+	SeekFrame(ctx context.Context, frame int) (Source, error)
+}
+
+var _ Seekable = (*Player)(nil)
+
 func (p *Player) Advance(ctx context.Context) (Source, bool, error) {
 	return p.NextContext(ctx)
 }
 func (p *Player) Reset(ctx context.Context) (Source, error) {
 	return p.RestartContext(ctx)
+}
+// SeekFrame adapts Seek to Seekable.
+func (p *Player) SeekFrame(ctx context.Context, frame int) (Source, error) {
+	n, err := p.Seek(ctx, frame)
+	if err != nil {
+		return nil, err
+	}
+	return n, nil
 }

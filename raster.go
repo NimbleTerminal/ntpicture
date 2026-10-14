@@ -3,6 +3,7 @@ package ntpicture
 import (
 	"errors"
 	"image"
+	"image/color"
 	"math"
 
 	tea "charm.land/bubbletea/v2"
@@ -57,6 +58,28 @@ func (p *Picture) SetResolution(factor float64) tea.Cmd {
 	p.opts.Render.KittyResolutionFactor = factor
 	p.err = nil
 	if p.mode != PictureKitty || p.RasterGeometry().Pixels == before {
+		return nil
+	}
+	return p.changed()
+}
+
+// SetBackground changes the color composited behind translucent pixels and
+// letterbox areas. Nil means transparent. A changed color prepares a new
+// generation from the current image, retaining the old front until ready;
+// without an image it applies to the next submission.
+func (p *Picture) SetBackground(c color.Color) tea.Cmd {
+	if p.closed {
+		return nil
+	}
+	if c == nil {
+		c = color.Transparent
+	}
+	c = color.RGBA64Model.Convert(c)
+	if c == p.opts.Render.Background {
+		return nil
+	}
+	p.opts.Render.Background = c
+	if p.img == nil {
 		return nil
 	}
 	return p.changed()

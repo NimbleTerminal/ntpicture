@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Add `Composite.Positions` to export playback positions (clip identity,
+  frame, remaining delay, finished state) without the base or composed image.
+  `NewComposite`, `NewCompositeImmutable` and `WithPositions` accept a saved
+  `Positions` or a `*Composite` through the new `PositionSource` interface.
+- Add `animation.Seekable` (`Frame`, `Frames`, `SeekFrame`), implemented by
+  `*Player`. `Controller.Seek` now seeks any seekable source, so host
+  transforms that wrap a player keep frame seeking.
+- Report the last committed playback position in `Status.Presented` and
+  `Status.PresentedPlayer`, with the underlying `Picture` status, so hosts can
+  export the displayed frame and match controls to it. Superseded or rejected
+  submissions never become presented.
+- Add `Picture.SetBackground` and `Controller.SetBackground` to change the
+  background color at runtime, retaining the current front until the
+  re-prepared frame is ready.
+
 - Add `Picture.Submit` to validate and apply an image with its cell layout,
   mode and cell pixel geometry as one generation, with an `Exact` option that
   rejects mis-sized rasters instead of resampling them. Add

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"maps"
 	"math"
 	"nimbleterminal.dev/ntpicture/internal/imageview"
+	"slices"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -61,10 +63,11 @@ func compositeRectOK(r image.Rectangle) bool {
 
 // NewComposite copies base pixels and region metadata. Each canvas and region
 // is limited to MaxPixels and there are at most MaxCompositeRegions entries.
-// Previous supplies positions only for matching keys AND clip identities;
-// replaced clips restart at the supplied Player, and removed keys are dropped.
+// Previous (a *Composite or saved Positions) supplies positions only for
+// matching keys AND clip identities; replaced clips restart at the supplied
+// Player, and removed keys are dropped.
 // Construction/composition belongs off the UI loop for large canvases.
-func NewComposite(ctx context.Context, base image.Image, regions []Region, previous *Composite) (*Composite, error) {
+func NewComposite(ctx context.Context, base image.Image, regions []Region, previous PositionSource) (*Composite, error) {
 	return newComposite(ctx, base, regions, previous, true)
 }
 
@@ -72,11 +75,11 @@ func NewComposite(ctx context.Context, base image.Image, regions []Region, previ
 // and any backing storage immutable for the entire lifetime of this composite
 // and all positions/windows derived from it. Region metadata is still copied,
 // and outputs remain read-only views. All NewComposite bounds apply.
-func NewCompositeImmutable(ctx context.Context, base image.Image, regions []Region, previous *Composite) (*Composite, error) {
+func NewCompositeImmutable(ctx context.Context, base image.Image, regions []Region, previous PositionSource) (*Composite, error) {
 	return newComposite(ctx, base, regions, previous, false)
 }
 
-func newComposite(ctx context.Context, base image.Image, regions []Region, previous *Composite, copyBase bool) (*Composite, error) {
+func newComposite(ctx context.Context, base image.Image, regions []Region, previous PositionSource, copyBase bool) (*Composite, error) {
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -109,6 +112,41 @@ func newComposite(ctx context.Context, base image.Image, regions []Region, previ
 }
 func (s *Composite) Image() image.Image { return s.frame }
 
+// PositionSource supplies playback positions to carry: a *Composite or
+// Positions. A nil *Composite supplies none.
+type PositionSource interface {
+	compositePositions() map[string]compositePosition
+}
+
+// Positions is an immutable snapshot of a composite's playback positions,
+// detached from its base and composed image. Each entry keeps the clip
+// identity, current frame, remaining delay and finished state; restoring
+// applies the same key-and-clip matching as NewComposite's previous argument.
+// Entries retain their immutable players, so each clip's current canvas stays
+// alive; the base image and composed frame do not.
+type Positions struct {
+	positions map[string]compositePosition
+}
+
+// Positions exports this composite's playback positions without its pixels.
+func (s *Composite) Positions() Positions {
+	if s == nil {
+		return Positions{}
+	}
+	return Positions{maps.Clone(s.positions)}
+}
+
+// Keys reports the saved region keys in sorted order.
+func (p Positions) Keys() []string { return slices.Sorted(maps.Keys(p.positions)) }
+
+func (s *Composite) compositePositions() map[string]compositePosition {
+	if s == nil {
+		return nil
+	}
+	return s.positions
+}
+func (p Positions) compositePositions() map[string]compositePosition { return p.positions }
+
 // Regions returns a copy of placement metadata; players are immutable.
 func (s *Composite) Regions() []Region { return append([]Region(nil), s.regions...) }
 func (s *Composite) Delay() time.Duration {
@@ -128,20 +166,22 @@ func (s *Composite) copy() *Composite {
 	}
 	return &n
 }
-func (s *Composite) carry(other *Composite) {
+func (s *Composite) carry(other PositionSource) {
 	if other == nil {
 		return
 	}
+	saved := other.compositePositions()
 	for key, p := range s.positions {
-		if old, ok := other.positions[key]; ok && old.player.data == p.player.data {
+		if old, ok := saved[key]; ok && old.player.data == p.player.data {
 			s.positions[key] = old
 		}
 	}
 }
 
-// WithPositions carries matching positions from others, later arguments winning,
-// and recomposes a consistent image. It never retains keys absent from s.
-func (s *Composite) WithPositions(ctx context.Context, others ...*Composite) (*Composite, error) {
+// WithPositions carries matching positions from others (composites or saved
+// Positions), later arguments winning, and recomposes a consistent image.
+// It never retains keys absent from s.
+func (s *Composite) WithPositions(ctx context.Context, others ...PositionSource) (*Composite, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

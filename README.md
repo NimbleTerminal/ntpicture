@@ -340,9 +340,13 @@ Rate scaling belongs to the controller and is applied once. When a tick only
 changes loop bookkeeping and retains the same immutable image, the controller
 skips picture preparation and transmission.
 
-`Status.Source` supplies the current immutable source position. `Status.Player`
-is populated only for a standalone player. Composites have no single frame
-number: `Seek` pauses with `playback.ErrNotSeekable`; use `Restart` instead.
+`Status.Source` supplies the current immutable source position, which may lead
+the display; `Status.Presented` is the position last committed to output.
+`Status.Player` is populated only for a standalone player. `Seek` works on any
+`animation.Seekable` source: players, and custom wrappers (such as a crop or
+zoom transform) that delegate `Frame`, `Frames` and `SeekFrame` to their player.
+Composites have no single frame number: `Seek` pauses with
+`playback.ErrNotSeekable`; use `Restart` instead.
 Existing `playback.New`, `SetPlayer`, and standalone seeking remain supported.
 
 For relayout, pass the previous composite to `NewComposite`, or call
