@@ -139,22 +139,26 @@ but do not install it in NTCharts.
 Generic rectangular composition is in animation.Composite, scheduled through
 animation.Source, playback.NewSource, and playback.NewLayers. Player implements
 the same immutable, context-aware source contract; standalone constructors and
-seeking remain available. `playback.Layers` owns cell-aligned overlay planning,
-overlapping-window merging, reduced-resolution enlarged overlays, Kitty
-placeholder splicing, glyph fallback, playback activation (`SetActive`),
-zero-pixel position harvesting (`Positions` and `Positions.WithPositions`),
-committed-frame export (`Snapshot`), and multi-layer `Close`/`Keep` over a
-host-owned `TerminalSession`. Window crops/resamples a pixel source to reduce
-future composition/transmission; Viewport clips its prepared cell presentation
-without retransmitting pixels just for scrolling. See README's "Window versus
-Viewport" and "Layered composite playback" sections.
+seeking remain available. `playback.Layers` owns cell-aligned overlay planning
+(defaulting to `FitFill` so composites rendered at `RasterGeometry().Pixels` map
+1:1 onto the cell grid), overlapping-window merging, shared clocks across
+repeated region keys, reduced-resolution enlarged overlays, Kitty placeholder
+splicing, glyph fallback, playback activation (`SetActive`), zero-pixel position
+harvesting (`Positions` and `Positions.WithPositions`), off-loop `SetComposite`
+position carry and window cropping, committed-frame export (`Snapshot`), and
+multi-layer `Close`/`Keep` over a host-owned `TerminalSession`. Window
+crops/resamples a pixel source to reduce future composition/transmission;
+Viewport clips its prepared cell presentation without retransmitting pixels just
+for scrolling. See README's "Window versus Viewport" and "Layered composite
+playback" sections.
 
 Gloss still needs to migrate its typeset/composite consumers to `playback.Layers`
 and remove `internal/animate` and `internal/app/typeset_overlay.go`. Keep
 document destinations, deduplication, the eight-destination/64 MiB budgets,
 document layout, scrolling, scroll-settle debounce, controls, exports, and
-visibility policy in Gloss. Transfer positions by key and clip identity via
-`layers.Positions()`; reloads replace clip identity.
+visibility policy in Gloss. Build new composites off the UI loop with
+`layers.Positions()` and pass them to `layers.SetComposite`; reloads replace
+clip identity.
 
 Explicit TerminalSession now isolates discovery, cell geometry, tmux wrapping,
 and shared-memory capability for pictures that opt in. Legacy Model and package

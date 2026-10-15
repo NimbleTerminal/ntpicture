@@ -2,12 +2,14 @@ package playback
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -256,7 +258,7 @@ func TestLayerPlanningMergesOverlappingAndTransitiveWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	groups := planLayers(comp, cols, rows, cw, ch)
+	groups := planLayers(comp, cols, rows, cw, ch, picture.FitFill, picture.AnchorCenter)
 	if len(groups) != 2 {
 		t.Fatalf("got %d planned groups, want 2: %+v", len(groups), groups)
 	}
@@ -323,8 +325,10 @@ func TestReducedResolutionOverlayRetainsPlacement(t *testing.T) {
 	}
 }
 
-// Suspending playback activation during scrolling prepares only the base page;
-// activating after settle constructs overlays at preserved positions without
+// Suspending playback activation during scrolling keeps the last presented
+// overlay frame on screen without rewinding to the initial base bake, prepares
+// only the base page on replacement while keeping the committed snapshot until
+// the replacement commits, and constructs overlays after settle without
 // re-preparing the base.
 func TestOverlaysWaitForActivationAndPreservePositionsAcrossReplacement(t *testing.T) {
 	red := color.RGBA{R: 255, A: 255}
@@ -342,9 +346,13 @@ func TestOverlaysWaitForActivationAndPreservePositionsAcrossReplacement(t *testi
 		t.Fatal(err)
 	}
 
+	nextID := 400
 	l := NewLayers(comp1, Options{
-		Wait:    func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
-		Picture: picture.Options{RetireDelay: -1},
+		Wait: func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
+		Picture: picture.Options{
+			NextID:      func() (int, error) { nextID++; return nextID, nil },
+			RetireDelay: -1,
+		},
 	})
 	defer l.Close()
 
@@ -352,6 +360,11 @@ func TestOverlaysWaitForActivationAndPreservePositionsAcrossReplacement(t *testi
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
 	driveLayers(t, l, l.Init())
+
+	overlaySGR := idSGR(402)
+	if !strings.Contains(l.View(), overlaySGR) {
+		t.Fatalf("initial view missing overlay SGR %q", overlaySGR)
+	}
 
 	// Unpause until the overlay commits frame 2 (green), then pause before frame 3.
 	var step func(tea.Cmd)
@@ -381,9 +394,32 @@ func TestOverlaysWaitForActivationAndPreservePositionsAcrossReplacement(t *testi
 	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 70)); got != green {
 		t.Fatalf("overlay did not advance to frame 2 (green): got %v", got)
 	}
+	if stPres := l.Status().Presented; stPres == nil || color.RGBAModel.Convert(stPres.Image().At(20, 70)) != green {
+		t.Fatalf("Status().Presented did not match committed overlay frame: %v", stPres)
+	}
 
-	// Simulate scrolling with settle debounce: suspend activation and submit a new
-	// viewport where the region moved up to row 1.
+	// Suspend activation (as Gloss does when scrolling begins) and inspect View,
+	// Snapshot, and Status().Presented BEFORE driving any command: must NOT rewind to frame 1 (red).
+	suspendCmd := l.SetActive(false)
+	if !strings.Contains(l.View(), overlaySGR) {
+		t.Fatal("SetActive(false) deleted presented overlay placeholders from View before replacement")
+	}
+	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 70)); got != green {
+		t.Fatalf("SetActive(false) rewound Snapshot: got %v, want %v", got, green)
+	}
+	if stPres := l.Status().Presented; stPres == nil || color.RGBAModel.Convert(stPres.Image().At(20, 70)) != green {
+		t.Fatalf("SetActive(false) rewound Status().Presented: %v", stPres)
+	}
+	driveLayers(t, l, suspendCmd)
+	if !strings.Contains(l.View(), overlaySGR) {
+		t.Fatal("View lost retained overlay placeholders after driving SetActive(false)")
+	}
+	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 70)); got != green {
+		t.Fatalf("Snapshot rewound after driving SetActive(false): got %v, want %v", got, green)
+	}
+
+	// Submit a new viewport where the region moved up to row 1, and inspect View and
+	// Snapshot BEFORE driving replaceCmd: pending replacement must keep frame 2 (green) at row 4.
 	base2 := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 50, G: 50, B: 50, A: 255})
 	comp2, err := animation.NewComposite(context.Background(), base2, []animation.Region{
 		{Key: "a.gif", Rect: image.Rect(16, 16, 32, 32), Player: player}, // row 1
@@ -392,11 +428,26 @@ func TestOverlaysWaitForActivationAndPreservePositionsAcrossReplacement(t *testi
 		t.Fatal(err)
 	}
 
-	driveLayers(t, l, tea.Batch(l.SetActive(false), l.SetComposite(comp2)))
+	replaceCmd := l.SetComposite(comp2)
+	if !strings.Contains(l.View(), overlaySGR) {
+		t.Fatal("pending SetComposite dropped retained overlay placeholders from View before base commit")
+	}
+	if snapPending := l.Snapshot(); snapPending == nil || color.RGBAModel.Convert(snapPending.At(20, 70)) != green {
+		t.Fatalf("pending SetComposite rewound or nilled Snapshot: %v", snapPending)
+	}
+	if stPres := l.Status().Presented; stPres == nil || color.RGBAModel.Convert(stPres.Image().At(20, 70)) != green {
+		t.Fatalf("pending SetComposite rewound Status().Presented: %v", stPres)
+	}
+
+	driveLayers(t, l, replaceCmd)
 	if len(l.Layers()) != 0 {
 		t.Fatalf("expected 0 overlays while inactive during scroll, got %d", len(l.Layers()))
 	}
-	// Base picture alone already shows the carried frame 2 (green) at the new position.
+	// Base picture alone now shows the carried frame 2 (green) at the new position,
+	// and the old retained overlay from layout 1 has been retired.
+	if strings.Contains(l.View(), overlaySGR) {
+		t.Fatal("old layout's retained overlay placeholders remained in View after new base committed")
+	}
 	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 20)); got != green {
 		t.Fatalf("carried base frame at scrolled position = %v, want %v", got, green)
 	}
@@ -425,7 +476,12 @@ func TestOverlaysWaitForActivationAndPreservePositionsAcrossReplacement(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	driveLayers(t, l, l.SetComposite(comp3))
+	replaceCmd3 := l.SetComposite(comp3)
+	// Before replaceCmd3 runs, Snapshot still shows green at (20, 20) from comp2.
+	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 20)); got != green {
+		t.Fatalf("pending comp3 replacement lost committed frame 2: got %v, want %v", got, green)
+	}
+	driveLayers(t, l, replaceCmd3)
 	if got := color.RGBAModel.Convert(l.Snapshot().At(36, 36)); got != green {
 		t.Fatalf("SetComposite did not preserve position: got %v, want %v", got, green)
 	}
@@ -1002,4 +1058,474 @@ func FuzzLayersActions(f *testing.F) {
 			t.Fatalf("closed layers retained state: %+v", l.Status())
 		}
 	})
+}
+
+// A session cell-size event preserves the last committed Snapshot while the new
+// generation is pending and scales existing bitmap region coordinates to match
+// the base picture's FitFill placement into the new cell raster.
+func TestCellSizeEventPreservesSnapshotAndScalesRegions(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw1, ch1 = 10, 6, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw1, rows*ch1), color.RGBA{R: 10, G: 20, B: 30, A: 255})
+	regionRect := image.Rect(16, 16, 48, 48) // cells (2,1)-(6,3)
+	player := colorPlayer(t, image.Pt(32, 32), red, green)
+
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a.gif", Rect: regionRect, Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session := picture.NewTerminalSession(picture.TerminalOptions{
+		Kitty:           picture.KittyCapabilitySupported,
+		CellPixelWidth:  cw1,
+		CellPixelHeight: ch1,
+	})
+	defer session.Close()
+
+	l := NewLayers(comp, Options{
+		Wait: func(context.Context, time.Duration) bool { return true },
+		Picture: picture.Options{
+			Session:     session,
+			RetireDelay: -1,
+		},
+	})
+	defer l.Close()
+
+	// Session already reports KittyCapabilitySupported, so NewLayers starts in Kitty mode.
+	if l.Mode() != picture.PictureKitty {
+		t.Fatalf("NewLayers with Kitty-supported session started in %v, want PictureKitty", l.Mode())
+	}
+
+	l.SetSize(cols, rows)
+	driveLayers(t, l, l.Init())
+	l.Pause(true)
+
+	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 20)); got != green {
+		t.Fatalf("snapshot before cell-size event = %v, want %v", got, green)
+	}
+
+	// Double cell pixel dimensions via CellSizeEvent without calling SetComposite.
+	cellCmd := l.Update(uv.CellSizeEvent{Width: 16, Height: 32})
+	if snapPending := l.Snapshot(); snapPending == nil || color.RGBAModel.Convert(snapPending.At(20, 20)) != green {
+		t.Fatalf("Snapshot nil or rewound while cell-size update is pending: %v", snapPending)
+	}
+	if layers := l.Layers(); len(layers) != 1 || layers[0].Cells != image.Rect(2, 1, 6, 3) {
+		t.Fatalf("overlay cells after cell-size change = %+v, want (2,1)-(6,3)", layers)
+	}
+
+	driveLayers(t, l, cellCmd)
+	if snapAfter := l.Snapshot(); snapAfter == nil || color.RGBAModel.Convert(snapAfter.At(20, 20)) != green {
+		t.Fatalf("Snapshot after cell-size update = %v, want green", snapAfter)
+	}
+}
+
+// Rejected SetSize and SetTerminal geometries do not latch Layers state or
+// suppress Init's session probe.
+func TestRejectedGeometryDoesNotLatchSizeOrTerminal(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	base := solidImage(image.Rect(0, 0, 32, 32), color.RGBA{R: 10, A: 255})
+	player := colorPlayer(t, image.Pt(16, 16), red)
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a.gif", Rect: image.Rect(0, 0, 16, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session := picture.NewTerminalSession(picture.TerminalOptions{
+		Kitty:           picture.KittyCapabilityUnknown,
+		CellPixelWidth:  8,
+		CellPixelHeight: 16,
+	})
+	defer session.Close()
+
+	l := NewLayers(comp, Options{
+		Picture: picture.Options{
+			Session:     session,
+			RetireDelay: -1,
+		},
+	})
+	defer l.Close()
+
+	// Rejected SetTerminal (cellWidth=0) must not set explicitTerminal or suppress Init probe.
+	rejTermCmd := l.SetTerminal(true, 0, 16)
+	if rejTermCmd == nil {
+		t.Fatal("expected error command from SetTerminal with zero cellWidth")
+	}
+	driveLayers(t, l, rejTermCmd)
+	if l.explicitTerminal {
+		t.Fatal("rejected SetTerminal latched explicitTerminal")
+	}
+	l.submitted = true // isolate Init's session discovery command
+	if initCmd := l.Init(); initCmd == nil {
+		t.Fatal("rejected SetTerminal suppressed Init session discovery")
+	}
+	l.submitted = false
+
+	l.SetSize(4, 2)
+	l.SetTerminal(true, 8, 16)
+	driveLayers(t, l, l.Init())
+
+	// Oversized SetSize (10000x10000 cells at 8x16 exceeds MaxImagePixels) must be rejected
+	// without latching l.cols/l.rows, so a second attempt is not a no-op.
+	rejSizeCmd1 := l.SetSize(10000, 10000)
+	if rejSizeCmd1 == nil {
+		t.Fatal("expected error command from oversized SetSize")
+	}
+	if l.cols != 4 || l.rows != 2 {
+		t.Fatalf("rejected SetSize mutated cols/rows to %dx%d", l.cols, l.rows)
+	}
+	rejSizeCmd2 := l.SetSize(10000, 10000)
+	if rejSizeCmd2 == nil {
+		t.Fatal("retry of rejected SetSize was a no-op")
+	}
+}
+
+// Repeated region keys at disjoint cell rectangles share a single playback clock
+// and advance in lockstep across all overlay windows.
+func TestRepeatedRegionKeysShareClockAcrossDisjointOverlays(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	blue := color.RGBA{B: 255, A: 255}
+
+	const cols, rows, cw, ch = 8, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, G: 10, B: 10, A: 255})
+	player := colorPlayer(t, image.Pt(16, 16), red, green, blue)
+
+	// Two disjoint placements of the same key "shared": top-left (0,0)-(2,1) and bottom-right (6,2)-(8,3).
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "shared", Rect: image.Rect(0, 0, 16, 16), Player: player},
+		{Key: "shared", Rect: image.Rect(48, 32, 64, 48), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLayers(comp, Options{
+		Wait:    func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+
+	l.Pause(true)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	layers := l.Layers()
+	if len(layers) != 2 {
+		t.Fatalf("got %d overlays, want 2 disjoint overlays", len(layers))
+	}
+	if !l.overlays[1].isFollower {
+		t.Fatal("second disjoint placement of shared key was not linked as follower")
+	}
+
+	// Advance until the first placement reaches frame 2 (green), then pause.
+	var step func(tea.Cmd)
+	step = func(cmd tea.Cmd) {
+		if cmd == nil {
+			return
+		}
+		msg := cmd()
+		if msg == nil {
+			return
+		}
+		v := reflect.ValueOf(msg)
+		if v.Kind() == reflect.Slice {
+			for i := 0; i < v.Len(); i++ {
+				step(v.Index(i).Interface().(tea.Cmd))
+			}
+			return
+		}
+		next := l.Update(msg)
+		if !l.Status().Paused && color.RGBAModel.Convert(l.Snapshot().At(4, 4)) == green {
+			l.Pause(true)
+		}
+		step(next)
+	}
+	step(l.Pause(false))
+
+	snap := l.Snapshot()
+	if got1, got2 := color.RGBAModel.Convert(snap.At(4, 4)), color.RGBAModel.Convert(snap.At(52, 36)); got1 != green || got2 != green {
+		t.Fatalf("disjoint shared-key windows drifted: top-left=%v, bottom-right=%v, want both green", got1, got2)
+	}
+
+	// Run to completion (frame 3 blue), pause, then Restart back to frame 1 (red).
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+	snap = l.Snapshot()
+	if got1, got2 := color.RGBAModel.Convert(snap.At(4, 4)), color.RGBAModel.Convert(snap.At(52, 36)); got1 != blue || got2 != blue {
+		t.Fatalf("disjoint shared-key windows at end: top-left=%v, bottom-right=%v, want both blue", got1, got2)
+	}
+	driveLayers(t, l, l.Restart())
+	snap = l.Snapshot()
+	if got1, got2 := color.RGBAModel.Convert(snap.At(4, 4)), color.RGBAModel.Convert(snap.At(52, 36)); got1 != red || got2 != red {
+		t.Fatalf("disjoint shared-key windows after Restart: top-left=%v, bottom-right=%v, want both red", got1, got2)
+	}
+}
+
+// A failed Restart pauses both the base controller and all active overlays so
+// overlays do not continue ticking after Status().Paused reports true.
+func TestFailedRestartPausesBaseAndOverlays(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	bounds := image.Rect(0, 0, 16, 16)
+	var frame0Loads atomic.Int32
+	clip := &animation.Clip{
+		Bounds:    bounds,
+		LoopCount: 0, // infinite loop
+		Frames: []animation.ClipFrame{
+			{
+				Rect:  bounds,
+				Delay: 10 * time.Millisecond,
+				LoadContext: func(context.Context) (image.Image, error) {
+					if frame0Loads.Add(1) > 1 {
+						return nil, errors.New("corrupt restart frame")
+					}
+					return solidImage(bounds, red), nil
+				},
+			},
+			{
+				Image: solidImage(bounds, green),
+				Rect:  bounds,
+				Delay: 10 * time.Millisecond,
+			},
+		},
+	}
+	player, err := animation.NewPlayer(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := solidImage(image.Rect(0, 0, 32, 32), color.RGBA{R: 10, A: 255})
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "lazy", Rect: bounds, Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLayers(comp, Options{
+		Wait: func(ctx context.Context, _ time.Duration) bool {
+			<-ctx.Done()
+			return false
+		},
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+	l.Pause(true)
+	l.SetSize(4, 2)
+	l.SetTerminal(true, 8, 16)
+	driveLayers(t, l, l.Init())
+
+	// Unpause so the overlay controller has a live tick waiting on ctx.Done(), then trigger a failing Restart.
+	tickCmd := l.Pause(false)
+	if l.Status().Paused || l.Layers()[0].Status.Paused {
+		t.Fatal("expected unpaused state before Restart")
+	}
+
+	// Restart triggers frame 0's second LoadContext call, which fails and pauses/cancels the overlay.
+	driveLayers(t, l, tea.Batch(l.Restart(), tickCmd))
+	st := l.Status()
+	if st.Err == nil || !st.Paused {
+		t.Fatalf("expected error and paused status after failed Restart, got %+v", st)
+	}
+	if !l.Layers()[0].Status.Paused || l.Layers()[0].Status.Busy {
+		t.Fatalf("overlay controller remained unpaused or busy after failed Restart: %+v", l.Layers()[0].Status)
+	}
+}
+
+// A rejected SetImage or SetImageImmutable call leaves the current composite,
+// overlays, and offscreen playback positions intact.
+func TestRejectedSetImagePreservesCompositeAndPositions(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 6, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	player := colorPlayer(t, image.Pt(16, 16), red, green)
+
+	comp1, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "offscreen", Rect: image.Rect(0, 0, 16, 16), Player: player},
+		{Key: "onscreen", Rect: image.Rect(16, 16, 32, 32), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLayers(comp1, Options{
+		Wait:    func(context.Context, time.Duration) bool { return true },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+	l.Pause(true)
+
+	// Scroll "offscreen" out of the composite so it lives only in l.Positions().
+	comp2, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "onscreen", Rect: image.Rect(16, 16, 32, 32), Player: player},
+	}, l.Positions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveLayers(t, l, l.SetComposite(comp2))
+
+	// Submit an invalid empty image: Picture rejects it, and Layers must retain comp2 and positions.
+	errCmd := l.SetImage(image.NewRGBA(image.Rectangle{}))
+	driveLayers(t, l, errCmd)
+	if l.Status().Err == nil {
+		t.Fatal("expected error from empty SetImage")
+	}
+	if _, ok := l.Status().Source.(*animation.Composite); !ok {
+		t.Fatalf("rejected SetImage replaced composite source with %T", l.Status().Source)
+	}
+	if len(l.Positions().Keys()) != 2 {
+		t.Fatalf("rejected SetImage dropped positions: got %v", l.Positions().Keys())
+	}
+
+	// Bring "offscreen" back via SetComposite(comp1) without passing l.Positions() to NewComposite:
+	// Layers must still carry frame 2 (green) for "offscreen" from its preserved positions.
+	driveLayers(t, l, l.SetComposite(comp1))
+	if got := color.RGBAModel.Convert(l.Snapshot().At(4, 4)); got != green {
+		t.Fatalf("offscreen key lost frame 2 after rejected SetImage: got %v, want green", got)
+	}
+}
+
+// Default fit is FitFill, and SetFit / SetAnchor replan overlay cell windows
+// to match letterboxed (FitContain) and cropped (FitCover) base placements.
+func TestDefaultFitFillAndFitAnchorReplanOverlays(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	// 40x20 composite (2:1 aspect) on a 10x4 cell grid with 8x16 cells (80x64 target raster).
+	const cols, rows, cw, ch = 10, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, 40, 20), color.RGBA{R: 20, G: 20, B: 20, A: 255})
+	player := colorPlayer(t, image.Pt(8, 10), red, green)
+	// Region covers top half of composite: (0,0)-(40,10).
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "top", Rect: image.Rect(0, 0, 40, 10), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLayers(comp, Options{
+		Wait:    func(context.Context, time.Duration) bool { return true },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+
+	if l.Fit() != picture.FitFill {
+		t.Fatalf("NewLayers default Fit = %v, want FitFill", l.Fit())
+	}
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+	l.Pause(true)
+
+	// Under FitFill, (0,0)-(40,10) maps to target (0,0)-(80,32) -> cells (0,0)-(10,2).
+	if got := l.Layers()[0].Cells; got != image.Rect(0, 0, 10, 2) {
+		t.Fatalf("FitFill overlay cells = %v, want (0,0)-(10,2)", got)
+	}
+
+	// Switch to FitContain: 40x20 in 80x64 scales to 80x40 centered at y=12..52.
+	// Top half (0,0)-(40,10) maps to y=12..32 -> cells (0,0)-(10,2), while bottom half would shift.
+	// Verify pending Snapshot is preserved before driving fitCmd.
+	fitCmd := l.SetFit(picture.FitContain)
+	if l.Snapshot() == nil {
+		t.Fatal("Snapshot nil while SetFit is pending")
+	}
+	driveLayers(t, l, fitCmd)
+
+	// Switch to FitCover with AnchorBottom: 40x20 in 80x64 scales to 128x64 anchored at bottom/center.
+	// Now change to a tall 40x80 composite in 80x64 to test vertical crop anchoring (AnchorTop vs AnchorBottom).
+	tallBase := solidImage(image.Rect(0, 0, 40, 80), color.RGBA{R: 20, G: 20, B: 20, A: 255})
+	// Region at y=40..50 in the 40x80 composite.
+	tallComp, err := animation.NewComposite(context.Background(), tallBase, []animation.Region{
+		{Key: "mid", Rect: image.Rect(0, 40, 40, 50), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveLayers(t, l, tea.Batch(l.SetFit(picture.FitCover), l.SetAnchor(picture.AnchorTop), l.SetComposite(tallComp)))
+	// Under FitCover + AnchorTop, 40x80 scales to 80x160 at oy=0; y=40..50 maps to target y=80..100, which is offscreen (>64)!
+	if len(l.Layers()) != 0 {
+		t.Fatalf("expected 0 visible overlays under FitCover+AnchorTop when region is cropped out, got %+v", l.Layers())
+	}
+
+	// Switching to AnchorBottom shifts 80x160 to oy = 64-160 = -96; y=40..50 maps to target y = -96 + 80..100 = -16..4 -> cell row 0!
+	driveLayers(t, l, l.SetAnchor(picture.AnchorBottom))
+	if len(l.Layers()) != 1 || l.Layers()[0].Cells != image.Rect(0, 0, 10, 1) {
+		t.Fatalf("FitCover+AnchorBottom overlay cells = %+v, want (0,0)-(10,1)", l.Layers())
+	}
+}
+
+// SetComposite runs Composite.WithPositions and Composite.Window inside its
+// returned command rather than on the Bubble Tea event loop, and a failed
+// layout job preserves harvested positions and closes planned overlays.
+func TestSetCompositeRunsOffLoopAndPreservesPositionsOnLayoutFailure(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 6, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	player := colorPlayer(t, image.Pt(16, 16), red, green)
+
+	comp1, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a.gif", Rect: image.Rect(0, 0, 16, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLayers(comp1, Options{
+		Wait:    func(context.Context, time.Duration) bool { return true },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+	l.Pause(true)
+
+	// comp1 has advanced to frame 2 (green). Build comp2 at frame 1 (red) without passing l.Positions().
+	comp2, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a.gif", Rect: image.Rect(16, 16, 32, 32), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := l.SetComposite(comp2)
+	// Before cmd executes, layout preparation is in-flight and overlay Window has not been submitted yet.
+	if !l.Status().Busy {
+		t.Fatal("expected Status().Busy while layout job has not executed")
+	}
+	if len(l.Layers()) != 1 || l.Layers()[0].Status.Source != nil {
+		t.Fatalf("expected planned overlay with nil Source before layout command runs, got %+v", l.Layers())
+	}
+
+	// Simulate a layout failure on the active layoutJob: harvested positions must be preserved
+	// (not overwritten with comp2's frame 1), overlays must be closed, and playback paused.
+	activeJob := l.layoutJob
+	driveLayers(t, l, l.Update(layerLayoutResult{
+		owner:    l,
+		job:      activeJob,
+		origComp: comp2,
+		err:      errors.New("synthetic layout failure"),
+	}))
+	_ = cmd // superseded/cancelled by the completed job
+	if l.Status().Err == nil || !l.Status().Paused {
+		t.Fatalf("expected error and paused status after layout failure, got %+v", l.Status())
+	}
+	if len(l.Layers()) != 0 {
+		t.Fatalf("expected 0 overlays after failed layout, got %d", len(l.Layers()))
+	}
+
+	// Verify harvested frame 2 (green) was not overwritten by comp2's uncarried frame 1.
+	driveLayers(t, l, l.SetComposite(comp2))
+	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 20)); got != green {
+		t.Fatalf("failed layout overwrote harvested position: got %v, want green", got)
+	}
 }

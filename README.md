@@ -398,23 +398,34 @@ remain visible. Under glyph rendering, `Layers` animates the flattened composite
 layers := playback.NewLayers(source, playback.Options{
     Picture: ntpicture.Options{Session: session, NextID: ntpicture.NextImageID},
 })
-cmd := tea.Batch(layers.Init(), layers.SetSize(cols, rows))
-cmd = layers.SetActive(false) // suspend overlays during scroll/resize bursts
-cmd = layers.SetComposite(nextSource)
-cmd = layers.SetActive(true)  // build and start Kitty overlays after settling
-positions := layers.Positions() // O(keys), zero-pixel snapshot for off-loop relayout
+cmd := tea.Batch(
+    layers.Init(),
+    layers.SetSize(cols, rows),
+    layers.SetTerminal(kittySupported, cellW, cellH), // or layers.SetMode(ntpicture.PictureKitty) on TerminalSessionMsg
+)
+cmd = layers.SetActive(false)   // suspend overlays during scroll/resize bursts; retains presented frame
+cmd = layers.SetComposite(next) // carries positions and crops overlay windows off the event loop
+cmd = layers.SetActive(true)    // build and start Kitty overlays after settling
+positions := layers.Positions() // O(keys), zero-pixel snapshot for off-loop NewComposite relayout
 snap := layers.Snapshot()       // immutable flattened image of presented frames
 ```
 
-Overlapping cell windows (including transitive and union-expanded overlaps)
-merge into one overlay at the finer of their resolutions (`min(1, own/rect)` per
-region, `max` when merged). `Positions()` and `Positions.WithPositions` merge
-region playback positions without copying or recomposing pixel buffers.
-`Snapshot()` returns a read-only flattened `image.Image` of the committed base
-and presented overlays; while a base replacement is pending, `Snapshot()`
-retains the last committed snapshot rather than exporting an unpresented layout.
-`Close()` and `Keep()` clean up or preserve the base and every overlay without
-closing the host's `TerminalSession`.
+`NewLayers` defaults the base picture to `FitFill` (and starts in `PictureKitty`
+when `Session.Snapshot().Kitty == KittyCapabilitySupported`); supply composites
+rendered at `layers.RasterGeometry().Pixels` for 1:1 pixel-to-cell alignment, or
+let `SetFit`/`SetAnchor` replan overlay cell windows alongside the base mapping.
+Overlapping cell windows (including transitive and union-expanded overlaps) and
+co-scheduled region keys merge or link so repeated keys share one playback clock
+at the finer resolution (`min(1, own/rect)` per region, `max` when merged).
+`Positions()` and `Positions.WithPositions` merge region playback positions
+without copying or recomposing pixel buffers, while `SetComposite` runs any
+required `Composite.WithPositions` and `Composite.Window` pixel work inside its
+returned cancellable `tea.Cmd`. `Snapshot()` returns a read-only flattened
+`image.Image` of the committed base and presented overlays; while a replacement
+is pending, `Snapshot()` and `View()` retain the last committed frame rather
+than rewinding or exporting an unpresented layout. `Close()` and `Keep()` clean
+up or preserve the base and every overlay without closing the host's
+`TerminalSession`.
 
 ## Examples and browser demo
 

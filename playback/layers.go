@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,18 +29,85 @@ type Layer struct {
 type layerGroup struct {
 	cells      image.Rectangle
 	window     image.Rectangle
+	target     image.Point
 	resolution float64
+	keys       []string
 }
 
 type layerOverlay struct {
 	cells      image.Rectangle
 	window     image.Rectangle
 	resolution float64
+	keys       []string
 	ctrl       *Controller
+	isFollower bool
+	followers  []*layerOverlay
 }
 
 func (o *layerOverlay) presented() bool {
 	return o != nil && o.ctrl != nil && o.ctrl.Status().Presented != nil
+}
+
+func (o *layerOverlay) layerStatus() Status {
+	st := o.ctrl.Status()
+	st.Source = unwrapCompositeSource(st.Source)
+	st.Presented = unwrapCompositeSource(st.Presented)
+	return st
+}
+
+func unwrapCompositeSource(src animation.Source) animation.Source {
+	if ls, ok := src.(*linkedWindowSource); ok && ls != nil {
+		return ls.main
+	}
+	return src
+}
+
+// linkedWindowSource ties follower overlay windows to a leader window so that
+// disjoint placements of the same composite key(s) share one clock and compose
+// off the event loop inside the leader controller's advance job.
+type linkedWindowSource struct {
+	main      *animation.Composite
+	followers []*animation.Composite
+}
+
+func (s *linkedWindowSource) Image() image.Image   { return s.main.Image() }
+func (s *linkedWindowSource) Delay() time.Duration { return s.main.Delay() }
+
+func (s *linkedWindowSource) Advance(ctx context.Context) (animation.Source, bool, error) {
+	next, more, err := s.main.Advance(ctx)
+	if err != nil || !more {
+		return s, more, err
+	}
+	nextMain, ok := next.(*animation.Composite)
+	if !ok || nextMain == nil {
+		return s, false, nil
+	}
+	nextFollowers := make([]*animation.Composite, len(s.followers))
+	for i, f := range s.followers {
+		nf, err := f.WithPositions(ctx, nextMain)
+		if err != nil {
+			return s, false, err
+		}
+		nextFollowers[i] = nf
+	}
+	return &linkedWindowSource{main: nextMain, followers: nextFollowers}, true, nil
+}
+
+func (s *linkedWindowSource) Reset(ctx context.Context) (animation.Source, error) {
+	next, err := s.main.Reset(ctx)
+	if err != nil {
+		return s, err
+	}
+	nextMain, _ := next.(*animation.Composite)
+	nextFollowers := make([]*animation.Composite, len(s.followers))
+	for i, f := range s.followers {
+		nf, err := f.WithPositions(ctx, nextMain)
+		if err != nil {
+			return s, err
+		}
+		nextFollowers[i] = nf
+	}
+	return &linkedWindowSource{main: nextMain, followers: nextFollowers}, nil
 }
 
 // imageSource wraps an immutable static image with zero delay.
@@ -49,6 +117,50 @@ func (s imageSource) Image() image.Image                                      { 
 func (s imageSource) Delay() time.Duration                                    { return 0 }
 func (s imageSource) Advance(context.Context) (animation.Source, bool, error) { return s, false, nil }
 func (s imageSource) Reset(context.Context) (animation.Source, error)         { return s, nil }
+
+// layerSnapshotSource pairs the committed flattened Snapshot image with the
+// composite's source contract for Status().Presented.
+type layerSnapshotSource struct {
+	comp *animation.Composite
+	img  image.Image
+}
+
+func (s layerSnapshotSource) Image() image.Image { return s.img }
+func (s layerSnapshotSource) Delay() time.Duration {
+	if s.comp == nil {
+		return 0
+	}
+	return s.comp.Delay()
+}
+func (s layerSnapshotSource) Advance(ctx context.Context) (animation.Source, bool, error) {
+	if s.comp == nil {
+		return s, false, nil
+	}
+	return s.comp.Advance(ctx)
+}
+func (s layerSnapshotSource) Reset(ctx context.Context) (animation.Source, error) {
+	if s.comp == nil {
+		return s, nil
+	}
+	return s.comp.Reset(ctx)
+}
+
+type layerLayoutJob struct {
+	ctx           context.Context
+	cancel        context.CancelFunc
+	prevComp      *animation.Composite
+	prevPositions animation.Positions
+}
+
+type layerLayoutResult struct {
+	owner      *Layers
+	job        *layerLayoutJob
+	origComp   *animation.Composite
+	comp       *animation.Composite
+	submitBase bool
+	windows    []*animation.Composite
+	err        error
+}
 
 type layerRestartJob struct {
 	ctx    context.Context
@@ -66,8 +178,10 @@ type layerRestartResult struct {
 // region overlays under Kitty graphics, and falls back to animating the
 // flattened composite when glyph rendering is active.
 //
-// All methods belong to one Bubble Tea event loop; forward every message to
-// Update and execute every returned command.
+// Composite bounds are mapped onto the configured cell grid using FitFill;
+// supply a composite rendered at RasterGeometry().Pixels for 1:1 pixel
+// alignment without resampling. All methods belong to one Bubble Tea event
+// loop; forward every message to Update and execute every returned command.
 type Layers struct {
 	opts             Options
 	base             *Controller
@@ -75,6 +189,10 @@ type Layers struct {
 	still            image.Image
 	positions        animation.Positions
 	overlays         []*layerOverlay
+	retainedOverlays []*layerOverlay
+	retainedLayout   uint64
+	retainedCols     int
+	retainedRows     int
 	mode             picture.PictureMode
 	cols, rows       int
 	cw, ch           int
@@ -91,18 +209,21 @@ type Layers struct {
 
 	layoutGen        uint64
 	baseTargetGen    uint64
+	basePending      bool
 	presentedLayout  uint64
 	presentedBase    image.Image
 	retainedSnapshot image.Image
 	cachedSnapshot   image.Image
 	snapshotValid    bool
 
+	layoutJob  *layerLayoutJob
 	restartJob *layerRestartJob
 	err        error
 }
 
 // NewLayers creates a layered picture component sharing options.Picture.Session
 // and options.Picture.NextID across the base picture and all animated overlays.
+// The base picture uses FitFill so composite coordinates map onto the cell grid.
 func NewLayers(composite *animation.Composite, options Options) *Layers {
 	if options.Wait == nil {
 		options.Wait = wait
@@ -110,10 +231,15 @@ func NewLayers(composite *animation.Composite, options Options) *Layers {
 	if options.Picture.NextID == nil {
 		options.Picture.NextID = picture.NextImageID
 	}
+	options.Picture.Render.Fit = picture.FitFill
 	cw, ch := options.Picture.Render.CellPixelWidth, options.Picture.Render.CellPixelHeight
+	var mode picture.PictureMode
 	if options.Picture.Session != nil {
 		state := options.Picture.Session.Snapshot()
 		cw, ch = state.CellPixelWidth, state.CellPixelHeight
+		if state.Kitty == picture.KittyCapabilitySupported {
+			mode = picture.PictureKitty
+		}
 	}
 	if cw <= 0 {
 		cw = 8
@@ -125,11 +251,16 @@ func NewLayers(composite *animation.Composite, options Options) *Layers {
 	// The base picture is replaced only on viewport/document changes under Kitty
 	// graphics; using a fresh ID retains the displayed base until its replacement commits.
 	baseOpts.FreshIDs = true
+	base := NewSource(nil, baseOpts)
+	if mode == picture.PictureKitty {
+		_ = base.SetTerminal(true, cw, ch)
+	}
 	return &Layers{
 		opts:      options,
-		base:      NewSource(nil, baseOpts),
+		base:      base,
 		comp:      composite,
 		positions: composite.Positions(),
+		mode:      mode,
 		cw:        cw,
 		ch:        ch,
 		active:    true,
@@ -159,14 +290,15 @@ func (l *Layers) Init() tea.Cmd {
 	return tea.Batch(initCmd, submitCmd)
 }
 
-// Status reports the combined playback and base presentation status.
+// Status reports the combined playback and presentation status. Status.Presented
+// reflects the same committed image that Snapshot exports.
 func (l *Layers) Status() Status {
 	baseStatus := l.base.Status()
 	err := l.err
 	if err == nil {
 		err = baseStatus.Err
 	}
-	busy := l.restartJob != nil || baseStatus.Busy || baseStatus.Picture.Busy
+	busy := l.layoutJob != nil || l.restartJob != nil || baseStatus.Busy || baseStatus.Picture.Busy
 	finished := true
 	if l.comp == nil {
 		finished = l.still != nil
@@ -181,7 +313,7 @@ func (l *Layers) Status() Status {
 			if st.Busy || st.Picture.Busy {
 				busy = true
 			}
-			if !st.Finished {
+			if !o.isFollower && !st.Finished {
 				finished = false
 			}
 		}
@@ -202,8 +334,14 @@ func (l *Layers) Status() Status {
 		}
 	}
 	var presented animation.Source
-	if l.presentedLayout == l.layoutGen && l.layoutGen > 0 && baseStatus.Presented != nil {
-		presented = baseStatus.Presented
+	if snap := l.Snapshot(); snap != nil {
+		if l.mode == picture.PictureGlyph && l.presentedLayout == l.layoutGen && !l.basePending && baseStatus.Presented != nil {
+			presented = baseStatus.Presented
+		} else if l.comp != nil {
+			presented = layerSnapshotSource{comp: l.comp, img: snap}
+		} else {
+			presented = imageSource{img: snap}
+		}
 	}
 	return Status{
 		Source:    source,
@@ -220,7 +358,7 @@ func (l *Layers) Status() Status {
 // Layers returns a snapshot of the active Kitty overlay layers in cell-group order.
 // Under glyph rendering or while playback activation is suspended, it returns nil.
 func (l *Layers) Layers() []Layer {
-	if len(l.overlays) == 0 {
+	if !l.active || l.mode != picture.PictureKitty || len(l.overlays) == 0 {
 		return nil
 	}
 	out := make([]Layer, len(l.overlays))
@@ -229,7 +367,7 @@ func (l *Layers) Layers() []Layer {
 			Cells:      o.cells,
 			Window:     o.window,
 			Resolution: o.resolution,
-			Status:     o.ctrl.Status(),
+			Status:     o.layerStatus(),
 		}
 	}
 	return out
@@ -255,9 +393,10 @@ func (l *Layers) RasterGeometry() picture.RasterGeometry { return l.base.RasterG
 func (l *Layers) Active() bool { return l.active }
 
 // SetActive enables or suspends animated overlay creation and advancement.
-// Hosts can set Active(false) during scroll or resize bursts so only the still
-// base picture is prepared, then call SetActive(true) once the viewport settles
-// to construct and start the Kitty overlays without re-preparing the base.
+// Hosts can set Active(false) during scroll or resize bursts so presented
+// overlays freeze in place while new composites prepare only the base picture,
+// then call SetActive(true) once the viewport settles to construct and start
+// the Kitty overlays without re-preparing the base.
 func (l *Layers) SetActive(active bool) tea.Cmd {
 	if l.closed || l.active == active {
 		return nil
@@ -267,43 +406,66 @@ func (l *Layers) SetActive(active bool) tea.Cmd {
 		return l.base.Pause(l.basePaused())
 	}
 	if !l.active {
-		return l.stopOverlays()
+		if l.layoutJob != nil && !l.basePending {
+			l.cancelLayout()
+		}
+		return l.retireOverlays()
 	}
 	if !l.submitted || l.comp == nil || !l.visible || l.cols <= 0 || l.rows <= 0 {
 		return nil
 	}
-	return l.rebuildOverlays()
+	if l.layoutJob != nil && l.basePending {
+		// Replan overlays into the pending base layout job.
+		return l.startLayout(l.comp, true)
+	}
+	return l.startLayout(l.comp, false)
 }
 
 // SetComposite replaces the current composite, carrying matching region playback
-// positions from previous overlays. Pass nil to clear.
+// positions from previous overlays off the event loop. Pass nil to clear.
 func (l *Layers) SetComposite(composite *animation.Composite) tea.Cmd {
 	if l.closed {
 		return nil
 	}
+	prevComp := l.comp
+	if l.layoutJob != nil {
+		prevComp = l.layoutJob.prevComp
+	}
 	l.cancelRestart()
+	l.cancelLayout()
 	l.err = nil
 	l.still = nil
 	if composite == nil {
 		l.comp = nil
 		l.positions = animation.Positions{}
 		l.clearSnapshots()
-		return tea.Batch(l.closeOverlays(), l.base.SetSource(nil))
+		return tea.Batch(l.closeAllOverlays(), l.base.SetSource(nil))
 	}
 	l.captureRetainedSnapshot()
-	stopCmd := l.stopOverlays()
-	if len(l.positions.Keys()) > 0 {
-		if carried, err := composite.WithPositions(context.Background(), l.positions); err == nil {
-			composite = carried
-		}
+	retireCmd := l.retireOverlays()
+	prevPositions := l.positions
+	if len(l.positions.Keys()) == 0 {
+		l.positions = composite.Positions()
 	}
 	l.comp = composite
-	l.positions = l.positions.WithPositions(composite)
-	return tea.Batch(stopCmd, l.applySource(false))
+	cmd := l.applySource(false)
+	if l.layoutJob != nil {
+		l.layoutJob.prevComp = prevComp
+		l.layoutJob.prevPositions = prevPositions
+	}
+	return tea.Batch(retireCmd, cmd)
+}
+
+func validImageBounds(img image.Image) bool {
+	if img == nil {
+		return false
+	}
+	b := img.Bounds()
+	return !b.Empty() && b.Dx() > 0 && b.Dy() > 0 && b.Dx() <= picture.MaxImagePixels/b.Dy()
 }
 
 // SetImage copies img and displays it as a still base picture with no animated overlays.
-// Pass nil to clear.
+// Pass nil to clear. Invalid images report ErrorMsg and leave existing composite/positions intact.
 func (l *Layers) SetImage(img image.Image) tea.Cmd {
 	if l.closed {
 		return nil
@@ -311,10 +473,10 @@ func (l *Layers) SetImage(img image.Image) tea.Cmd {
 	if img == nil {
 		return l.SetImageImmutable(nil)
 	}
-	b := img.Bounds()
-	if b.Empty() || b.Dx() <= 0 || b.Dy() <= 0 || b.Dx() > picture.MaxImagePixels/b.Dy() {
+	if !validImageBounds(img) {
 		return l.SetImageImmutable(img)
 	}
+	b := img.Bounds()
 	cp := image.NewRGBA(b)
 	draw.Draw(cp, b, imageview.Unwrap(img), b.Min, draw.Src)
 	return l.SetImageImmutable(imageview.New(cp))
@@ -326,19 +488,35 @@ func (l *Layers) SetImageImmutable(img image.Image) tea.Cmd {
 	if l.closed {
 		return nil
 	}
+	if img != nil && !validImageBounds(img) {
+		var clearCmd tea.Cmd
+		if l.opts.Picture.ClearOnReplace {
+			l.cancelRestart()
+			l.cancelLayout()
+			l.comp = nil
+			l.still = nil
+			l.positions = animation.Positions{}
+			l.clearSnapshots()
+			clearCmd = l.closeAllOverlays()
+		}
+		errCmd := l.base.pic.SetImageImmutable(img)
+		l.err = l.base.Status().Picture.Err
+		return tea.Batch(clearCmd, errCmd)
+	}
 	l.cancelRestart()
+	l.cancelLayout()
 	l.err = nil
 	l.comp = nil
 	l.positions = animation.Positions{}
 	if img == nil {
 		l.still = nil
 		l.clearSnapshots()
-		return tea.Batch(l.closeOverlays(), l.base.SetSource(nil))
+		return tea.Batch(l.closeAllOverlays(), l.base.SetSource(nil))
 	}
 	l.captureRetainedSnapshot()
-	stopCmd := l.closeOverlays()
+	retireCmd := l.retireOverlays()
 	l.still = imageview.New(img)
-	return tea.Batch(stopCmd, l.applySource(false))
+	return tea.Batch(retireCmd, l.applySource(false))
 }
 
 // SetSize sets the full cell dimensions of the layered picture.
@@ -350,21 +528,27 @@ func (l *Layers) SetSize(cols, rows int) tea.Cmd {
 	if cols == l.cols && rows == l.rows {
 		return nil
 	}
+	// Capture before base.SetSize mutates base generation, but restore if rejected.
+	prevRetained := l.retainedSnapshot
 	if l.submitted {
 		l.captureRetainedSnapshot()
 	}
-	l.cols, l.rows = cols, rows
 	baseCmd := l.base.SetSize(cols, rows)
 	if l.base.Status().Picture.Err != nil {
+		l.retainedSnapshot = prevRetained
 		return baseCmd
 	}
+	l.err = nil
+	l.cols, l.rows = cols, rows
 	if !l.submitted {
 		return baseCmd
 	}
 	if cols == 0 || rows == 0 {
+		l.cancelLayout()
 		l.layoutGen++
 		l.baseTargetGen = l.base.Status().Picture.Generation
-		return tea.Batch(baseCmd, l.stopOverlays())
+		l.basePending = false
+		return tea.Batch(baseCmd, l.retireOverlays())
 	}
 	return tea.Batch(baseCmd, l.syncGeometryAndMode(false))
 }
@@ -375,20 +559,23 @@ func (l *Layers) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	if l.closed {
 		return nil
 	}
-	l.explicitTerminal = true
-	if l.submitted {
-		l.captureRetainedSnapshot()
-	}
-	baseCmd := l.base.SetTerminal(kitty, cellWidth, cellHeight)
-	if l.base.Status().Picture.Err != nil {
-		return baseCmd
-	}
 	mode := picture.PictureGlyph
 	if kitty {
 		mode = picture.PictureKitty
 	}
 	modeChanged := mode != l.mode
 	geomChanged := cellWidth != l.cw || cellHeight != l.ch
+	prevRetained := l.retainedSnapshot
+	if l.submitted && (modeChanged || geomChanged) {
+		l.captureRetainedSnapshot()
+	}
+	baseCmd := l.base.SetTerminal(kitty, cellWidth, cellHeight)
+	if l.base.Status().Picture.Err != nil {
+		l.retainedSnapshot = prevRetained
+		return baseCmd
+	}
+	l.err = nil
+	l.explicitTerminal = true
 	l.mode = mode
 	l.cw, l.ch = cellWidth, cellHeight
 	pauseCmd := l.base.Pause(l.basePaused())
@@ -406,13 +593,16 @@ func (l *Layers) SetMode(mode picture.PictureMode) tea.Cmd {
 	if l.closed || mode == l.mode {
 		return nil
 	}
+	prevRetained := l.retainedSnapshot
 	if l.submitted {
 		l.captureRetainedSnapshot()
 	}
 	baseCmd := l.base.SetMode(mode)
 	if l.base.Status().Picture.Err != nil || l.base.pic.Mode() != mode {
+		l.retainedSnapshot = prevRetained
 		return baseCmd
 	}
+	l.err = nil
 	l.mode = mode
 	l.cw, l.ch = l.base.pic.CellPixelSize()
 	pauseCmd := l.base.Pause(l.basePaused())
@@ -431,10 +621,12 @@ func (l *Layers) SetVisible(visible bool) tea.Cmd {
 	l.visible = visible
 	if !visible {
 		l.cancelRestart()
+		l.cancelLayout()
 		l.retainedSnapshot = nil
 		l.cachedSnapshot = nil
 		l.snapshotValid = false
-		return tea.Batch(l.stopOverlays(), l.base.SetVisible(false))
+		l.harvestOverlayPositions()
+		return tea.Batch(l.closeAllOverlays(), l.base.SetVisible(false))
 	}
 	baseCmd := l.base.SetVisible(true)
 	if !l.submitted {
@@ -452,7 +644,11 @@ func (l *Layers) Pause(paused bool) tea.Cmd {
 	l.paused = paused
 	cmds := []tea.Cmd{l.base.Pause(l.basePaused())}
 	for _, o := range l.overlays {
-		cmds = append(cmds, o.ctrl.Pause(paused))
+		if o.isFollower {
+			cmds = append(cmds, o.ctrl.Pause(true))
+		} else {
+			cmds = append(cmds, o.ctrl.Pause(paused))
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -505,28 +701,48 @@ func (l *Layers) SetBackground(bg color.Color) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// Fit reports the base picture's fit mode.
+// Fit reports the base picture's fit mode (defaults to FitFill).
 func (l *Layers) Fit() picture.FitMode { return l.base.Fit() }
 
-// SetFit changes the base picture's fit mode.
+// SetFit changes the base picture's fit mode and replans overlays for the new mapping.
 func (l *Layers) SetFit(fit picture.FitMode) tea.Cmd {
 	if l.closed {
 		return nil
 	}
-	l.opts.Picture.Render.Fit = fit
-	return l.base.SetFit(fit)
+	prev := l.base.Fit()
+	prevRetained := l.retainedSnapshot
+	if l.submitted {
+		l.captureRetainedSnapshot()
+	}
+	baseCmd := l.base.SetFit(fit)
+	l.opts.Picture.Render.Fit = l.base.Fit()
+	if !l.submitted || l.base.Fit() == prev {
+		l.retainedSnapshot = prevRetained
+		return baseCmd
+	}
+	return tea.Batch(baseCmd, l.syncGeometryAndMode(false))
 }
 
 // Anchor reports the base picture's crop anchor.
 func (l *Layers) Anchor() picture.FitAnchor { return l.base.Anchor() }
 
-// SetAnchor changes the base picture's crop anchor.
+// SetAnchor changes the base picture's crop anchor and replans overlays for the new mapping.
 func (l *Layers) SetAnchor(anchor picture.FitAnchor) tea.Cmd {
 	if l.closed {
 		return nil
 	}
-	l.opts.Picture.Render.Anchor = anchor
-	return l.base.SetAnchor(anchor)
+	prev := l.base.Anchor()
+	prevRetained := l.retainedSnapshot
+	if l.submitted {
+		l.captureRetainedSnapshot()
+	}
+	baseCmd := l.base.SetAnchor(anchor)
+	l.opts.Picture.Render.Anchor = l.base.Anchor()
+	if !l.submitted || l.base.Anchor() == prev {
+		l.retainedSnapshot = prevRetained
+		return baseCmd
+	}
+	return tea.Batch(baseCmd, l.syncGeometryAndMode(false))
 }
 
 // SetViewport clips the composed cell view without rescaling or retransmitting pixels.
@@ -543,16 +759,32 @@ func (l *Layers) ResetViewport() {
 	}
 }
 
-// Update routes messages to the base picture and active overlays, tracks region
+// Update routes messages to the base picture and overlays, tracks region
 // playback positions, and promotes committed presentations.
 func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 	if l.closed {
-		return l.base.Update(msg)
+		var cmds []tea.Cmd
+		cmds = append(cmds, l.base.Update(msg))
+		for _, o := range l.overlays {
+			cmds = append(cmds, o.ctrl.Update(msg))
+		}
+		for _, o := range l.retainedOverlays {
+			cmds = append(cmds, o.ctrl.Update(msg))
+		}
+		return tea.Batch(cmds...)
 	}
 	var cmds []tea.Cmd
 	prevCW, prevCH := l.base.pic.CellPixelSize()
 	prevBaseSource := l.base.Status().Source
 	prevBasePresented := l.base.Status().Presented
+
+	// If a terminal event may change cell pixel size on the base picture, preserve
+	// the last committed snapshot before base.Update mutates base state.
+	var preEventSnap image.Image
+	if !l.opts.Picture.HostGeometry && l.submitted && !l.opts.Picture.ClearOnReplace {
+		preEventSnap = l.Snapshot()
+	}
+
 	cmds = append(cmds, l.base.Update(msg))
 
 	if afterBase := l.base.Status(); afterBase.Source != prevBaseSource {
@@ -571,16 +803,36 @@ func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, o.ctrl.Update(msg))
 		after := o.ctrl.Status()
 		if after.Source != beforeSource {
-			if comp, ok := after.Source.(*animation.Composite); ok && comp != nil {
-				l.positions = l.positions.WithPositions(comp)
+			switch src := after.Source.(type) {
+			case *linkedWindowSource:
+				if src != nil {
+					if src.main != nil {
+						l.positions = l.positions.WithPositions(src.main)
+					}
+					for i, f := range o.followers {
+						if i < len(src.followers) && src.followers[i] != nil {
+							cmds = append(cmds, f.ctrl.SetSource(src.followers[i]))
+						}
+					}
+				}
+			case *animation.Composite:
+				if src != nil {
+					l.positions = l.positions.WithPositions(src)
+				}
 			}
 		}
 		if after.Presented != beforePresented {
 			l.snapshotValid = false
 		}
 	}
+	for _, o := range l.retainedOverlays {
+		cmds = append(cmds, o.ctrl.Update(msg))
+	}
 
 	if nw, nh := l.base.pic.CellPixelSize(); (nw != prevCW || nh != prevCH) && nw > 0 && nh > 0 {
+		if preEventSnap != nil {
+			l.retainedSnapshot = preEventSnap
+		}
 		l.cw, l.ch = nw, nh
 		if l.submitted {
 			cmds = append(cmds, l.syncGeometryAndMode(false))
@@ -588,6 +840,31 @@ func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 	}
 
 	switch m := msg.(type) {
+	case layerLayoutResult:
+		if m.owner == l && m.job == l.layoutJob {
+			cancelled := m.job.ctx.Err() != nil
+			m.job.cancel()
+			l.layoutJob = nil
+			if !cancelled {
+				if m.err != nil {
+					l.err = m.err
+					l.comp = m.job.prevComp
+					l.positions = m.job.prevPositions
+					l.basePending = false
+					cmds = append(cmds, l.closeActiveOverlays(), l.Pause(true))
+				} else if m.comp != nil {
+					l.comp = m.comp
+					l.positions = m.job.prevPositions.WithPositions(m.comp)
+					if m.submitBase || (l.presentedLayout != l.layoutGen && m.comp != m.origComp) {
+						cmds = append(cmds, l.base.Pause(l.basePaused()))
+						cmds = append(cmds, l.base.SetSource(l.comp))
+						l.baseTargetGen = l.base.Status().Picture.Generation
+					}
+					l.basePending = false
+					cmds = append(cmds, l.submitOverlayWindows(m.windows))
+				}
+			}
+		}
 	case layerRestartResult:
 		if m.owner == l && m.job == l.restartJob {
 			cancelled := m.job.ctx.Err() != nil
@@ -596,10 +873,10 @@ func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 			if !cancelled {
 				if m.err != nil {
 					l.err = m.err
-					l.paused = true
+					cmds = append(cmds, l.Pause(true))
 				} else if m.comp != nil {
 					l.captureRetainedSnapshot()
-					cmds = append(cmds, l.closeOverlays())
+					cmds = append(cmds, l.retireOverlaysWithoutHarvest())
 					l.comp = m.comp
 					l.positions = m.comp.Positions()
 					cmds = append(cmds, l.applySource(false))
@@ -608,13 +885,13 @@ func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 		}
 	}
 
-	l.promoteBase()
+	cmds = append(cmds, l.promoteBase())
 	return tea.Batch(cmds...)
 }
 
 // View returns the composed terminal cell grid. Under Kitty graphics, each
 // presented overlay's placeholder rows are spliced into the base picture's grid
-// at its cell window; unpresented overlays retain the base picture's cells.
+// at its cell window; unpresented overlays retain the previously presented cells.
 func (l *Layers) View() string {
 	if l.closed {
 		return l.keptView
@@ -626,7 +903,7 @@ func (l *Layers) View() string {
 	if grid == "" {
 		return ""
 	}
-	if l.mode == picture.PictureKitty && l.presentedLayout == l.layoutGen && l.layoutGen > 0 && len(l.overlays) > 0 {
+	if l.mode == picture.PictureKitty && l.layoutGen > 0 {
 		grid = l.spliceOverlays(grid)
 	}
 	if l.viewportOn {
@@ -641,9 +918,9 @@ func (l *Layers) View() string {
 // While a base replacement is pending (submitted but not yet committed via
 // PresentedMsg), Snapshot returns the last committed snapshot from the previous
 // layout rather than silently exporting the unpresented replacement. Unpresented
-// overlays leave the committed base image's pixels intact. Returns nil before
-// any frame is presented, while hidden, and after clearing or Close; Keep
-// retains the last presented snapshot.
+// overlays leave the committed pixels intact. Returns nil before any frame is
+// presented, while hidden, and after clearing or Close; Keep retains the last
+// presented snapshot.
 func (l *Layers) Snapshot() image.Image {
 	if l.closed {
 		return l.retainedSnapshot
@@ -651,8 +928,7 @@ func (l *Layers) Snapshot() image.Image {
 	if !l.visible {
 		return nil
 	}
-	l.promoteBase()
-	if l.presentedLayout != l.layoutGen || l.layoutGen == 0 {
+	if l.presentedLayout != l.layoutGen || l.layoutGen == 0 || l.basePending {
 		return l.retainedSnapshot
 	}
 	if l.snapshotValid && l.cachedSnapshot != nil {
@@ -673,7 +949,8 @@ func (l *Layers) Close() tea.Cmd {
 	}
 	l.closed = true
 	l.cancelRestart()
-	cmds := []tea.Cmd{l.closeOverlays(), l.base.Close()}
+	l.cancelLayout()
+	cmds := []tea.Cmd{l.closeAllOverlays(), l.base.Close()}
 	l.comp = nil
 	l.still = nil
 	l.positions = animation.Positions{}
@@ -691,12 +968,20 @@ func (l *Layers) Keep() tea.Cmd {
 		return nil
 	}
 	l.cancelRestart()
+	l.cancelLayout()
 	l.keptView = l.View()
 	l.retainedSnapshot = l.Snapshot()
 	l.closed = true
-	var cmds []tea.Cmd
-	if l.presentedLayout == l.layoutGen && l.layoutGen > 0 {
-		cmds = append(cmds, l.base.Keep())
+	cmds := []tea.Cmd{l.base.Keep()}
+	if l.presentedLayout == l.layoutGen && !l.basePending && l.layoutGen > 0 {
+		for _, o := range l.retainedOverlays {
+			if l.retainedLayout == l.presentedLayout && o.presented() {
+				cmds = append(cmds, o.ctrl.Keep())
+			} else {
+				cmds = append(cmds, o.ctrl.Close())
+			}
+		}
+		l.retainedOverlays = nil
 		for _, o := range l.overlays {
 			if o.presented() {
 				cmds = append(cmds, o.ctrl.Keep())
@@ -706,7 +991,15 @@ func (l *Layers) Keep() tea.Cmd {
 		}
 		l.overlays = nil
 	} else {
-		cmds = append(cmds, l.base.Keep(), l.closeOverlays())
+		for _, o := range l.retainedOverlays {
+			if l.retainedLayout == l.presentedLayout && o.presented() {
+				cmds = append(cmds, o.ctrl.Keep())
+			} else {
+				cmds = append(cmds, o.ctrl.Close())
+			}
+		}
+		l.retainedOverlays = nil
+		cmds = append(cmds, l.closeActiveOverlays())
 	}
 	l.comp = nil
 	l.still = nil
@@ -722,12 +1015,20 @@ func (l *Layers) cancelRestart() {
 	}
 }
 
+func (l *Layers) cancelLayout() {
+	if l.layoutJob != nil {
+		l.layoutJob.cancel()
+		l.layoutJob = nil
+	}
+}
+
 func (l *Layers) clearSnapshots() {
 	l.presentedBase = nil
 	l.retainedSnapshot = nil
 	l.cachedSnapshot = nil
 	l.snapshotValid = false
 	l.presentedLayout = 0
+	l.basePending = false
 }
 
 func (l *Layers) captureRetainedSnapshot() {
@@ -746,11 +1047,12 @@ func (l *Layers) applySource(newLayout bool) tea.Cmd {
 	}
 	l.submitted = true
 	var cmds []tea.Cmd
-	cmds = append(cmds, l.stopOverlays())
+	cmds = append(cmds, l.retireOverlays())
 
 	if l.comp == nil && l.still == nil {
+		l.cancelLayout()
 		l.clearSnapshots()
-		cmds = append(cmds, l.base.SetSource(nil))
+		cmds = append(cmds, l.closeRetainedOverlays(), l.base.SetSource(nil))
 		return tea.Batch(cmds...)
 	}
 
@@ -760,54 +1062,208 @@ func (l *Layers) applySource(newLayout bool) tea.Cmd {
 	cmds = append(cmds, l.base.Pause(l.basePaused()))
 
 	if l.comp != nil {
-		cmds = append(cmds, l.base.SetSource(l.comp))
-		if l.mode == picture.PictureKitty && l.active && l.visible && l.cols > 0 && l.rows > 0 {
-			cmds = append(cmds, l.rebuildOverlays())
-		}
+		cmds = append(cmds, l.startLayout(l.comp, true))
 	} else {
+		l.cancelLayout()
+		l.basePending = false
 		cmds = append(cmds, l.base.SetSource(imageSource{img: l.still}))
+		l.baseTargetGen = l.base.Status().Picture.Generation
+		cmds = append(cmds, l.promoteBase())
 	}
-
-	l.baseTargetGen = l.base.Status().Picture.Generation
-	l.promoteBase()
 	return tea.Batch(cmds...)
 }
 
 func (l *Layers) syncGeometryAndMode(modeChanged bool) tea.Cmd {
 	var cmds []tea.Cmd
-	cmds = append(cmds, l.stopOverlays())
-	if l.comp != nil && len(l.positions.Keys()) > 0 {
-		if carried, err := l.comp.WithPositions(context.Background(), l.positions); err == nil && carried != l.comp {
-			l.comp = carried
-			cmds = append(cmds, l.base.SetSource(l.comp))
-		}
-	}
+	cmds = append(cmds, l.retireOverlays())
 	l.layoutGen++
 	l.baseTargetGen = l.base.Status().Picture.Generation
 	l.cachedSnapshot = nil
 	l.snapshotValid = false
-	if l.mode == picture.PictureKitty && l.comp != nil && l.active && l.visible && l.cols > 0 && l.rows > 0 {
-		cmds = append(cmds, l.rebuildOverlays())
-	} else if modeChanged && l.mode == picture.PictureGlyph {
+	if l.comp != nil {
+		cmds = append(cmds, l.startLayout(l.comp, false))
+	} else {
+		l.cancelLayout()
+		l.basePending = false
+	}
+	if modeChanged && l.mode == picture.PictureGlyph {
 		cmds = append(cmds, l.base.Pause(l.basePaused()))
 	}
-	l.promoteBase()
+	cmds = append(cmds, l.promoteBase())
 	return tea.Batch(cmds...)
 }
 
-func (l *Layers) promoteBase() {
-	if !l.submitted || l.layoutGen == 0 {
-		return
+func (l *Layers) startLayout(comp *animation.Composite, submitBase bool) tea.Cmd {
+	prevComp := l.comp
+	prevPositions := l.positions
+	if l.layoutJob != nil {
+		prevComp = l.layoutJob.prevComp
+		prevPositions = l.layoutJob.prevPositions
 	}
+	l.cancelLayout()
+	var cmds []tea.Cmd
+	cmds = append(cmds, l.closeActiveOverlays())
+	if comp == nil {
+		l.basePending = false
+		return tea.Batch(cmds...)
+	}
+
+	var groups []layerGroup
+	if l.mode == picture.PictureKitty && l.active && l.visible && l.cols > 0 && l.rows > 0 {
+		groups = planLayers(comp, l.cols, l.rows, l.cw, l.ch, l.Fit(), l.Anchor())
+		for i := range groups {
+			g := &groups[i]
+			overlayOpts := l.opts
+			overlayOpts.Picture.HostGeometry = true
+			overlayOpts.Picture.Render.Fit = picture.FitFill
+			overlayOpts.Picture.Render.KittyResolutionFactor = g.resolution
+			overlayOpts.Picture.Render.CellPixelWidth = l.cw
+			overlayOpts.Picture.Render.CellPixelHeight = l.ch
+
+			ctrl := NewSource(nil, overlayOpts)
+			ctrl.SetSize(g.cells.Dx(), g.cells.Dy())
+			ctrl.SetTerminal(true, l.cw, l.ch)
+			ctrl.SetResolution(g.resolution)
+			ctrl.SetRate(l.rate)
+			ctrl.Pause(l.paused)
+			ctrl.SetVisible(l.visible)
+			g.target = ctrl.RasterGeometry().Pixels
+
+			l.overlays = append(l.overlays, &layerOverlay{
+				cells:      g.cells,
+				window:     g.window,
+				resolution: g.resolution,
+				keys:       g.keys,
+				ctrl:       ctrl,
+			})
+		}
+		// Link disjoint overlays that share the same key set so they share a single clock.
+		for i := range l.overlays {
+			lead := l.overlays[i]
+			if lead.isFollower || len(lead.keys) == 0 {
+				continue
+			}
+			for j := i + 1; j < len(l.overlays); j++ {
+				cand := l.overlays[j]
+				if !cand.isFollower && slices.Equal(lead.keys, cand.keys) {
+					cand.isFollower = true
+					_ = cand.ctrl.Pause(true)
+					lead.followers = append(lead.followers, cand)
+				}
+			}
+		}
+	}
+
+	if submitBase || l.presentedLayout != l.layoutGen {
+		l.basePending = true
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	job := &layerLayoutJob{
+		ctx:           ctx,
+		cancel:        cancel,
+		prevComp:      prevComp,
+		prevPositions: prevPositions,
+	}
+	l.layoutJob = job
+	positions := prevPositions
+	plan := append([]layerGroup(nil), groups...)
+	jobCmd := func() tea.Msg {
+		carried := comp
+		if len(positions.Keys()) > 0 {
+			var err error
+			carried, err = comp.WithPositions(ctx, positions)
+			if err != nil {
+				return layerLayoutResult{owner: l, job: job, origComp: comp, err: err}
+			}
+		}
+		var windows []*animation.Composite
+		if len(plan) > 0 {
+			windows = make([]*animation.Composite, len(plan))
+			for i, g := range plan {
+				w, err := carried.Window(ctx, g.window, g.target)
+				if err != nil {
+					return layerLayoutResult{owner: l, job: job, origComp: comp, err: err}
+				}
+				windows[i] = w
+			}
+		}
+		return layerLayoutResult{
+			owner:      l,
+			job:        job,
+			origComp:   comp,
+			comp:       carried,
+			submitBase: submitBase,
+			windows:    windows,
+		}
+	}
+	cmds = append(cmds, jobCmd)
+	return tea.Batch(cmds...)
+}
+
+func (l *Layers) submitOverlayWindows(windows []*animation.Composite) tea.Cmd {
+	if len(windows) == 0 || len(windows) != len(l.overlays) {
+		return nil
+	}
+	indexOf := make(map[*layerOverlay]int, len(l.overlays))
+	for i, o := range l.overlays {
+		indexOf[o] = i
+	}
+	var cmds []tea.Cmd
+	for i, o := range l.overlays {
+		if o.isFollower {
+			continue
+		}
+		if len(o.followers) == 0 {
+			cmds = append(cmds, o.ctrl.SetSource(windows[i]))
+			continue
+		}
+		followerWins := make([]*animation.Composite, len(o.followers))
+		for j, f := range o.followers {
+			fIdx := indexOf[f]
+			followerWins[j] = windows[fIdx]
+			cmds = append(cmds, f.ctrl.SetSource(windows[fIdx]))
+		}
+		cmds = append(cmds, o.ctrl.SetSource(&linkedWindowSource{
+			main:      windows[i],
+			followers: followerWins,
+		}))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (l *Layers) promoteBase() tea.Cmd {
+	if !l.submitted || l.layoutGen == 0 || l.basePending {
+		return nil
+	}
+	var cmds []tea.Cmd
 	picStatus := l.base.Status().Picture
 	if l.baseTargetGen > 0 && picStatus.Presented >= l.baseTargetGen && l.base.Status().Presented != nil {
 		if l.presentedLayout != l.layoutGen {
 			l.presentedLayout = l.layoutGen
 			l.retainedSnapshot = nil
 			l.snapshotValid = false
+			if l.retainedLayout != l.presentedLayout {
+				cmds = append(cmds, l.closeRetainedOverlays())
+			}
 		}
 		l.presentedBase = l.base.Status().Presented.Image()
 	}
+	if len(l.retainedOverlays) > 0 && l.retainedLayout == l.presentedLayout && len(l.overlays) > 0 && l.allOverlaysPresented() {
+		cmds = append(cmds, l.closeRetainedOverlays())
+	}
+	return tea.Batch(cmds...)
+}
+
+func (l *Layers) allOverlaysPresented() bool {
+	if len(l.overlays) == 0 {
+		return false
+	}
+	for _, o := range l.overlays {
+		if !o.presented() {
+			return false
+		}
+	}
+	return true
 }
 
 func (l *Layers) composePresentedSnapshot() image.Image {
@@ -826,23 +1282,26 @@ func (l *Layers) composePresentedSnapshot() image.Image {
 	if baseImg == nil {
 		return nil
 	}
-	hasPresentedOverlay := false
-	for _, o := range l.overlays {
-		if o.presented() {
-			hasPresentedOverlay = true
-			break
+	var activePresented []*layerOverlay
+	if l.retainedLayout == l.presentedLayout {
+		for _, o := range l.retainedOverlays {
+			if o.presented() {
+				activePresented = append(activePresented, o)
+			}
 		}
 	}
-	if !hasPresentedOverlay {
+	for _, o := range l.overlays {
+		if o.presented() {
+			activePresented = append(activePresented, o)
+		}
+	}
+	if len(activePresented) == 0 {
 		return imageview.New(baseImg)
 	}
 	bounds := baseImg.Bounds()
 	out := image.NewRGBA(bounds)
 	draw.Draw(out, bounds, imageview.Unwrap(baseImg), bounds.Min, draw.Src)
-	for _, o := range l.overlays {
-		if !o.presented() {
-			continue
-		}
+	for _, o := range activePresented {
 		frame := o.ctrl.Status().Presented.Image()
 		if frame == nil {
 			continue
@@ -862,19 +1321,56 @@ func (l *Layers) composePresentedSnapshot() image.Image {
 	return imageview.New(out)
 }
 
-func (l *Layers) stopOverlays() tea.Cmd {
-	if len(l.overlays) == 0 {
-		return nil
-	}
+func (l *Layers) harvestOverlayPositions() {
 	for _, o := range l.overlays {
-		if comp, ok := o.ctrl.Status().Source.(*animation.Composite); ok && comp != nil {
+		if o.isFollower {
+			continue
+		}
+		if comp, ok := unwrapCompositeSource(o.ctrl.Status().Source).(*animation.Composite); ok && comp != nil {
 			l.positions = l.positions.WithPositions(comp)
 		}
 	}
-	return l.closeOverlays()
 }
 
-func (l *Layers) closeOverlays() tea.Cmd {
+func (l *Layers) retireOverlays() tea.Cmd {
+	l.harvestOverlayPositions()
+	return l.retireOverlaysWithoutHarvest()
+}
+
+func (l *Layers) retireOverlaysWithoutHarvest() tea.Cmd {
+	if len(l.overlays) == 0 {
+		if l.opts.Picture.ClearOnReplace {
+			return l.closeRetainedOverlays()
+		}
+		return nil
+	}
+	var cmds []tea.Cmd
+	if l.opts.Picture.ClearOnReplace {
+		cmds = append(cmds, l.closeRetainedOverlays(), l.closeActiveOverlays())
+		return tea.Batch(cmds...)
+	}
+	var newlyRetained []*layerOverlay
+	for _, o := range l.overlays {
+		if o.presented() {
+			cmds = append(cmds, o.ctrl.Pause(true))
+			newlyRetained = append(newlyRetained, o)
+		} else {
+			cmds = append(cmds, o.ctrl.Close())
+		}
+	}
+	l.overlays = nil
+	if len(newlyRetained) > 0 {
+		cmds = append(cmds, l.closeRetainedOverlays())
+		l.retainedOverlays = newlyRetained
+		l.retainedLayout = l.presentedLayout
+		l.retainedCols = l.cols
+		l.retainedRows = l.rows
+	}
+	l.snapshotValid = false
+	return tea.Batch(cmds...)
+}
+
+func (l *Layers) closeActiveOverlays() tea.Cmd {
 	if len(l.overlays) == 0 {
 		return nil
 	}
@@ -887,57 +1383,29 @@ func (l *Layers) closeOverlays() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (l *Layers) rebuildOverlays() tea.Cmd {
-	cmds := []tea.Cmd{l.stopOverlays()}
-	if l.comp == nil || l.mode != picture.PictureKitty || !l.active || !l.visible || l.cols <= 0 || l.rows <= 0 {
-		return tea.Batch(cmds...)
+func (l *Layers) closeRetainedOverlays() tea.Cmd {
+	if len(l.retainedOverlays) == 0 {
+		return nil
 	}
-	if len(l.positions.Keys()) > 0 {
-		if carried, err := l.comp.WithPositions(context.Background(), l.positions); err == nil {
-			l.comp = carried
-		}
+	cmds := make([]tea.Cmd, 0, len(l.retainedOverlays))
+	for _, o := range l.retainedOverlays {
+		cmds = append(cmds, o.ctrl.Close())
 	}
-	groups := planLayers(l.comp, l.cols, l.rows, l.cw, l.ch)
-	for _, g := range groups {
-		overlayOpts := l.opts
-		overlayOpts.Picture.HostGeometry = true
-		overlayOpts.Picture.Render.Fit = picture.FitFill
-		overlayOpts.Picture.Render.KittyResolutionFactor = g.resolution
-		overlayOpts.Picture.Render.CellPixelWidth = l.cw
-		overlayOpts.Picture.Render.CellPixelHeight = l.ch
-
-		ctrl := NewSource(nil, overlayOpts)
-		ctrl.SetSize(g.cells.Dx(), g.cells.Dy())
-		ctrl.SetTerminal(true, l.cw, l.ch)
-		ctrl.SetResolution(g.resolution)
-		ctrl.SetRate(l.rate)
-		ctrl.Pause(l.paused)
-		ctrl.SetVisible(l.visible)
-
-		target := ctrl.RasterGeometry().Pixels
-		windowSource, err := l.comp.Window(context.Background(), g.window, target)
-		if err != nil {
-			_ = ctrl.Close()
-			if l.err == nil {
-				l.err = err
-			}
-			continue
-		}
-		cmds = append(cmds, ctrl.SetSource(windowSource))
-		l.overlays = append(l.overlays, &layerOverlay{
-			cells:      g.cells,
-			window:     g.window,
-			resolution: g.resolution,
-			ctrl:       ctrl,
-		})
-	}
+	l.retainedOverlays = nil
+	l.retainedLayout = 0
+	l.snapshotValid = false
 	return tea.Batch(cmds...)
 }
 
+func (l *Layers) closeAllOverlays() tea.Cmd {
+	return tea.Batch(l.closeRetainedOverlays(), l.closeActiveOverlays())
+}
+
 // planLayers converts composite pixel regions into cell-aligned windows clipped
-// to the visible cell grid, merging overlapping cell windows (including
-// transitive and union-expanded overlaps) at the finer of their resolutions.
-func planLayers(comp *animation.Composite, cols, rows, cw, ch int) []layerGroup {
+// to the visible cell grid using the base picture's Fit and Anchor mapping,
+// merging overlapping cell windows (and partially overlapping key sets) at the
+// finer of their resolutions.
+func planLayers(comp *animation.Composite, cols, rows, cw, ch int, fit picture.FitMode, anchor picture.FitAnchor) []layerGroup {
 	if comp == nil || cols <= 0 || rows <= 0 {
 		return nil
 	}
@@ -946,47 +1414,161 @@ func planLayers(comp *animation.Composite, cols, rows, cw, ch int) []layerGroup 
 	if bounds.Empty() {
 		return nil
 	}
+	sw, sh := bounds.Dx(), bounds.Dy()
+	tw, th := cols*cw, rows*ch
+	dst := fitRect(bounds, tw, th, fit, anchor)
+	if dst.Empty() {
+		return nil
+	}
+	visTarget := image.Rect(0, 0, tw, th)
 	grid := image.Rect(0, 0, cols, rows)
+	regions := comp.Regions()
 	var groups []layerGroup
-	for _, r := range comp.Regions() {
+	for _, r := range regions {
 		px := r.Rect.Intersect(bounds)
 		if px.Empty() || r.Player == nil {
 			continue
 		}
 		rel := px.Sub(bounds.Min)
+		tx0 := dst.Min.X + int((int64(rel.Min.X)*int64(dst.Dx()))/int64(sw))
+		ty0 := dst.Min.Y + int((int64(rel.Min.Y)*int64(dst.Dy()))/int64(sh))
+		tx1 := dst.Min.X + int((int64(rel.Max.X)*int64(dst.Dx())+int64(sw)-1)/int64(sw))
+		ty1 := dst.Min.Y + int((int64(rel.Max.Y)*int64(dst.Dy())+int64(sh)-1)/int64(sh))
+		tpx := image.Rect(tx0, ty0, tx1, ty1).Intersect(visTarget)
+		if tpx.Empty() {
+			continue
+		}
 		cells := image.Rect(
-			rel.Min.X/cw,
-			rel.Min.Y/ch,
-			(rel.Max.X+cw-1)/cw,
-			(rel.Max.Y+ch-1)/ch,
+			tpx.Min.X/cw,
+			tpx.Min.Y/ch,
+			(tpx.Max.X+cw-1)/cw,
+			(tpx.Max.Y+ch-1)/ch,
 		).Intersect(grid)
 		if cells.Empty() {
 			continue
 		}
+		dispW := float64(r.Rect.Dx()) * float64(dst.Dx()) / float64(sw)
+		dispH := float64(r.Rect.Dy()) * float64(dst.Dy()) / float64(sh)
 		own := r.Player.Image().Bounds().Size()
 		factor := min(
 			1.0,
-			float64(max(1, own.X))/float64(max(1, r.Rect.Dx())),
-			float64(max(1, own.Y))/float64(max(1, r.Rect.Dy())),
+			float64(max(1, own.X))/max(1.0, dispW),
+			float64(max(1, own.Y))/max(1.0, dispH),
 		)
 		groups = mergeLayerGroup(groups, layerGroup{cells: cells, resolution: factor})
 	}
-	out := groups[:0]
-	for _, g := range groups {
-		c := g.cells
-		window := image.Rect(
-			bounds.Min.X+c.Min.X*cw,
-			bounds.Min.Y+c.Min.Y*ch,
-			bounds.Min.X+c.Max.X*cw,
-			bounds.Min.Y+c.Max.Y*ch,
-		).Intersect(bounds)
-		if window.Empty() {
-			continue
+	populateGroupWindowsAndKeys := func(gs []layerGroup) []layerGroup {
+		out := gs[:0]
+		for _, g := range gs {
+			c := g.cells
+			tWin := image.Rect(c.Min.X*cw, c.Min.Y*ch, c.Max.X*cw, c.Max.Y*ch).Intersect(dst)
+			if tWin.Empty() {
+				continue
+			}
+			window := image.Rect(
+				bounds.Min.X+int((int64(tWin.Min.X-dst.Min.X)*int64(sw))/int64(dst.Dx())),
+				bounds.Min.Y+int((int64(tWin.Min.Y-dst.Min.Y)*int64(sh))/int64(dst.Dy())),
+				bounds.Min.X+int((int64(tWin.Max.X-dst.Min.X)*int64(sw)+int64(dst.Dx())-1)/int64(dst.Dx())),
+				bounds.Min.Y+int((int64(tWin.Max.Y-dst.Min.Y)*int64(sh)+int64(dst.Dy())-1)/int64(dst.Dy())),
+			).Intersect(bounds)
+			if window.Empty() {
+				continue
+			}
+			var keys []string
+			for _, r := range regions {
+				if r.Player != nil && r.Rect.Overlaps(window) && !slices.Contains(keys, r.Key) {
+					keys = append(keys, r.Key)
+				}
+			}
+			slices.Sort(keys)
+			g.window = window
+			g.keys = keys
+			out = append(out, g)
 		}
-		g.window = window
-		out = append(out, g)
+		return out
 	}
-	return out
+	groups = populateGroupWindowsAndKeys(groups)
+
+	// If two groups share at least one key but have different key sets, merge
+	// them so all co-scheduled keys advance on a single Composite clock.
+	for {
+		merged := false
+		for i := 0; i < len(groups) && !merged; i++ {
+			for j := i + 1; j < len(groups); j++ {
+				if sharesKey(groups[i].keys, groups[j].keys) && !slices.Equal(groups[i].keys, groups[j].keys) {
+					combined := layerGroup{
+						cells:      groups[i].cells.Union(groups[j].cells),
+						resolution: max(groups[i].resolution, groups[j].resolution),
+					}
+					groups = append(groups[:j], groups[j+1:]...)
+					groups = append(groups[:i], groups[i+1:]...)
+					groups = mergeLayerGroup(groups, combined)
+					groups = populateGroupWindowsAndKeys(groups)
+					merged = true
+					break
+				}
+			}
+		}
+		if !merged {
+			break
+		}
+	}
+	return groups
+}
+
+func fitRect(bounds image.Rectangle, tw, th int, fit picture.FitMode, anchor picture.FitAnchor) image.Rectangle {
+	sw, sh := int64(bounds.Dx()), int64(bounds.Dy())
+	cw, ch := int64(tw), int64(th)
+	if sw <= 0 || sh <= 0 || cw <= 0 || ch <= 0 {
+		return image.Rectangle{}
+	}
+	switch fit {
+	case picture.FitFill:
+		return image.Rect(0, 0, tw, th)
+	case picture.FitCover:
+		var w, h int64
+		if sw*ch > sh*cw {
+			h = ch
+			w = sw * ch / sh
+		} else {
+			w = cw
+			h = sh * cw / sw
+		}
+		w, h = max(w, 1), max(h, 1)
+		var ox, oy int64
+		switch anchor {
+		case picture.AnchorTop:
+			ox, oy = (cw-w)/2, 0
+		case picture.AnchorBottom:
+			ox, oy = (cw-w)/2, ch-h
+		case picture.AnchorLeft:
+			ox, oy = 0, (ch-h)/2
+		case picture.AnchorRight:
+			ox, oy = cw-w, (ch-h)/2
+		default:
+			ox, oy = (cw-w)/2, (ch-h)/2
+		}
+		return image.Rect(int(ox), int(oy), int(ox+w), int(oy+h))
+	default: // FitContain
+		var w, h int64
+		if sw*ch >= sh*cw {
+			w, h = cw, sh*cw/sw
+		} else {
+			w, h = sw*ch/sh, ch
+		}
+		w, h = max(w, 1), max(h, 1)
+		ox, oy := (cw-w)/2, (ch-h)/2
+		return image.Rect(int(ox), int(oy), int(ox+w), int(oy+h))
+	}
+}
+
+func sharesKey(a, b []string) bool {
+	for _, k := range a {
+		if slices.Contains(b, k) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeLayerGroup(groups []layerGroup, g layerGroup) []layerGroup {
@@ -1010,11 +1592,26 @@ func mergeLayerGroup(groups []layerGroup, g layerGroup) []layerGroup {
 }
 
 func (l *Layers) spliceOverlays(grid string) string {
-	lines := strings.Split(grid, "\n")
-	for _, o := range l.overlays {
-		if !o.presented() {
-			continue
+	var toSplice []*layerOverlay
+	if l.retainedLayout == l.presentedLayout && l.cols == l.retainedCols && l.rows == l.retainedRows {
+		for _, o := range l.retainedOverlays {
+			if o.presented() {
+				toSplice = append(toSplice, o)
+			}
 		}
+	}
+	if l.presentedLayout == l.layoutGen && !l.basePending {
+		for _, o := range l.overlays {
+			if o.presented() {
+				toSplice = append(toSplice, o)
+			}
+		}
+	}
+	if len(toSplice) == 0 {
+		return grid
+	}
+	lines := strings.Split(grid, "\n")
+	for _, o := range toSplice {
 		overView := o.ctrl.View()
 		if overView == "" {
 			continue

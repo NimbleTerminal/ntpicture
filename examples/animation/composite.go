@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -148,7 +149,8 @@ func (m *compositeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(v, keys.Restart):
 			cmds = append(cmds, m.layers.Restart())
 		case key.Matches(v, keys.Keep):
-			m.final = m.layers.View() + "\n\n"
+			content := m.View().Content
+			m.final = content[:strings.LastIndex(content, "\n")+1]
 			m.keeping = true
 			m.session.Close()
 			return m, tea.Sequence(m.layers.Keep(), tea.Quit)
