@@ -409,6 +409,20 @@ func (c *Controller) SetBackground(bg color.Color) tea.Cmd {
 	return c.presentation(c.pic.SetBackground(bg))
 }
 
+func (c *Controller) Fit() picture.FitMode { return c.pic.Fit() }
+
+// SetFit re-prepares the current frame without seeking or restarting playback.
+func (c *Controller) SetFit(fit picture.FitMode) tea.Cmd {
+	return c.presentation(c.pic.SetFit(fit))
+}
+
+func (c *Controller) Anchor() picture.FitAnchor { return c.pic.Anchor() }
+
+// SetAnchor re-prepares the current frame without seeking or restarting playback.
+func (c *Controller) SetAnchor(anchor picture.FitAnchor) tea.Cmd {
+	return c.presentation(c.pic.SetAnchor(anchor))
+}
+
 // SetViewport clips the prepared picture without seeking or restarting playback.
 func (c *Controller) SetViewport(v picture.Viewport) { c.pic.SetViewport(v) }
 

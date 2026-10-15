@@ -171,6 +171,22 @@ type kittyGeom struct {
 
 var nextModelID atomic.Uint64
 
+func normalizeFit(fit FitMode) FitMode {
+	switch fit {
+	case FitFill, FitCover:
+		return fit
+	}
+	return FitContain
+}
+
+func normalizeAnchor(anchor FitAnchor) FitAnchor {
+	switch anchor {
+	case AnchorTop, AnchorBottom, AnchorLeft, AnchorRight:
+		return anchor
+	}
+	return AnchorCenter
+}
+
 func normalizeConfig(cfg Config) Config {
 	if cfg.KittyID <= 0 {
 		cfg.KittyID = DefaultKittyID
@@ -178,6 +194,8 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.Background == nil {
 		cfg.Background = color.Transparent
 	}
+	cfg.Fit = normalizeFit(cfg.Fit)
+	cfg.Anchor = normalizeAnchor(cfg.Anchor)
 	if cfg.CellPixelWidth <= 0 {
 		cfg.CellPixelWidth = defaultCellPixelW
 	}
@@ -345,6 +363,7 @@ func (m *Model) Anchor() FitAnchor { return m.anchor }
 // it, bumps seq, invalidates both render caches, and returns m.renderCmd()
 // (nil in Glyph mode, a render Cmd in Kitty mode with an image set).
 func (m *Model) SetFit(fit FitMode) tea.Cmd {
+	fit = normalizeFit(fit)
 	if fit == m.fit {
 		return nil
 	}
@@ -360,6 +379,7 @@ func (m *Model) SetFit(fit FitMode) tea.Cmd {
 // m.renderCmd() (nil in Glyph mode, a render Cmd in Kitty mode with an image
 // set).
 func (m *Model) SetAnchor(anchor FitAnchor) tea.Cmd {
+	anchor = normalizeAnchor(anchor)
 	if anchor == m.anchor {
 		return nil
 	}

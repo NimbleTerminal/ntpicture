@@ -84,3 +84,47 @@ func (p *Picture) SetBackground(c color.Color) tea.Cmd {
 	}
 	return p.changed()
 }
+
+// Fit reports how source images are mapped onto the cell rectangle.
+func (p *Picture) Fit() FitMode { return p.opts.Render.Fit }
+
+// SetFit changes how source images are mapped onto the cell rectangle.
+// Out-of-range values normalize to FitContain. A changed fit mode prepares a
+// new generation from the current image, retaining the old front until ready;
+// without an image it applies to the next submission.
+func (p *Picture) SetFit(fit FitMode) tea.Cmd {
+	if p.closed {
+		return nil
+	}
+	fit = normalizeFit(fit)
+	if fit == p.opts.Render.Fit {
+		return nil
+	}
+	p.opts.Render.Fit = fit
+	if p.img == nil {
+		return nil
+	}
+	return p.changed()
+}
+
+// Anchor reports the crop anchor used by FitCover.
+func (p *Picture) Anchor() FitAnchor { return p.opts.Render.Anchor }
+
+// SetAnchor changes the crop anchor used by FitCover. Out-of-range values
+// normalize to AnchorCenter. A changed anchor prepares a new generation from
+// the current image, retaining the old front until ready; without an image it
+// applies to the next submission.
+func (p *Picture) SetAnchor(anchor FitAnchor) tea.Cmd {
+	if p.closed {
+		return nil
+	}
+	anchor = normalizeAnchor(anchor)
+	if anchor == p.opts.Render.Anchor {
+		return nil
+	}
+	p.opts.Render.Anchor = anchor
+	if p.img == nil {
+		return nil
+	}
+	return p.changed()
+}

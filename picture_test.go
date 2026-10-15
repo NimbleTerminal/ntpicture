@@ -324,7 +324,7 @@ func TestPictureKeepFreezesPresentedView(t *testing.T) {
 				t.Fatalf("keep must only retransmit shared fronts without deleting front: %q", raw)
 			}
 		}
-		if p.Close() != nil || p.Keep() != nil || p.SetImage(nil) != nil || p.SetSize(3, 3) != nil || p.SetVisible(false) != nil || p.View() != view {
+		if p.Close() != nil || p.Keep() != nil || p.SetImage(nil) != nil || p.SetSize(3, 3) != nil || p.SetVisible(false) != nil || p.SetFit(FitContain) != nil || p.SetAnchor(AnchorTop) != nil || p.View() != view {
 			t.Fatal("keep not final and idempotent")
 		}
 	}
@@ -453,7 +453,7 @@ func FuzzPictureActions(f *testing.F) {
 		imgA := testPixels(color.RGBA{R: 200, G: 10, B: 20, A: 255})
 		imgB := testPixels(color.RGBA{R: 10, G: 200, B: 30, A: 255})
 		for _, op := range ops {
-			switch op % 12 {
+			switch op % 14 {
 			case 0:
 				flushOne()
 			case 1:
@@ -491,10 +491,16 @@ func FuzzPictureActions(f *testing.F) {
 					Exact:      op&32 != 0,
 					Immutable:  op&64 != 0,
 				}))
+			case 12:
+				enqueue(p.SetFit(FitMode(op % 4)))
+			case 13:
+				enqueue(p.SetAnchor(FitAnchor(op % 6)))
 			}
 			_ = p.View()
 			_ = p.Status()
 			_ = p.RasterGeometry()
+			_ = p.Fit()
+			_ = p.Anchor()
 		}
 		for len(queue) > 0 {
 			flushOne()

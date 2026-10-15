@@ -13,9 +13,10 @@
   `Status.PresentedPlayer`, with the underlying `Picture` status, so hosts can
   export the displayed frame and match controls to it. Superseded or rejected
   submissions never become presented.
-- Add `Picture.SetBackground` and `Controller.SetBackground` to change the
-  background color at runtime, retaining the current front until the
-  re-prepared frame is ready.
+- Add `Picture.SetBackground`, `Fit`, `SetFit`, `Anchor`, and `SetAnchor` (plus
+  matching `playback.Controller` methods) to query and update background color,
+  fit mode, and crop anchor at runtime while retaining the current front until
+  the re-prepared frame is ready.
 
 - Add `Picture.Submit` to validate and apply an image with its cell layout,
   mode and cell pixel geometry as one generation, with an `Exact` option that

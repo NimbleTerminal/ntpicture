@@ -410,7 +410,7 @@ func FuzzControllerActions(f *testing.F) {
 		}
 		enqueue(c.Init())
 		for _, op := range ops {
-			switch op % 12 {
+			switch op % 14 {
 			case 0:
 				flushOne()
 			case 1:
@@ -435,8 +435,14 @@ func FuzzControllerActions(f *testing.F) {
 				c.ResetViewport()
 			case 11:
 				enqueue(c.SetPlayer(testPlayer(t)))
+			case 12:
+				enqueue(c.SetFit(picture.FitMode(op % 4)))
+			case 13:
+				enqueue(c.SetAnchor(picture.FitAnchor(op % 6)))
 			}
 			_ = c.View()
+			_ = c.Fit()
+			_ = c.Anchor()
 			st := c.Status()
 			if st.Rate < 0.25 || st.Rate > 4 {
 				t.Fatalf("rate out of bounds: %v", st.Rate)
