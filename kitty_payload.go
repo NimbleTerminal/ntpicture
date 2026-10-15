@@ -9,11 +9,9 @@ import (
 	"github.com/charmbracelet/x/ansi/kitty"
 )
 
-// encodeKittyGraphicsData frames encoded image bytes or a shared-memory name.
-// It does not compress data. Keep this compatibility helper
-// private until Charm's payload encoder is released, then use that API instead.
-// Options and APC serialization remain owned by the upstream ANSI package.
-// Will be replaced by https://github.com/charmbracelet/x/pull/982
+// encodeKittyGraphicsData frames encoded image bytes or a shared-memory name
+// as base64 APC sequences, chunked when o.Chunk is set. It does not compress
+// data. Options and APC serialization come from the upstream ANSI package.
 func encodeKittyGraphicsData(w io.Writer, data []byte, o *kitty.Options) error {
 	if o == nil {
 		o = &kitty.Options{}

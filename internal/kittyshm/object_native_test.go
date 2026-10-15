@@ -199,3 +199,23 @@ func TestNativeTerminalConsumesObject(t *testing.T) {
 	}
 	t.Fatal("terminal did not consume the shared-memory query")
 }
+
+// A restrictive umask must not strip the owner's read permission: the terminal
+// opens the name read-only as the same user.
+func TestCreateIgnoresUmask(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+	old := unix.Umask(0o777)
+	obj, err := Create(4, func([]byte) error { return nil })
+	unix.Umask(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Unlink()
+	f, err := openSHM(obj.Name, false)
+	if err != nil {
+		t.Fatalf("reader cannot open object created under umask 0777: %v", err)
+	}
+	_ = f.Close()
+}

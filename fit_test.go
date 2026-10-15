@@ -433,3 +433,12 @@ func FuzzFitAndEncode(f *testing.F) {
 		}
 	})
 }
+
+func TestContainSizeLargeProductsDoNotOverflow(t *testing.T) {
+	// sh*tw exceeds 32-bit int; a wrapped comparison picks the width-limited
+	// branch and returns a height far beyond the target.
+	iw, ih := containSize(1, 1<<25, 100, 1000)
+	if iw != 1 || ih != 1000 {
+		t.Fatalf("containSize = %dx%d, want 1x1000", iw, ih)
+	}
+}

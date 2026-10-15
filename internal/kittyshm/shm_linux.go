@@ -12,7 +12,18 @@ func openSHM(name string, create bool) (*os.File, error) {
 	if create {
 		flags = os.O_CREATE | os.O_EXCL | os.O_RDWR
 	}
-	return os.OpenFile("/dev/shm"+name, flags, 0600)
+	f, err := os.OpenFile("/dev/shm"+name, flags, 0600)
+	if err != nil || !create {
+		return f, err
+	}
+	// OpenFile applies the umask; the terminal must still open the name as
+	// the same user.
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		_ = unlinkSHM(name)
+		return nil, err
+	}
+	return f, nil
 }
 func unlinkSHM(name string) error { return os.Remove("/dev/shm" + name) }
 

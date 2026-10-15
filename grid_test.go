@@ -3,6 +3,7 @@ package ntpicture
 import (
 	"image"
 	"image/color"
+	"math"
 	"testing"
 
 	xdraw "golang.org/x/image/draw"
@@ -174,4 +175,19 @@ func (s *recordingScaler) Scale(dst xdraw.Image, dr image.Rectangle, src image.I
 
 func rgbaAt(img image.Image, x, y int) color.RGBA {
 	return color.RGBAModel.Convert(img.At(x, y)).(color.RGBA)
+}
+
+func TestNewGridImageRejectsOversizedGrid(t *testing.T) {
+	for _, cfg := range []GridImageConfig{
+		{LogicalCols: 8192, LogicalRows: 8192, CellPixelWidth: 1, CellPixelHeight: 1},
+		{LogicalCols: math.MaxInt / 2, LogicalRows: 3, CellPixelWidth: 4, CellPixelHeight: 1},
+	} {
+		g := NewGridImage(cfg)
+		if !g.Image().Bounds().Empty() {
+			t.Fatalf("%+v allocated %v", cfg, g.Image().Bounds())
+		}
+		if g.FillCell(0, 0, color.Black) {
+			t.Fatalf("%+v: FillCell on oversized grid returned true", cfg)
+		}
+	}
 }

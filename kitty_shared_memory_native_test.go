@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"nimbleterminal.dev/ntpicture/internal/kittyshm"
 )
 
 func TestSharedMemoryTmuxWrapsOnce(t *testing.T) {
@@ -212,5 +214,22 @@ func TestPictureNativeSharedMemoryRetiresSubmittedFrames(t *testing.T) {
 	drivePicture(t, p, p.Close())
 	if !firstObj.Done() || !secondObj.Done() {
 		t.Fatal("Close leaked shared-memory buffers")
+	}
+}
+
+func TestSharedStateReleaseRejectsLateReplace(t *testing.T) {
+	var s kittySharedState
+	s.begin(1)
+	s.release()
+	obj, err := kittyshm.Create(4, func([]byte) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Unlink()
+	if s.replace(1, obj) {
+		t.Fatal("released state accepted a late object")
+	}
+	if !obj.Done() {
+		t.Fatal("late object not unlinked")
 	}
 }

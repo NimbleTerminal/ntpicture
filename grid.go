@@ -64,7 +64,8 @@ type GridImage struct {
 }
 
 // NewGridImage creates a grid-aligned image compositor. Invalid non-positive
-// LogicalCols or LogicalRows produce an empty image; draw methods return false.
+// LogicalCols or LogicalRows, or a grid over MaxImagePixels, produce an empty
+// image; draw methods return false.
 func NewGridImage(cfg GridImageConfig) *GridImage {
 	if cfg.LogicalCols < 0 {
 		cfg.LogicalCols = 0
@@ -91,8 +92,11 @@ func NewGridImage(cfg GridImageConfig) *GridImage {
 		cfg.Scaler = xdraw.NearestNeighbor
 	}
 
-	width := cfg.LogicalCols * cfg.TerminalColsPerCell * cfg.CellPixelWidth
-	height := cfg.LogicalRows * cfg.TerminalRowsPerCell * cfg.CellPixelHeight
+	width, okW := mulWithin(cfg.LogicalCols, cfg.TerminalColsPerCell, cfg.CellPixelWidth)
+	height, okH := mulWithin(cfg.LogicalRows, cfg.TerminalRowsPerCell, cfg.CellPixelHeight)
+	if !okW || !okH || (height > 0 && width > MaxImagePixels/height) {
+		cfg.LogicalCols, cfg.LogicalRows, width, height = 0, 0, 0, 0
+	}
 
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	if !img.Bounds().Empty() {
@@ -189,4 +193,17 @@ func (g *GridImage) FillCell(col, row int, c color.Color) bool {
 	}
 	draw.Draw(g.img, rect, &image.Uniform{C: c}, image.Point{}, draw.Src)
 	return true
+}
+
+// mulWithin returns the product of non-negative factors when it is at most
+// MaxImagePixels.
+func mulWithin(factors ...int) (int, bool) {
+	n := 1
+	for _, f := range factors {
+		if f != 0 && n > MaxImagePixels/f {
+			return 0, false
+		}
+		n *= f
+	}
+	return n, true
 }

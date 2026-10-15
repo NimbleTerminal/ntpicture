@@ -171,6 +171,10 @@ func (s *kittySharedState) clear(seq uint64) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.clearLocked(seq)
+}
+
+func (s *kittySharedState) clearLocked(seq uint64) {
 	s.seq = seq
 	_ = s.object.Unlink()
 	s.object, s.submitted = nil, false
@@ -178,6 +182,17 @@ func (s *kittySharedState) clear(seq uint64) {
 		_ = old.Unlink()
 	}
 	s.retired = nil
+}
+
+// release unlinks every object and advances the sequence, so a command still
+// running for the released sequence cannot publish an object after it.
+func (s *kittySharedState) release() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clearLocked(s.seq + 1)
 }
 
 func (s *kittySharedState) submit(seq uint64, obj *kittyshm.Object) bool {

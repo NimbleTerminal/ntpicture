@@ -689,7 +689,7 @@ func (p *Picture) dispose(f *picturePlacement) tea.Cmd {
 		f.lease.active.Store(false)
 	}
 	if f.mode == PictureKitty {
-		f.kittyShared.clear(1)
+		f.kittyShared.release()
 	}
 	return f.delete
 }
@@ -754,7 +754,7 @@ func (p *Picture) Keep() tea.Cmd {
 	if p.medium == KittyMediumDirect && outputDone == nil {
 		// The terminal already owns these pixels. Only shared-memory fronts or
 		// an accepted borrower of this ID need an exit-time retransmission.
-		front.kittyShared.clear(1)
+		front.kittyShared.release()
 		return cleanup
 	}
 	// Capture the committed geometry and source, including during a resize.
@@ -788,7 +788,7 @@ func (p *Picture) Keep() tea.Cmd {
 		if outputDone != nil {
 			<-outputDone
 		}
-		defer front.kittyShared.clear(1)
+		defer front.kittyShared.release()
 		frame, ok := prepareKittyFrame(context.Background(), params)
 		if !ok || frame.APC == "" {
 			return ErrorMsg{p, generation, errors.New("ntpicture: keep-screen preparation failed")}

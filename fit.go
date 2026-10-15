@@ -120,29 +120,30 @@ func containTo(src image.Image, sb, target image.Rectangle, bg color.Color, scra
 	tw, th := target.Dx(), target.Dy()
 	sw, sh := sb.Dx(), sb.Dy()
 
-	// Inscribed rect: scale source to fit within target preserving AR.
-	// Compare cross products to avoid floating point: sw/sh <=> tw/th.
-	var iw, ih int
-	if sw*th >= sh*tw {
-		// Source is "wider" relative to target; width-limited.
-		iw = tw
-		ih = sh * tw / sw
-	} else {
-		// Source is "taller" relative to target; height-limited.
-		ih = th
-		iw = sw * th / sh
-	}
-	if iw < 1 {
-		iw = 1
-	}
-	if ih < 1 {
-		ih = 1
-	}
+	iw, ih := containSize(sw, sh, tw, th)
 	ox := (tw - iw) / 2
 	oy := (th - ih) / 2
 	dst := image.Rect(ox, oy, ox+iw, oy+ih)
 	place(out, dst, src, sb, scratch)
 	return out
+}
+
+// containSize returns the AR-preserving inscribed size of an sw×sh source in
+// a tw×th target, at least 1×1. Cross products are compared in int64 because
+// products of bounded image dimensions overflow 32-bit int; the results never
+// exceed the target, so they fit int.
+func containSize(sw, sh, tw, th int) (iw, ih int) {
+	w, h, cw, ch := int64(sw), int64(sh), int64(tw), int64(th)
+	// Compare cross products to avoid floating point: sw/sh <=> tw/th.
+	var iw64, ih64 int64
+	if w*ch >= h*cw {
+		// Source is "wider" relative to target; width-limited.
+		iw64, ih64 = cw, h*cw/w
+	} else {
+		// Source is "taller" relative to target; height-limited.
+		iw64, ih64 = w*ch/h, ch
+	}
+	return int(max(iw64, 1)), int(max(ih64, 1))
 }
 
 // coverOverflowLimit bounds the circumscribed rectangle, relative to the
@@ -151,10 +152,8 @@ func containTo(src image.Image, sb, target image.Rectangle, bg color.Color, scra
 // destination column and row, and its horizontal pass visits every column of
 // the overflowing rectangle, so its cost grows with the invisible area.
 // Kernel.Transform visits only visible pixels but evaluates a two-dimensional
-// kernel per pixel. Measured on Apple M5 Max (see DEVELOP.md), Transform
-// becomes faster between 4× and 8× overflow for 1.25×–10× downscales and is
-// within 1.7× at 8× overflow for upscales, while Scale's buffer at 4×
-// overflow is at most 4× the buffer an equal-size FitFill already needs.
+// kernel per pixel, so it wins once the overflow is large. At this limit,
+// Scale's buffer is at most 4× the buffer an equal-size FitFill already needs.
 const coverOverflowLimit = 4
 
 // coverUsesScaler reports whether the separable scaler keeps its allocation
