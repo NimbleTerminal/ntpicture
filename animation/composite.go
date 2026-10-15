@@ -139,6 +139,30 @@ func (s *Composite) Positions() Positions {
 // Keys reports the saved region keys in sorted order.
 func (p Positions) Keys() []string { return slices.Sorted(maps.Keys(p.positions)) }
 
+// WithPositions returns a new snapshot combining p with others, later
+// arguments winning. Unlike Composite.WithPositions, it copies no pixels and
+// retains all keys present across the sources.
+func (p Positions) WithPositions(others ...PositionSource) Positions {
+	var merged map[string]compositePosition
+	if len(p.positions) > 0 {
+		merged = maps.Clone(p.positions)
+	}
+	for _, other := range others {
+		if other == nil {
+			continue
+		}
+		src := other.compositePositions()
+		if len(src) == 0 {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string]compositePosition, len(src))
+		}
+		maps.Copy(merged, src)
+	}
+	return Positions{merged}
+}
+
 func (s *Composite) compositePositions() map[string]compositePosition {
 	if s == nil {
 		return nil

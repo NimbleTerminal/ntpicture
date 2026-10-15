@@ -376,9 +376,7 @@ These operations act at different stages:
   animation, subsequent frames still compose/encode that full source.
 
 Use `Window` to reduce the pixel work for a small animated overlay. Use
-`Viewport` to scroll a prepared picture cheaply. They can be combined. Gloss
-owns document-to-region mapping, overlay grouping, visibility, and budgets;
-ntpicture does not decide which document window should be shown.
+`Viewport` to scroll a prepared picture cheaply. They can be combined.
 
 ```go
 window, err := source.Window(ctx, image.Rect(0, 0, 240, 180), image.Pt(120, 90))
@@ -387,6 +385,36 @@ cmd := ctrl.SetSource(window) // new pixels; requires preparation/transmission
 ctrl.SetViewport(ntpicture.Viewport{Y: 2, Width: 30, Height: 8})
 // Viewport only selects cells from that prepared window.
 ```
+
+### Layered composite playback
+
+`playback.Layers` owns presentation and lifecycle for a composite base picture
+with animated region windows. Under Kitty graphics, the base picture is sent
+once and only cell-aligned animated windows update, with their placeholder rows
+spliced into `View()`; until an overlay is presented, the base picture's cells
+remain visible. Under glyph rendering, `Layers` animates the flattened composite.
+
+```go
+layers := playback.NewLayers(source, playback.Options{
+    Picture: ntpicture.Options{Session: session, NextID: ntpicture.NextImageID},
+})
+cmd := tea.Batch(layers.Init(), layers.SetSize(cols, rows))
+cmd = layers.SetActive(false) // suspend overlays during scroll/resize bursts
+cmd = layers.SetComposite(nextSource)
+cmd = layers.SetActive(true)  // build and start Kitty overlays after settling
+positions := layers.Positions() // O(keys), zero-pixel snapshot for off-loop relayout
+snap := layers.Snapshot()       // immutable flattened image of presented frames
+```
+
+Overlapping cell windows (including transitive and union-expanded overlaps)
+merge into one overlay at the finer of their resolutions (`min(1, own/rect)` per
+region, `max` when merged). `Positions()` and `Positions.WithPositions` merge
+region playback positions without copying or recomposing pixel buffers.
+`Snapshot()` returns a read-only flattened `image.Image` of the committed base
+and presented overlays; while a base replacement is pending, `Snapshot()`
+retains the last committed snapshot rather than exporting an unpresented layout.
+`Close()` and `Keep()` clean up or preserve the base and every overlay without
+closing the host's `TerminalSession`.
 
 ## Examples and browser demo
 

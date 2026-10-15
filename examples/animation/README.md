@@ -16,15 +16,21 @@ The fixture files are copied unchanged from Gloss and covered by the MIT
 license. Regenerate in Gloss with `task gen-assets` (requires gif2webp for
 WebP), then copy both files here together and run the native/WASM checks.
 
-## One composed picture
+## Still background with animated layers
 
 Run `GOWORK=off go -C examples run ./animation --composite`, or open
-`?demo=animation&composite=1` on the browser site. GIF and WebP become two
-regions of one `animation.Composite` driven by one playback controller.
-Space pauses/resumes, Home restarts every region, Q keeps the screen, and q
-clears and quits. Frame stepping is omitted because the regions have independent
-frame sequences. The same enabled bindings produce browser buttons.
+`?demo=animation&composite=1` on the browser site. A painted still background
+and two animated regions (GIF and WebP) form an `animation.Composite` managed
+by `playback.NewLayers`. Under Kitty graphics, the base picture stays still and
+only the two cell-aligned region overlays update; under glyph rendering, the
+flattened composite animates as a whole. Resizing rebuilds the composite at the
+new viewport pixel dimensions while carrying region playback positions via
+`layers.Positions()`. Space pauses/resumes, Home restarts every region, Q keeps
+the screen, and q clears and quits. Frame stepping is omitted because the
+regions have independent frame sequences. The same enabled bindings produce
+browser buttons.
 
 `Composite.Window` creates cropped/rescaled pixels and remapped regions for a
 smaller source. `Picture.SetViewport` only clips prepared cells; moving it does
-not retransmit a bitmap. See README's "Window versus Viewport" section.
+not retransmit a bitmap. See README's "Layered composite playback" and "Window
+versus Viewport" sections.

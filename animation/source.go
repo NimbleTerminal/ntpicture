@@ -41,6 +41,7 @@ func (p *Player) Advance(ctx context.Context) (Source, bool, error) {
 func (p *Player) Reset(ctx context.Context) (Source, error) {
 	return p.RestartContext(ctx)
 }
+
 // SeekFrame adapts Seek to Seekable.
 func (p *Player) SeekFrame(ctx context.Context, frame int) (Source, error) {
 	n, err := p.Seek(ctx, frame)

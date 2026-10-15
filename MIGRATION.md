@@ -136,19 +136,25 @@ but do not install it in NTCharts.
 
 ## Remaining architecture work
 
-Generic rectangular composition is now in animation.Composite, scheduled through
-animation.Source and playback.NewSource. Player implements the same immutable,
-context-aware source contract; standalone constructors/seeking remain available.
-Window crops/resamples a pixel source to reduce future composition/transmission;
-Viewport clips its prepared cell presentation without retransmitting pixels just
-for scrolling. See README's "Window versus Viewport" section for both APIs.
+Generic rectangular composition is in animation.Composite, scheduled through
+animation.Source, playback.NewSource, and playback.NewLayers. Player implements
+the same immutable, context-aware source contract; standalone constructors and
+seeking remain available. `playback.Layers` owns cell-aligned overlay planning,
+overlapping-window merging, reduced-resolution enlarged overlays, Kitty
+placeholder splicing, glyph fallback, playback activation (`SetActive`),
+zero-pixel position harvesting (`Positions` and `Positions.WithPositions`),
+committed-frame export (`Snapshot`), and multi-layer `Close`/`Keep` over a
+host-owned `TerminalSession`. Window crops/resamples a pixel source to reduce
+future composition/transmission; Viewport clips its prepared cell presentation
+without retransmitting pixels just for scrolling. See README's "Window versus
+Viewport" and "Layered composite playback" sections.
 
-Gloss still needs to migrate its compositor consumers and remove internal/animate.
-Keep document destinations, deduplication, the eight-destination/64 MiB budgets,
-overlay grouping (including glyph mode), cell mapping, reflow, controls, exports,
-and visibility policy in Gloss. Transfer positions by key and clip identity;
-reloads replace clip identity. WithPositions now recomposes a consistent image,
-so hosts must run it off-loop rather than assume Gloss's metadata-only cost.
+Gloss still needs to migrate its typeset/composite consumers to `playback.Layers`
+and remove `internal/animate` and `internal/app/typeset_overlay.go`. Keep
+document destinations, deduplication, the eight-destination/64 MiB budgets,
+document layout, scrolling, scroll-settle debounce, controls, exports, and
+visibility policy in Gloss. Transfer positions by key and clip identity via
+`layers.Positions()`; reloads replace clip identity.
 
 Explicit TerminalSession now isolates discovery, cell geometry, tmux wrapping,
 and shared-memory capability for pictures that opt in. Legacy Model and package

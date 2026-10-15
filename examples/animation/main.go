@@ -136,7 +136,7 @@ func main() {
 		m, err := initialCompositeModel()
 		if err == nil {
 			defer m.session.Close()
-			defer m.controller.Close()
+			defer m.layers.Close()
 			err = demohelp.Run(m, "Composite animation")
 		}
 		if err != nil {

@@ -96,4 +96,25 @@ func TestCompositePositionsSnapshotRestoresWithoutPixels(t *testing.T) {
 	if c, err := NewComposite(ctx, image.NewRGBA(image.Rect(0, 0, 4, 1)), regions, Positions{}); err != nil || c.positions["slow"].player != slow {
 		t.Fatal("zero Positions was not ignored")
 	}
+
+	// Positions.WithPositions merges snapshots across windows without pixel work, later winning.
+	wFast, err := page.Window(ctx, image.Rect(0, 0, 2, 1), image.Point{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wSlow, err := page.Window(ctx, image.Rect(2, 0, 4, 1), image.Point{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	advancedSlow, _, err := wSlow.Advance(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := (Positions{}).WithPositions(nil, wFast.Positions(), advancedSlow.(*Composite))
+	if got := merged.Keys(); !slices.Equal(got, []string{"fast", "slow"}) {
+		t.Fatalf("merged keys = %v", got)
+	}
+	if merged.positions["slow"].player.Frame() != 2 {
+		t.Fatalf("merged slow frame = %d, want 2", merged.positions["slow"].player.Frame())
+	}
 }

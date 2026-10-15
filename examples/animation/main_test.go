@@ -43,3 +43,27 @@ func TestKeepScreenFinalLayout(t *testing.T) {
 		t.Fatal("late message changed final view")
 	}
 }
+
+func TestCompositeLayersAndKeepScreen(t *testing.T) {
+	m, err := initialCompositeModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.session.Close()
+	defer m.layers.Close()
+
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: 60, Height: 18})
+	if cmd == nil {
+		t.Fatal("expected initial resize command")
+	}
+	cmd = m.layers.SetTerminal(true, 8, 16)
+	if len(m.layers.Layers()) != 2 {
+		t.Fatalf("expected 2 Kitty overlay layers, got %d", len(m.layers.Layers()))
+	}
+	next, keepCmd := m.Update(tea.KeyPressMsg{Code: 'Q', Text: "Q"})
+	kept := next.(*compositeModel)
+	view := kept.View()
+	if keepCmd == nil || view.AltScreen || !strings.HasSuffix(view.Content, "\n") {
+		t.Fatal("composite keep must finish on main screen with a blank prompt row")
+	}
+}
