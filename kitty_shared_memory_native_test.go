@@ -192,6 +192,7 @@ func TestPictureNativeSharedMemoryRetiresSubmittedFrames(t *testing.T) {
 	kittySharedCap.Store(int32(KittyCapabilitySupported))
 
 	p := testPicture(true)
+	p.opts.Session = DefaultTerminalSession()
 	p.opts.Render.KittyMedium = KittyMediumSharedMemory
 	drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
 	firstObj := p.front.kittyShared.object
@@ -241,6 +242,7 @@ func TestSupersededStableIDBorrowerRetiresSharedMemory(t *testing.T) {
 	kittySharedCap.Store(int32(KittyCapabilitySupported))
 
 	p := New(Options{
+		Session:     DefaultTerminalSession(),
 		StableID:    true,
 		RetireDelay: -1,
 		Render:      Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyMedium: KittyMediumSharedMemory},

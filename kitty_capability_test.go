@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi/kitty"
 )
@@ -423,10 +424,19 @@ func TestModel_ToggleBlocked(t *testing.T) {
 
 func TestCapabilityResolutionNotifications(t *testing.T) {
 	resetKittyCapability(t)
-	p, q := New(Options{}), New(Options{})
+	p := New(Options{Session: DefaultTerminalSession()})
+	q := New(Options{Session: DefaultTerminalSession()})
 	defer func() { _ = p.Close(); _ = q.Close() }()
+	hasCapMsg := func(cmd tea.Cmd, want KittyCapability) bool {
+		for _, c := range collectBatchCmds(cmd) {
+			if m, ok := c().(KittyCapabilityMsg); ok && m.Capability == want {
+				return true
+			}
+		}
+		return false
+	}
 	timeout := p.Update(kittyProbeTickMsg{})
-	if timeout == nil || timeout().(KittyCapabilityMsg).Capability != KittyCapabilityUnsupported {
+	if !hasCapMsg(timeout, KittyCapabilityUnsupported) {
 		t.Fatal("missing timeout notification")
 	}
 	if q.Update(kittyProbeTickMsg{}) != nil {
@@ -434,7 +444,7 @@ func TestCapabilityResolutionNotifications(t *testing.T) {
 	}
 	ev := uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}
 	supported := q.Update(ev)
-	if supported == nil || supported().(KittyCapabilityMsg).Capability != KittyCapabilitySupported {
+	if !hasCapMsg(supported, KittyCapabilitySupported) {
 		t.Fatal("late positive reply not reported")
 	}
 	if p.Update(ev) != nil {

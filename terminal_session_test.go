@@ -203,10 +203,26 @@ func TestDefaultTerminalSessionTracksLegacyGeometry(t *testing.T) {
 	if state := DefaultTerminalSession().Snapshot(); state.CellPixelWidth != 9 || state.CellPixelHeight != 18 {
 		t.Fatal("legacy geometry not recorded")
 	}
-	p := New(Options{})
+
+	// Standalone New(Options{}) owns an isolated session and must not mutate DefaultTerminalSession().
+	isolated := New(Options{})
+	isolated.Update(uv.CellSizeEvent{Width: 14, Height: 28})
+	if state := DefaultTerminalSession().Snapshot(); state.CellPixelWidth != 9 || state.CellPixelHeight != 18 {
+		t.Fatalf("owned picture session leaked geometry into DefaultTerminalSession: %+v", state)
+	}
+	if state := isolated.TerminalState(); state.CellPixelWidth != 14 || state.CellPixelHeight != 28 {
+		t.Fatalf("owned picture session did not record geometry: %+v", state)
+	}
+	_ = isolated.Close()
+	if !isolated.Session().closed.Load() {
+		t.Fatal("Picture.Close did not close owned TerminalSession")
+	}
+
+	p := New(Options{Session: DefaultTerminalSession()})
+	defer func() { _ = p.Close() }()
 	p.Update(uv.CellSizeEvent{Width: 10, Height: 20})
 	if state := DefaultTerminalSession().Snapshot(); state.CellPixelWidth != 10 || state.CellPixelHeight != 20 {
-		t.Fatal("default picture geometry not recorded")
+		t.Fatal("default session picture geometry not recorded")
 	}
 
 	cmd := DefaultTerminalSession().Update(uv.CellSizeEvent{Width: 11, Height: 22})
@@ -218,6 +234,7 @@ func TestDefaultTerminalSessionTracksLegacyGeometry(t *testing.T) {
 	}
 
 	withDefault := New(Options{Session: DefaultTerminalSession()})
+	defer func() { _ = withDefault.Close() }()
 	msgs := drivePicture(t, withDefault, withDefault.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}))
 	found := false
 	for _, m := range msgs {

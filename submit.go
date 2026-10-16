@@ -60,13 +60,20 @@ func (p *Picture) Submit(f Frame) tea.Cmd {
 		err = p.geometryError()
 	}
 	if err == nil && f.Exact && f.Image != nil {
-		if got, want := f.Image.Bounds().Size(), p.RasterGeometry().Pixels; got != want {
+		sb := f.Image.Bounds()
+		if !p.opts.Render.Crop.Empty() {
+			sb = sb.Intersect(p.opts.Render.Crop)
+		}
+		if got, want := sb.Size(), p.RasterGeometry().Pixels; got != want {
 			err = fmt.Errorf("ntpicture: frame is %dx%d pixels, raster needs %dx%d", got.X, got.Y, want.X, want.Y)
 		}
 	}
 	if err != nil {
 		p.cols, p.rows, p.mode, p.autoMode, p.opts.Render = oldCols, oldRows, oldMode, oldAuto, oldConfig
 		return p.failSubmission(err)
+	}
+	if p.ownsSession && p.opts.Session != nil {
+		p.opts.Session.setCellSize(f.CellWidth, f.CellHeight)
 	}
 	img := f.Image
 	if img != nil && !f.Immutable {

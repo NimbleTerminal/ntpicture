@@ -7,17 +7,20 @@ Initial extraction of NTCharts and Gloss terminal image rendering into
 
 - `Picture`, a Bubble Tea v2 component that keeps the displayed image on screen
   while preparing a replacement, coalesces rapid updates, rejects stale results,
-  and cleans up placements. `Submit` validates and applies an image, cell
-  layout, mode, and cell pixel geometry together; `SetViewport` and
-  `ResetViewport` clip prepared Kitty or glyph cells without re-encoding;
-  `RasterGeometry` and `SetResolution` let producers target scaled Kitty pixel
-  rasters while preserving cell footprint and camera aspect; `Keep` freezes the
-  last presented frame on exit.
+  and cleans up placements. `Submit` and `SetImageFor` / `SetImageImmutableFor`
+  tie frames to target geometry; `SetCrop` / `ResetCrop` crop source pixel
+  regions before fitting; `SetViewport` and `ResetViewport` clip prepared Kitty
+  or glyph cells without re-encoding; `RasterGeometry`, `SetResolution`, and
+  `SetMaxRasterPixels` let producers target scaled and pixel-budgeted Kitty
+  rasters while preserving cell footprint and camera aspect; `AutoMode` and
+  `ToggleMode` manage automatic and manual glyph/Kitty switching; `Keep` freezes
+  the last presented frame on exit.
 - `TerminalSession` (`NewTerminalSession`, `TerminalOptions`,
-  `TerminalSessionMsg`) for per-connection Kitty and shared-memory capability
-  discovery, cell-pixel geometry tracking, and `NTPICTURE_KITTY` /
-  `NTPICTURE_TMUX_PASSTHROUGH` environment overrides without import-time side
-  effects.
+  `TerminalSessionMsg`, `SetCellSize`, `SetKittyCapability`) for per-connection
+  Kitty and shared-memory capability discovery, cell-pixel geometry tracking,
+  and `NTPICTURE_KITTY` / `NTPICTURE_TMUX_PASSTHROUGH` environment overrides
+  without import-time side effects. Standalone `Picture` instances own an
+  isolated session by default when `Options.Session` is nil.
 - Kitty graphics transport with `StableID` streaming, PNG/RGBA/zlib direct
   encodings, native POSIX and browser `ghosttyKittySharedMemory` shared memory,
   and half-block ANSI glyph fallback (`GridImage` and `PictureGlyph`).

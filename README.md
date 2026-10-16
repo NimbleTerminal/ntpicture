@@ -189,16 +189,22 @@ visible destination when the scaled image overflows, preserving its anchor and
 fractional sampling coordinates without allocating the full off-screen raster.
 
 Use `SetTerminal(kitty, cellWidth, cellHeight)` when the host already knows its
-capability and geometry. It does not probe. Otherwise set `Options.AutoMode: true`
+capability and geometry. It does not probe. To update cell pixel dimensions or
+Kitty capability independently while keeping `AutoMode` active, use
+`SetCellSize(cellWidth, cellHeight)` or `SetKittyCapability(cap)` (available on
+both `Picture` and `TerminalSession`). Otherwise set `Options.AutoMode: true`
 (or call `SetMode(PictureAuto)`) so `Picture` selects `PictureKitty`
 automatically when the session reports `KittyCapabilitySupported` (at
 construction or during `Update`) and `PictureGlyph` otherwise; calling
 `SetMode(PictureGlyph)` or `SetMode(PictureKitty)` overrides automatic selection
-until `SetMode(PictureAuto)` is called. Hosts that prefer manual transition
-handling can leave `AutoMode` false and select Kitty on `TerminalSessionMsg` or
+until `SetMode(PictureAuto)` is called. `ToggleMode()` switches between
+`PictureGlyph` and `PictureKitty` when `KittySupported() ==
+KittyCapabilitySupported` and is a no-op (without setting `Status().Err`) when
+Kitty is unsupported or pending. Hosts that prefer manual transition handling
+can leave `AutoMode` false and select Kitty on `TerminalSessionMsg` or
 `KittyCapabilityMsg{Capability: KittyCapabilitySupported}`. Invalid terminal
-cell-size reports are ignored, while explicit `SetTerminal` calls still validate
-their inputs.
+cell-size reports are ignored, while explicit `SetTerminal` and `SetCellSize`
+calls validate their inputs.
 
 Shared memory uses the unchanged browser registry
 `globalThis.ghosttyKittySharedMemory` (`Map<string, Uint8Array>`), Linux named
@@ -212,11 +218,16 @@ legacy pictures, QR codes and new pictures must supply/use one allocator across
 all of them. IDs do not wrap or recycle; exhaustion returns
 `ErrImageIDExhausted`.
 
-## Shared terminal sessions and viewports
+## Shared terminal sessions, source cropping, and viewports
 
 Use one `TerminalSession` per Bubble Tea terminal connection. Share it across
 pictures and playback controllers; discovery runs once through normal messages.
-Background, fit, encoding, and glyph/Kitty selection remain per-picture policy.
+Background, fit, crop, encoding, and glyph/Kitty selection remain per-picture
+policy, and read-only getters (`Session()`, `Mode()`, `AutoMode()`, `Size()`,
+`Visible()`, `CellPixelSize()`, `Fit()`, `Anchor()`, `Resolution()`,
+`MaxRasterPixels()`, `Background()`, `Crop()`, `Viewport()`, `TerminalState()`,
+`KittySupported()`, `Closed()`) inspect current configuration without shadowing
+state in wrapper models.
 
 ```go
 session := ntpicture.NewTerminalSession(ntpicture.TerminalOptions{})
@@ -241,11 +252,18 @@ Forward raw terminal events only to the session for that connection. Close each
 picture and execute its cleanup command, then call `session.Close()` to release
 pending probe resources. Keep-screen also requires closing the session on exit.
 
-Omitting `Options.Session` preserves legacy behavior. Compatibility helpers and
-`Model` in `nimbleterminal.dev/ntpicture/legacy` use the process-wide
+When `Options.Session` is nil, `Picture` allocates an owned `TerminalSession`
+(seeded with `Config.CellPixelWidth` and `Config.CellPixelHeight`) and closes it
+automatically in `Picture.Close()` or `Picture.Keep()`. Compatibility helpers
+and `Model` in `nimbleterminal.dev/ntpicture/legacy` use the process-wide
 compatibility session exposed by `legacy.DefaultTerminalSession`; they do not
-change explicit sessions. The default session has process lifetime and cannot be
-closed.
+change owned or explicit sessions.
+
+`SetCrop(rect)` (or `Config.Crop`) restricts fitting and scaling to a sub-rectangle
+of the source image in source pixel coordinates before preparing the target cell
+grid; `ResetCrop()` restores the full source image. Unlike `Viewport`, changing
+`Crop` re-prepares from the retained source image so zoomed sub-regions scale to
+fill the picture's cell footprint.
 
 A viewport selects cells from the full prepared image, independently of layout:
 

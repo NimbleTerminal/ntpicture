@@ -77,12 +77,17 @@ type Config struct {
 	// AnchorCenter, matching prior behavior.
 	Anchor FitAnchor
 
+	// Crop selects an optional source-pixel sub-rectangle of the image before
+	// Fit scaling. An empty rectangle (the default) uses the full source image.
+	Crop image.Rectangle
+
 	// CellPixelWidth and CellPixelHeight are the terminal cell dimensions in
 	// pixels. Used in Kitty mode to pre-scale the source image to the c×r
 	// cell rectangle's pixel dimensions before encoding, so Kitty's
 	// aspect-ratio-preserving placement fills the cell rectangle. Default
 	// 8×16 (typical 1:2 font cell). Update at runtime via
-	// Picture.SetTerminal or TerminalSession when the terminal reports its real cell size.
+	// Picture.SetCellSize, Picture.SetTerminal, or TerminalSession when the
+	// terminal reports its real cell size.
 	CellPixelWidth  int
 	CellPixelHeight int
 
@@ -134,6 +139,14 @@ func normalizeAnchor(anchor FitAnchor) FitAnchor {
 	return AnchorCenter
 }
 
+func normalizeCrop(crop image.Rectangle) image.Rectangle {
+	crop = crop.Canon()
+	if crop.Empty() {
+		return image.Rectangle{}
+	}
+	return crop
+}
+
 func normalizeMaxRasterPixels(maxPixels int) int {
 	if maxPixels <= 0 {
 		return 0
@@ -151,6 +164,7 @@ func normalizeConfig(cfg Config) Config {
 	cfg.Background = color.RGBA64Model.Convert(cfg.Background)
 	cfg.Fit = normalizeFit(cfg.Fit)
 	cfg.Anchor = normalizeAnchor(cfg.Anchor)
+	cfg.Crop = normalizeCrop(cfg.Crop)
 	if cfg.CellPixelWidth <= 0 {
 		cfg.CellPixelWidth = defaultCellPixelW
 	}
@@ -174,6 +188,7 @@ type kittyPrepareParams struct {
 	background      color.Color
 	fit             FitMode
 	anchor          FitAnchor
+	crop            image.Rectangle
 	format          KittyFormat
 	medium          KittyMedium
 	cols, rows      int
@@ -190,9 +205,9 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (kittyFrameMsg
 	}
 	var prepared image.Image
 	if p.rasterSize.X > 0 && p.rasterSize.Y > 0 {
-		prepared = prepareSource(p.img, p.fit, p.rasterSize.X, p.rasterSize.Y, 1, 1, p.background, p.anchor)
+		prepared = prepareSourceCrop(p.img, p.crop, p.fit, p.rasterSize.X, p.rasterSize.Y, 1, 1, p.background, p.anchor)
 	} else {
-		prepared = prepareSource(p.img, p.fit, p.cols, p.rows, p.cpw, p.cph, p.background, p.anchor)
+		prepared = prepareSourceCrop(p.img, p.crop, p.fit, p.cols, p.rows, p.cpw, p.cph, p.background, p.anchor)
 	}
 	if prepared == nil || ctx.Err() != nil {
 		return kittyFrameMsg{}, false

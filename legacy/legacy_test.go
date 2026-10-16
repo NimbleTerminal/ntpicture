@@ -5,9 +5,56 @@ import (
 	"image/color"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi/kitty"
 	"nimbleterminal.dev/ntpicture"
 	"nimbleterminal.dev/ntpicture/legacy"
 )
+
+func collectBatchMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, collectBatchMsgs(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+func TestLegacyDefaultSessionPictureEmitsExportedKittyCapabilityMsg(t *testing.T) {
+	origCap := legacy.KittySupported()
+	defer legacy.ForceKittyCapability(origCap)
+
+	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("TERM", "xterm-kitty")
+	legacy.ForceKittyCapability(ntpicture.KittyCapabilityUnknown)
+
+	p := ntpicture.New(ntpicture.Options{Session: legacy.DefaultTerminalSession()})
+	defer func() { _ = p.Close() }()
+
+	msgs := collectBatchMsgs(tea.Batch(
+		p.Init(),
+		p.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: 42069101}}),
+	))
+
+	var gotCap ntpicture.KittyCapability
+	var matched bool
+	for _, msg := range msgs {
+		if capMsg, ok := msg.(ntpicture.KittyCapabilityMsg); ok {
+			matched = true
+			gotCap = capMsg.Capability
+		}
+	}
+	if !matched || gotCap != ntpicture.KittyCapabilitySupported {
+		t.Fatalf("expected ntpicture.KittyCapabilityMsg{Capability: Supported} from legacy default-session Picture; matched=%v cap=%v msgs=%#v", matched, gotCap, msgs)
+	}
+}
 
 func TestLegacyModelAndHelpers(t *testing.T) {
 	origCap := legacy.KittySupported()

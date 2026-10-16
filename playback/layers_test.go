@@ -2325,13 +2325,40 @@ func TestLayersUnchangedSetTerminalDoesNotResetPlayback(t *testing.T) {
 		})
 		defer session.Close()
 		l := NewLayers(comp, Options{
-			Picture: picture.Options{Session: session, RetireDelay: -1},
+			Picture: picture.Options{Session: session, AutoMode: true, RetireDelay: -1},
 		})
+		if l.Session() != session || !l.AutoMode() || !l.Visible() || l.Resolution() != 1 {
+			t.Fatalf("unexpected Layers getters: Session=%p AutoMode=%v Visible=%v Resolution=%v", l.Session(), l.AutoMode(), l.Visible(), l.Resolution())
+		}
 		if l.KittySupported() != picture.KittyCapabilitySupported {
 			t.Fatalf("KittySupported() = %v, want Supported", l.KittySupported())
 		}
 		if st := l.TerminalState(); st.CellPixelWidth != 12 || st.CellPixelHeight != 24 {
 			t.Fatalf("TerminalState() = %+v, want 12x24", st)
+		}
+		l.Pause(true)
+		driveLayers(t, l, l.SetSize(cols, rows))
+		if gotCols, gotRows := l.Size(); gotCols != cols || gotRows != rows {
+			t.Fatalf("Size() = %dx%d, want %dx%d", gotCols, gotRows, cols, rows)
+		}
+		driveLayers(t, l, l.Init())
+		driveLayers(t, l, l.SetCellSize(14, 28))
+		if gotW, gotH := l.CellPixelSize(); gotW != 14 || gotH != 28 || !l.AutoMode() {
+			t.Fatalf("after SetCellSize: %dx%d AutoMode=%v", gotW, gotH, l.AutoMode())
+		}
+		bg := color.RGBA{R: 7, G: 8, B: 9, A: 255}
+		driveLayers(t, l, l.SetBackground(bg))
+		if l.Background() != color.RGBA64Model.Convert(bg) {
+			t.Fatalf("Background() = %v", l.Background())
+		}
+		driveLayers(t, l, l.ToggleMode())
+		if l.Mode() != picture.PictureGlyph || l.AutoMode() {
+			t.Fatalf("after ToggleMode to Glyph: Mode=%v AutoMode=%v", l.Mode(), l.AutoMode())
+		}
+		driveLayers(t, l, l.SetMode(picture.PictureAuto))
+		driveLayers(t, l, l.SetKittyCapability(picture.KittyCapabilityUnsupported))
+		if l.Mode() != picture.PictureGlyph || l.ToggleMode() != nil {
+			t.Fatalf("expected Glyph mode and no-op ToggleMode when Unsupported; Mode=%v", l.Mode())
 		}
 		driveLayers(t, l, l.Keep())
 		if !l.Closed() {

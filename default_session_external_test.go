@@ -39,14 +39,42 @@ func TestDefaultSessionPictureEmitsExportedKittyCapabilityMsg(t *testing.T) {
 	))
 
 	var gotCap ntpicture.KittyCapability
-	var matched bool
+	var matchedCap, matchedSess bool
 	for _, msg := range msgs {
-		if capMsg, ok := msg.(ntpicture.KittyCapabilityMsg); ok {
-			matched = true
-			gotCap = capMsg.Capability
+		switch v := msg.(type) {
+		case ntpicture.KittyCapabilityMsg:
+			matchedCap = true
+			gotCap = v.Capability
+		case ntpicture.TerminalSessionMsg:
+			if v.Session == p.Session() && v.State.Kitty == ntpicture.KittyCapabilitySupported {
+				matchedSess = true
+			}
 		}
 	}
-	if !matched || gotCap != ntpicture.KittyCapabilitySupported {
-		t.Fatalf("expected ntpicture.KittyCapabilityMsg{Capability: Supported} from default-session Picture without importing legacy; matched=%v cap=%v msgs=%#v", matched, gotCap, msgs)
+	if !matchedCap || !matchedSess || gotCap != ntpicture.KittyCapabilitySupported {
+		t.Fatalf("expected KittyCapabilityMsg and TerminalSessionMsg from Options{} Picture without importing legacy; matchedCap=%v matchedSess=%v cap=%v msgs=%#v", matchedCap, matchedSess, gotCap, msgs)
+	}
+}
+
+func TestOwnedSessionPictureEmitsTerminalSessionMsg(t *testing.T) {
+	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("TERM", "xterm-kitty")
+
+	p := ntpicture.New(ntpicture.Options{})
+	defer func() { _ = p.Close() }()
+
+	msgs := collectBatchMsgs(tea.Batch(
+		p.Init(),
+		p.SetKittyCapability(ntpicture.KittyCapabilitySupported),
+	))
+
+	var matched bool
+	for _, msg := range msgs {
+		if sessMsg, ok := msg.(ntpicture.TerminalSessionMsg); ok && sessMsg.Session == p.Session() && sessMsg.State.Kitty == ntpicture.KittyCapabilitySupported {
+			matched = true
+		}
+	}
+	if !matched || p.KittySupported() != ntpicture.KittyCapabilitySupported {
+		t.Fatalf("expected ntpicture.TerminalSessionMsg{State.Kitty: Supported} from owned-session Picture without importing legacy; matched=%v msgs=%#v", matched, msgs)
 	}
 }

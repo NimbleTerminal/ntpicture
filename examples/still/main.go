@@ -14,8 +14,7 @@ import (
 )
 
 type model struct {
-	session *nt.TerminalSession
-	pic     *nt.Picture
+	pic *nt.Picture
 }
 
 func (m model) Init() tea.Cmd {
@@ -29,7 +28,6 @@ func (m model) Init() tea.Cmd {
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if press, ok := msg.(tea.KeyPressMsg); ok && key.Matches(press, m.HelpKeys().Quit) {
-		m.session.Close()
 		return m, tea.Sequence(m.pic.Close(), tea.Quit)
 	}
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
@@ -47,11 +45,9 @@ func (m model) HelpKeys() demohelp.Keys {
 }
 
 func main() {
-	session := nt.NewTerminalSession(nt.TerminalOptions{})
-	defer session.Close()
-	p := nt.New(nt.Options{Session: session, AutoMode: true})
+	p := nt.New(nt.Options{AutoMode: true})
 	defer func() { _ = p.Close() }() // Local resources are also released on abnormal program exit.
-	if err := demohelp.Run(model{session: session, pic: p}, "Still image"); err != nil {
+	if err := demohelp.Run(model{pic: p}, "Still image"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

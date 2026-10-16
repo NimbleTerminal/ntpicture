@@ -251,7 +251,7 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 		if !s.started {
 			return nil
 		}
-		if v.Options.ID == s.probeID && !s.isKittyForced() {
+		if (v.Options.ID == s.probeID || v.Options.ID == kittyProbeID) && !s.isKittyForced() {
 			s.state.Kitty = KittyCapabilitySupported
 		}
 		if v.Options.ID == s.probeID+1 && !s.sharedForced {
@@ -284,6 +284,48 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 		return tea.Batch(legacy, s.notification())
 	}
 	return legacy
+}
+
+// SetCellSize updates the session's cell pixel dimensions and emits
+// TerminalSessionMsg if the snapshot changed. Non-positive dimensions are ignored.
+func (s *TerminalSession) SetCellSize(width, height int) tea.Cmd {
+	if s == nil || s.closed.Load() || width <= 0 || height <= 0 {
+		return nil
+	}
+	before := s.Snapshot()
+	s.setCellSize(width, height)
+	if before != s.Snapshot() {
+		return s.notification()
+	}
+	return nil
+}
+
+// SetKittyCapability updates the session's Kitty graphics capability and emits
+// TerminalSessionMsg if the snapshot changed. Passing KittyCapabilityUnknown
+// clears an explicit override.
+func (s *TerminalSession) SetKittyCapability(c KittyCapability) tea.Cmd {
+	if s == nil || s.closed.Load() {
+		return nil
+	}
+	if c != KittyCapabilityUnknown && c != KittyCapabilityUnsupported && c != KittyCapabilitySupported {
+		return nil
+	}
+	before := s.Snapshot()
+	if s.legacy {
+		forceKittyCapability(c)
+	} else {
+		s.state.Kitty = c
+		s.kittyForced = c != KittyCapabilityUnknown
+		if c == KittyCapabilityUnsupported && !s.sharedForced {
+			s.state.SharedMemory = KittyCapabilityUnsupported
+			_ = s.probe.Unlink()
+			s.probe = nil
+		}
+	}
+	if before != s.Snapshot() {
+		return s.notification()
+	}
+	return nil
 }
 
 // Close cancels queued probe output and unlinks a pending probe immediately.

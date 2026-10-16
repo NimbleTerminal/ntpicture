@@ -116,6 +116,14 @@ func (p *Picture) SetImageImmutableFor(img image.Image, g RasterGeometry) tea.Cm
 	return p.SetImageImmutable(img)
 }
 
+// Resolution reports the configured Kitty resolution factor in (0, 1].
+func (p *Picture) Resolution() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.opts.Render.KittyResolutionFactor
+}
+
 // SetResolution sets the Kitty raster scale in (0,1], relative to terminal
 // pixels. It preserves cell footprint and physical display aspect. Whole-image
 // dimensions are rounded once, with a minimum of one pixel per dimension.
@@ -137,6 +145,14 @@ func (p *Picture) SetResolution(factor float64) tea.Cmd {
 		return nil
 	}
 	return p.changed()
+}
+
+// Background reports the configured background color.
+func (p *Picture) Background() color.Color {
+	if p == nil {
+		return nil
+	}
+	return p.opts.Render.Background
 }
 
 // SetBackground changes the color composited behind translucent pixels and
@@ -203,4 +219,39 @@ func (p *Picture) SetAnchor(anchor FitAnchor) tea.Cmd {
 		return nil
 	}
 	return p.changed()
+}
+
+// Crop reports the configured source-pixel crop rectangle (empty when uncropped).
+func (p *Picture) Crop() image.Rectangle {
+	if p == nil {
+		return image.Rectangle{}
+	}
+	return p.opts.Render.Crop
+}
+
+// SetCrop sets an optional source-pixel crop rectangle applied before Fit
+// scaling. Coordinates are in the source image's bounds coordinate space and
+// are intersected with the source image bounds during preparation. Passing an
+// empty rectangle clears the crop (equivalent to ResetCrop). A changed crop
+// prepares a new generation from the retained image, keeping the current front
+// visible until ready; without an image it applies to the next submission.
+func (p *Picture) SetCrop(r image.Rectangle) tea.Cmd {
+	if p == nil || p.closed {
+		return nil
+	}
+	r = normalizeCrop(r)
+	if r == p.opts.Render.Crop {
+		return nil
+	}
+	p.opts.Render.Crop = r
+	if p.img == nil {
+		return nil
+	}
+	return p.changed()
+}
+
+// ResetCrop clears any source-pixel crop rectangle so the full source image is
+// prepared.
+func (p *Picture) ResetCrop() tea.Cmd {
+	return p.SetCrop(image.Rectangle{})
 }

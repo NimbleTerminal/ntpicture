@@ -23,10 +23,18 @@ import (
 // short-circuit on cols/rows <= 0). Returns a bg-filled target when src
 // has empty bounds.
 func prepareSource(src image.Image, fit FitMode, cols, rows, cellW, cellH int, bg color.Color, anchor FitAnchor) image.Image {
-	return prepareSourceWithScratch(src, fit, cols, rows, cellW, cellH, bg, anchor, nil)
+	return prepareSourceCropWithScratch(src, image.Rectangle{}, fit, cols, rows, cellW, cellH, bg, anchor, nil)
+}
+
+func prepareSourceCrop(src image.Image, crop image.Rectangle, fit FitMode, cols, rows, cellW, cellH int, bg color.Color, anchor FitAnchor) image.Image {
+	return prepareSourceCropWithScratch(src, crop, fit, cols, rows, cellW, cellH, bg, anchor, nil)
 }
 
 func prepareSourceWithScratch(src image.Image, fit FitMode, cols, rows, cellW, cellH int, bg color.Color, anchor FitAnchor, scratch *fitScratch) image.Image {
+	return prepareSourceCropWithScratch(src, image.Rectangle{}, fit, cols, rows, cellW, cellH, bg, anchor, scratch)
+}
+
+func prepareSourceCropWithScratch(src image.Image, crop image.Rectangle, fit FitMode, cols, rows, cellW, cellH int, bg color.Color, anchor FitAnchor, scratch *fitScratch) image.Image {
 	src = imageview.Unwrap(src)
 	if cols <= 0 || rows <= 0 || cellW <= 0 || cellH <= 0 {
 		return nil
@@ -36,6 +44,9 @@ func prepareSourceWithScratch(src image.Image, fit FitMode, cols, rows, cellW, c
 	target := image.Rect(0, 0, tw, th)
 
 	sb := src.Bounds()
+	if !crop.Empty() {
+		sb = sb.Intersect(crop.Canon())
+	}
 	if sb.Dx() == 0 || sb.Dy() == 0 {
 		out := scratch.target(target)
 		draw.Draw(out, target, &image.Uniform{C: bg}, image.Point{}, draw.Src)
@@ -78,7 +89,7 @@ func place(out *image.RGBA, dst image.Rectangle, src image.Image, sb image.Recta
 // so the fitted image is src itself and no copy is needed. Opacity is a
 // scan of the source, cheaper than the allocation and copy it saves.
 func coversTarget(src image.Image, sb, target image.Rectangle) bool {
-	if sb.Dx() != target.Dx() || sb.Dy() != target.Dy() {
+	if sb != src.Bounds() || sb.Dx() != target.Dx() || sb.Dy() != target.Dy() {
 		return false
 	}
 	o, ok := src.(interface{ Opaque() bool })
@@ -98,7 +109,7 @@ func bgIsTransparent(bg color.Color) bool {
 // size, return src unchanged (matches the kitty.go optimization the
 // original composite() preserved for the transparent-bg case).
 func fillTo(src image.Image, sb, target image.Rectangle, bg color.Color, scratch *fitScratch) image.Image {
-	if (bgIsTransparent(bg) && sb.Dx() == target.Dx() && sb.Dy() == target.Dy()) || coversTarget(src, sb, target) {
+	if sb == src.Bounds() && ((bgIsTransparent(bg) && sb.Dx() == target.Dx() && sb.Dy() == target.Dy()) || coversTarget(src, sb, target)) {
 		return src
 	}
 	out := scratch.target(target)

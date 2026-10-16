@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	"image/color"
 	"reflect"
 	"testing"
 	"time"
@@ -620,12 +621,49 @@ func TestControllerHiddenRepeatSetVisiblePreservesQueuedSeekAndPostCloseGuards(t
 		CellPixelHeight: 22,
 	})
 	defer session.Close()
-	cSess := New(testPlayer(t), Options{Picture: picture.Options{Session: session}})
+	cSess := New(testPlayer(t), Options{Picture: picture.Options{Session: session, AutoMode: true}})
+	if cSess.Session() != session || !cSess.AutoMode() || !cSess.Visible() {
+		t.Fatalf("unexpected controller getters: Session=%p AutoMode=%v Visible=%v", cSess.Session(), cSess.AutoMode(), cSess.Visible())
+	}
 	if cSess.KittySupported() != picture.KittyCapabilitySupported {
 		t.Fatalf("KittySupported() = %v, want Supported", cSess.KittySupported())
 	}
 	if st := cSess.TerminalState(); st.CellPixelWidth != 11 || st.CellPixelHeight != 22 {
 		t.Fatalf("TerminalState() = %+v, want 11x22", st)
+	}
+	drive(t, cSess, cSess.SetSize(3, 2))
+	if cols, rows := cSess.Size(); cols != 3 || rows != 2 {
+		t.Fatalf("Size() = %dx%d, want 3x2", cols, rows)
+	}
+	drive(t, cSess, cSess.SetCellSize(13, 26))
+	if cw, ch := cSess.CellPixelSize(); cw != 13 || ch != 26 || !cSess.AutoMode() {
+		t.Fatalf("after SetCellSize: %dx%d AutoMode=%v", cw, ch, cSess.AutoMode())
+	}
+	drive(t, cSess, cSess.SetResolution(0.5))
+	if cSess.Resolution() != 0.5 {
+		t.Fatalf("Resolution() = %v, want 0.5", cSess.Resolution())
+	}
+	bg := color.RGBA{R: 5, G: 6, B: 7, A: 255}
+	drive(t, cSess, cSess.SetBackground(bg))
+	if cSess.Background() != color.RGBA64Model.Convert(bg) {
+		t.Fatalf("Background() = %v", cSess.Background())
+	}
+	drive(t, cSess, cSess.SetCrop(image.Rect(0, 0, 1, 1)))
+	if cSess.Crop() != image.Rect(0, 0, 1, 1) {
+		t.Fatalf("Crop() = %v, want (0,0)-(1,1)", cSess.Crop())
+	}
+	drive(t, cSess, cSess.ResetCrop())
+	if !cSess.Crop().Empty() {
+		t.Fatalf("Crop() after ResetCrop = %v, want empty", cSess.Crop())
+	}
+	drive(t, cSess, cSess.ToggleMode())
+	if cSess.Mode() != picture.PictureGlyph || cSess.AutoMode() {
+		t.Fatalf("after ToggleMode to Glyph: Mode=%v AutoMode=%v", cSess.Mode(), cSess.AutoMode())
+	}
+	drive(t, cSess, cSess.SetMode(picture.PictureAuto))
+	drive(t, cSess, cSess.SetKittyCapability(picture.KittyCapabilityUnsupported))
+	if cSess.Mode() != picture.PictureGlyph || cSess.ToggleMode() != nil {
+		t.Fatalf("expected Glyph mode and no-op ToggleMode when Unsupported; Mode=%v", cSess.Mode())
 	}
 	drive(t, cSess, cSess.Keep())
 	if !cSess.Closed() {

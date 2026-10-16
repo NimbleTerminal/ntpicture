@@ -894,3 +894,147 @@ func TestPictureAutoModeAndSetModePictureAuto(t *testing.T) {
 		t.Fatalf("SetMode(PictureAuto) did not restore PictureKitty: got %v", pProbe.Mode())
 	}
 }
+
+func TestPictureOwnedSessionToggleModeAndSetters(t *testing.T) {
+	t.Setenv("NTPICTURE_KITTY", "unsupported")
+
+	// Nil Options.Session allocates an owned session initialized from Render cell dimensions.
+	p := New(Options{
+		AutoMode:    true,
+		RetireDelay: -1,
+		Render: Config{
+			CellPixelWidth:        10,
+			CellPixelHeight:       20,
+			KittyResolutionFactor: 0.5,
+			Background:            color.RGBA{R: 12, G: 34, B: 56, A: 255},
+		},
+	})
+	if p.Session() == nil || p.Session() == DefaultTerminalSession() {
+		t.Fatal("expected New(Options{}) to allocate an isolated owned TerminalSession")
+	}
+	if !p.AutoMode() || p.Mode() != PictureGlyph || !p.Visible() {
+		t.Fatalf("unexpected initial state: AutoMode=%v Mode=%v Visible=%v", p.AutoMode(), p.Mode(), p.Visible())
+	}
+	if cw, ch := p.CellPixelSize(); cw != 10 || ch != 20 {
+		t.Fatalf("CellPixelSize() = %dx%d, want 10x20", cw, ch)
+	}
+	if st := p.TerminalState(); st.CellPixelWidth != 10 || st.CellPixelHeight != 20 {
+		t.Fatalf("TerminalState() = %+v, want 10x20", st)
+	}
+	if p.Resolution() != 0.5 {
+		t.Fatalf("Resolution() = %v, want 0.5", p.Resolution())
+	}
+	if p.Background() != color.RGBA64Model.Convert(color.RGBA{R: 12, G: 34, B: 56, A: 255}) {
+		t.Fatalf("Background() = %v", p.Background())
+	}
+
+	drivePicture(t, p, p.SetSize(4, 3))
+	if cols, rows := p.Size(); cols != 4 || rows != 3 {
+		t.Fatalf("Size() = %dx%d, want 4x3", cols, rows)
+	}
+	drivePicture(t, p, p.SetImage(testPixels(color.RGBA{R: 255, A: 255})))
+
+	// ToggleMode while Kitty is unsupported is a clean no-op without setting Status().Err.
+	if cmd := p.ToggleMode(); cmd != nil {
+		t.Fatal("expected ToggleMode() to return nil when Kitty is unsupported")
+	}
+	if p.Status().Err != nil || p.Mode() != PictureGlyph || !p.AutoMode() {
+		t.Fatalf("ToggleMode() when unsupported mutated state: Err=%v Mode=%v AutoMode=%v", p.Status().Err, p.Mode(), p.AutoMode())
+	}
+
+	// SetCellSize updates cell pixel geometry without clearing AutoMode.
+	drivePicture(t, p, p.SetCellSize(12, 24))
+	if !p.AutoMode() {
+		t.Fatal("SetCellSize cleared AutoMode")
+	}
+	if cw, ch := p.CellPixelSize(); cw != 12 || ch != 24 {
+		t.Fatalf("CellPixelSize() = %dx%d, want 12x24", cw, ch)
+	}
+	if st := p.TerminalState(); st.CellPixelWidth != 12 || st.CellPixelHeight != 24 {
+		t.Fatalf("owned session TerminalState() = %+v, want 12x24", st)
+	}
+
+	// SetKittyCapability updates session capability and switches AutoMode picture to PictureKitty.
+	drivePicture(t, p, p.SetKittyCapability(KittyCapabilitySupported))
+	if p.Mode() != PictureKitty || !p.AutoMode() || p.KittySupported() != KittyCapabilitySupported {
+		t.Fatalf("SetKittyCapability(Supported) state: Mode=%v AutoMode=%v Kitty=%v", p.Mode(), p.AutoMode(), p.KittySupported())
+	}
+
+	// ToggleMode switches Kitty -> Glyph -> Kitty and clears AutoMode.
+	drivePicture(t, p, p.ToggleMode())
+	if p.Mode() != PictureGlyph || p.AutoMode() {
+		t.Fatalf("ToggleMode() to Glyph: Mode=%v AutoMode=%v", p.Mode(), p.AutoMode())
+	}
+	drivePicture(t, p, p.ToggleMode())
+	if p.Mode() != PictureKitty || p.AutoMode() {
+		t.Fatalf("ToggleMode() to Kitty: Mode=%v AutoMode=%v", p.Mode(), p.AutoMode())
+	}
+
+	ownedSess := p.Session()
+	drivePicture(t, p, p.Close())
+	if !ownedSess.closed.Load() {
+		t.Fatal("expected Picture.Close() to close owned TerminalSession")
+	}
+}
+
+func TestPictureCropAndResetCrop(t *testing.T) {
+	// 4x4 image: top-left 2x2 is red, bottom-right 2x2 is blue.
+	src := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	red := color.RGBA{R: 255, A: 255}
+	blue := color.RGBA{B: 255, A: 255}
+	for y := range 4 {
+		for x := range 4 {
+			if x < 2 && y < 2 {
+				src.SetRGBA(x, y, red)
+			} else if x >= 2 && y >= 2 {
+				src.SetRGBA(x, y, blue)
+			}
+		}
+	}
+
+	// Verify prepareSourceCrop maps the cropped sub-rectangle to fill the target.
+	croppedRed := prepareSourceCrop(src, image.Rect(0, 0, 2, 2), FitFill, 2, 2, 1, 1, color.Transparent, AnchorCenter)
+	if color.RGBAModel.Convert(croppedRed.At(0, 0)) != red || color.RGBAModel.Convert(croppedRed.At(1, 1)) != red {
+		t.Fatalf("prepareSourceCrop top-left = %v, %v; want red", croppedRed.At(0, 0), croppedRed.At(1, 1))
+	}
+	croppedBlue := prepareSourceCrop(src, image.Rect(2, 2, 4, 4), FitFill, 2, 2, 1, 1, color.Transparent, AnchorCenter)
+	if color.RGBAModel.Convert(croppedBlue.At(0, 0)) != blue || color.RGBAModel.Convert(croppedBlue.At(1, 1)) != blue {
+		t.Fatalf("prepareSourceCrop bottom-right = %v, %v; want blue", croppedBlue.At(0, 0), croppedBlue.At(1, 1))
+	}
+
+	// Verify Picture.SetCrop and ResetCrop re-prepare from retained p.img in both Glyph and Kitty modes.
+	for _, kittyMode := range []bool{false, true} {
+		p := testPicture(kittyMode)
+		defer func() { drivePicture(t, p, p.Close()) }()
+		drivePicture(t, p, p.SetImageImmutable(src))
+		fullView := p.View()
+		if !p.Crop().Empty() {
+			t.Fatalf("initial Crop() = %v, want empty", p.Crop())
+		}
+
+		drivePicture(t, p, p.SetCrop(image.Rect(0, 0, 2, 2)))
+		if got := p.Crop(); got != image.Rect(0, 0, 2, 2) {
+			t.Fatalf("Crop() = %v, want (0,0)-(2,2)", got)
+		}
+		redView := p.View()
+
+		drivePicture(t, p, p.SetCrop(image.Rect(2, 2, 4, 4)))
+		blueView := p.View()
+		if !kittyMode && (redView == fullView || blueView == fullView || redView == blueView) {
+			t.Fatalf("glyph views did not change across crops: full=%q red=%q blue=%q", fullView, redView, blueView)
+		}
+
+		// Redundant SetCrop is a no-op.
+		if cmd := p.SetCrop(image.Rect(2, 2, 4, 4)); cmd != nil {
+			t.Fatal("expected redundant SetCrop to return nil")
+		}
+
+		drivePicture(t, p, p.ResetCrop())
+		if !p.Crop().Empty() {
+			t.Fatalf("Crop() after ResetCrop() = %v, want empty", p.Crop())
+		}
+		if !kittyMode && p.View() != fullView {
+			t.Fatalf("ResetCrop() did not restore full glyph view: got %q, want %q", p.View(), fullView)
+		}
+	}
+}

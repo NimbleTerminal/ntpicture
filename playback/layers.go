@@ -91,30 +91,19 @@ func NewLayers(composite *animation.Composite, options Options) *Layers {
 		options.Picture.Render.Background = color.RGBA64Model.Convert(options.Picture.Render.Background)
 	}
 	options.Picture.Render.Fit = picture.FitFill
-	cw, ch := options.Picture.Render.CellPixelWidth, options.Picture.Render.CellPixelHeight
-	var mode picture.PictureMode
-	if options.Picture.Session != nil {
-		state := options.Picture.Session.Snapshot()
-		cw, ch = state.CellPixelWidth, state.CellPixelHeight
-		if state.Kitty == picture.KittyCapabilitySupported {
-			mode = picture.PictureKitty
-		}
-	} else if options.Picture.AutoMode && !options.Picture.HostGeometry {
-		if (*picture.Picture)(nil).KittySupported() == picture.KittyCapabilitySupported {
-			mode = picture.PictureKitty
-		}
-	}
-	if cw <= 0 {
-		cw = 8
-	}
-	if ch <= 0 {
-		ch = 16
-	}
+	explicitSession := options.Picture.Session != nil
 	baseOpts := options
 	// The base picture is replaced only on viewport/document changes under Kitty
 	// graphics; using a fresh ID retains the displayed base until its replacement commits.
 	baseOpts.FreshIDs = true
 	base := NewSource(nil, baseOpts)
+	options.Picture.Session = base.Session()
+	state := base.Session().Snapshot()
+	cw, ch := state.CellPixelWidth, state.CellPixelHeight
+	var mode picture.PictureMode
+	if (explicitSession || (options.Picture.AutoMode && !options.Picture.HostGeometry)) && state.Kitty == picture.KittyCapabilitySupported {
+		mode = picture.PictureKitty
+	}
 	if mode == picture.PictureKitty {
 		if !options.Picture.AutoMode {
 			_ = base.SetTerminal(true, cw, ch)
@@ -336,6 +325,25 @@ func (l *Layers) Positions() animation.Positions {
 // Mode reports the current rendering mode (PictureGlyph or PictureKitty).
 func (l *Layers) Mode() picture.PictureMode { return l.mode }
 
+// AutoMode reports whether the base picture automatically selects PictureKitty
+// or PictureGlyph from its terminal session capability.
+func (l *Layers) AutoMode() bool {
+	return l != nil && l.base.AutoMode()
+}
+
+// Size reports the configured cell dimensions (cols, rows).
+func (l *Layers) Size() (cols, rows int) {
+	if l == nil {
+		return 0, 0
+	}
+	return l.cols, l.rows
+}
+
+// Visible reports whether the layers are currently visible.
+func (l *Layers) Visible() bool {
+	return l != nil && l.visible
+}
+
 // CellPixelSize reports the current terminal cell dimensions in pixels.
 func (l *Layers) CellPixelSize() (int, int) { return l.cw, l.ch }
 
@@ -343,6 +351,14 @@ func (l *Layers) CellPixelSize() (int, int) { return l.cw, l.ch }
 // A nil receiver reports true.
 func (l *Layers) Closed() bool {
 	return l == nil || l.closed
+}
+
+// Session returns the base picture's terminal session.
+func (l *Layers) Session() *picture.TerminalSession {
+	if l == nil {
+		return (*picture.Picture)(nil).Session()
+	}
+	return l.base.Session()
 }
 
 // TerminalState returns a snapshot of the base picture's terminal session.
@@ -361,6 +377,14 @@ func (l *Layers) KittySupported() picture.KittyCapability {
 
 // RasterGeometry reports the base picture's full preparation target before clipping.
 func (l *Layers) RasterGeometry() picture.RasterGeometry { return l.base.RasterGeometry() }
+
+// Resolution reports the base picture's configured Kitty resolution factor in (0, 1].
+func (l *Layers) Resolution() float64 {
+	if l == nil {
+		return 0
+	}
+	return l.base.Resolution()
+}
 
 // Active reports whether animated playback/overlay activation is enabled.
 func (l *Layers) Active() bool { return l.active }
@@ -562,6 +586,55 @@ func (l *Layers) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	return tea.Batch(baseCmd, pauseCmd)
 }
 
+// SetCellSize updates cell pixel dimensions while preserving the current
+// rendering mode and AutoMode setting.
+func (l *Layers) SetCellSize(cellWidth, cellHeight int) tea.Cmd {
+	if l == nil || l.closed {
+		return nil
+	}
+	geomChanged := cellWidth != l.cw || cellHeight != l.ch
+	if !geomChanged && cellWidth > 0 && cellHeight > 0 && l.base.Status().Picture.Err == nil && l.err == nil {
+		return nil
+	}
+	prevRetained, prevRetainedPres := l.retainedSnapshot, l.retainedPresented
+	if l.submitted && geomChanged {
+		l.captureRetainedSnapshot()
+	}
+	baseCmd := l.base.SetCellSize(cellWidth, cellHeight)
+	if l.base.Status().Picture.Err != nil {
+		l.retainedSnapshot, l.retainedPresented = prevRetained, prevRetainedPres
+		return baseCmd
+	}
+	l.err = nil
+	l.cw, l.ch = cellWidth, cellHeight
+	if !l.submitted || !geomChanged {
+		return baseCmd
+	}
+	return tea.Batch(baseCmd, l.syncGeometryAndMode(false))
+}
+
+// SetKittyCapability updates the base picture's terminal session capability
+// while preserving AutoMode.
+func (l *Layers) SetKittyCapability(cap picture.KittyCapability) tea.Cmd {
+	if l == nil || l.closed {
+		return nil
+	}
+	prevMode := l.mode
+	prevRetained, prevRetainedPres := l.retainedSnapshot, l.retainedPresented
+	if l.submitted && l.AutoMode() {
+		l.captureRetainedSnapshot()
+	}
+	baseCmd := l.base.SetKittyCapability(cap)
+	l.mode = l.base.pic.Mode()
+	modeChanged := l.mode != prevMode
+	pauseCmd := l.syncBasePause()
+	if !l.submitted || !modeChanged {
+		l.retainedSnapshot, l.retainedPresented = prevRetained, prevRetainedPres
+		return tea.Batch(baseCmd, pauseCmd)
+	}
+	return tea.Batch(baseCmd, pauseCmd, l.syncGeometryAndMode(modeChanged))
+}
+
 // SetMode switches between PictureGlyph and PictureKitty using the configured
 // session, or follows the session automatically when PictureAuto is passed.
 func (l *Layers) SetMode(mode picture.PictureMode) tea.Cmd {
@@ -593,6 +666,21 @@ func (l *Layers) SetMode(mode picture.PictureMode) tea.Cmd {
 		return tea.Batch(baseCmd, pauseCmd)
 	}
 	return tea.Batch(baseCmd, pauseCmd, l.syncGeometryAndMode(modeChanged))
+}
+
+// ToggleMode switches between PictureGlyph and PictureKitty when Kitty is
+// supported, without reporting an error when Kitty is unavailable.
+func (l *Layers) ToggleMode() tea.Cmd {
+	if l == nil || l.closed {
+		return nil
+	}
+	if l.mode == picture.PictureGlyph {
+		if l.KittySupported() != picture.KittyCapabilitySupported {
+			return nil
+		}
+		return l.SetMode(picture.PictureKitty)
+	}
+	return l.SetMode(picture.PictureGlyph)
 }
 
 // SetVisible hides or shows all layers. Hiding cancels pending work and clears
@@ -678,6 +766,14 @@ func (l *Layers) Restart() tea.Cmd {
 		resetComp, _ := src.(*animation.Composite)
 		return layerRestartResult{owner: l, job: job, comp: resetComp, err: err}
 	}
+}
+
+// Background reports the configured background color.
+func (l *Layers) Background() color.Color {
+	if l == nil {
+		return nil
+	}
+	return l.base.Background()
 }
 
 // SetBackground changes the background color on the base picture and all overlays.

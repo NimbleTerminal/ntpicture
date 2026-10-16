@@ -28,10 +28,8 @@ type point struct {
 }
 
 type model struct {
-	session      *picture.TerminalSession
-	pic          *picture.Picture
-	initCmd      tea.Cmd
-	autoSelected bool
+	pic     *picture.Picture
+	initCmd tea.Cmd
 
 	player point
 	target point
@@ -41,9 +39,8 @@ type model struct {
 }
 
 func initialModel() model {
-	session := picture.NewTerminalSession(picture.TerminalOptions{})
 	pic := picture.New(picture.Options{
-		Session: session,
+		AutoMode: true,
 		Render: picture.Config{
 			KittyMedium: picture.KittyMediumSharedMemory, // raw RGBA via shared memory where supported
 			Fit:         picture.FitFill,
@@ -51,10 +48,9 @@ func initialModel() model {
 	})
 
 	m := model{
-		session: session,
-		pic:     pic,
-		player:  point{1, 1},
-		target:  point{11, 5},
+		pic:    pic,
+		player: point{1, 1},
+		target: point{11, 5},
 		walls: map[point]bool{
 			{4, 2}: true,
 			{5, 2}: true,
@@ -86,14 +82,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		keys := m.HelpKeys()
 		switch {
 		case key.Matches(msg, keys.Quit):
-			m.session.Close()
 			return m, tea.Sequence(m.pic.Close(), tea.Quit)
 		case key.Matches(msg, keys.Toggle):
-			mode := picture.PictureGlyph
-			if m.pic.Mode() == picture.PictureGlyph && m.session.Snapshot().Kitty == picture.KittyCapabilitySupported {
-				mode = picture.PictureKitty
-			}
-			if c := m.pic.SetMode(mode); c != nil {
+			if c := m.pic.ToggleMode(); c != nil {
 				cmds = append(cmds, c)
 			}
 		case key.Matches(msg, keys.Left):
@@ -126,10 +117,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if c := m.pic.Update(msg); c != nil {
 		cmds = append(cmds, c)
-	}
-	if event, ok := msg.(picture.TerminalSessionMsg); ok && event.Session == m.session && !m.autoSelected && m.session.Snapshot().Kitty == picture.KittyCapabilitySupported {
-		m.autoSelected = true
-		cmds = append(cmds, m.pic.SetMode(picture.PictureKitty))
 	}
 	if redraw {
 		if c := m.renderBoard(); c != nil {
@@ -171,7 +158,7 @@ func (m model) kittyBadge() string {
 	label := "KITTY CHECKING"
 	fg := lipgloss.Color("0")
 	bg := lipgloss.Color("11")
-	switch m.session.Snapshot().Kitty {
+	switch m.pic.KittySupported() {
 	case picture.KittyCapabilitySupported:
 		label = "KITTY AVAILABLE"
 		bg = lipgloss.Color("10")
@@ -315,12 +302,11 @@ func fillCircle(img *image.RGBA, rect image.Rectangle, c color.RGBA) {
 }
 
 func (m model) HelpKeys() demohelp.Keys {
-	return demohelp.New(true, m.session.Snapshot().Kitty == picture.KittyCapabilitySupported)
+	return demohelp.New(true, m.pic.KittySupported() == picture.KittyCapabilitySupported)
 }
 
 func main() {
 	m := initialModel()
-	defer m.session.Close()
 	defer func() { _ = m.pic.Close() }()
 	if err := demohelp.Run(m, "Interactive grid"); err != nil {
 		log.Fatal(err)

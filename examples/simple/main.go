@@ -20,26 +20,21 @@ import (
 var fujiPNG []byte
 
 type model struct {
-	session       *picture.TerminalSession
 	pic           *picture.Picture
 	initCmd       tea.Cmd
 	width, height int
 }
 
 func initialModel() (model, error) {
-	session := picture.NewTerminalSession(picture.TerminalOptions{})
+	img, _, err := image.Decode(bytes.NewReader(fujiPNG))
+	if err != nil {
+		return model{}, fmt.Errorf("decode embedded image: %w", err)
+	}
 	pic := picture.New(picture.Options{
-		Session:  session,
 		AutoMode: true,
 		Render:   picture.Config{KittyMedium: picture.KittyMediumSharedMemory},
 	})
-
-	img, _, err := image.Decode(bytes.NewReader(fujiPNG))
-	if err != nil {
-		session.Close()
-		return model{}, fmt.Errorf("decode embedded image: %w", err)
-	}
-	return model{session: session, pic: pic, initCmd: pic.SetImage(img)}, nil
+	return model{pic: pic, initCmd: pic.SetImage(img)}, nil
 }
 
 func (m model) Init() tea.Cmd {
@@ -53,7 +48,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.HelpKeys().Quit):
-			m.session.Close()
 			return m, tea.Sequence(m.pic.Close(), tea.Quit)
 		}
 
@@ -97,7 +91,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	defer m.session.Close()
 	defer func() { _ = m.pic.Close() }()
 	if err := demohelp.Run(m, "Embedded image"); err != nil {
 		fmt.Printf("Error: %v\n", err)

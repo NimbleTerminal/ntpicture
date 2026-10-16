@@ -172,11 +172,7 @@ func (m *model) handleKey(press tea.KeyPressMsg) (tea.Cmd, bool) {
 		// invalid-factor error or schedule work that the frame supersedes.
 		return m.pic.SetResolution(resolutions[next]), false
 	case key.Matches(press, keys.Toggle):
-		mode := picture.PictureKitty
-		if m.pic.Mode() == picture.PictureKitty {
-			mode = picture.PictureGlyph
-		}
-		return m.pic.SetMode(mode), false
+		return m.pic.ToggleMode(), false
 	case key.Matches(press, keys.Up):
 		m.panY -= panStepY
 	case key.Matches(press, keys.Down):

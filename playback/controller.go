@@ -226,15 +226,55 @@ func (c *Controller) Restart() tea.Cmd {
 func (c *Controller) SetSize(cols, rows int) tea.Cmd {
 	return c.presentation(c.pic.SetSize(cols, rows))
 }
+
+// Size reports the configured cell dimensions (cols, rows).
+func (c *Controller) Size() (cols, rows int) {
+	if c == nil {
+		return 0, 0
+	}
+	return c.pic.Size()
+}
+
 func (c *Controller) SetTerminal(kitty bool, width, height int) tea.Cmd {
 	return c.presentation(c.pic.SetTerminal(kitty, width, height))
 }
+
+// SetCellSize updates cell pixel dimensions while preserving the current
+// rendering mode and AutoMode setting.
+func (c *Controller) SetCellSize(width, height int) tea.Cmd {
+	return c.presentation(c.pic.SetCellSize(width, height))
+}
+
+// SetKittyCapability updates the picture's terminal session capability while
+// preserving AutoMode.
+func (c *Controller) SetKittyCapability(cap picture.KittyCapability) tea.Cmd {
+	return c.presentation(c.pic.SetKittyCapability(cap))
+}
+
 func (c *Controller) SetMode(mode picture.PictureMode) tea.Cmd {
 	return c.presentation(c.pic.SetMode(mode))
 }
 
+// ToggleMode switches between PictureGlyph and PictureKitty when Kitty is
+// supported, without reporting an error when Kitty is unavailable.
+func (c *Controller) ToggleMode() tea.Cmd {
+	if c == nil || c.closed {
+		return nil
+	}
+	if c.Mode() == picture.PictureGlyph && c.KittySupported() != picture.KittyCapabilitySupported {
+		return nil
+	}
+	return c.presentation(c.pic.ToggleMode())
+}
+
 // Mode reports the current rendering mode (PictureGlyph or PictureKitty).
 func (c *Controller) Mode() picture.PictureMode { return c.pic.Mode() }
+
+// AutoMode reports whether the picture automatically selects PictureKitty or
+// PictureGlyph from its terminal session capability.
+func (c *Controller) AutoMode() bool {
+	return c != nil && c.pic.AutoMode()
+}
 
 // CellPixelSize returns the current cell pixel dimensions.
 func (c *Controller) CellPixelSize() (width, height int) { return c.pic.CellPixelSize() }
@@ -243,6 +283,14 @@ func (c *Controller) CellPixelSize() (width, height int) { return c.pic.CellPixe
 // A nil receiver reports true.
 func (c *Controller) Closed() bool {
 	return c == nil || c.closed
+}
+
+// Session returns the picture's terminal session.
+func (c *Controller) Session() *picture.TerminalSession {
+	if c == nil {
+		return (*picture.Picture)(nil).Session()
+	}
+	return c.pic.Session()
 }
 
 // TerminalState returns a snapshot of the picture's terminal session.
@@ -257,6 +305,11 @@ func (c *Controller) TerminalState() picture.TerminalState {
 // terminal session.
 func (c *Controller) KittySupported() picture.KittyCapability {
 	return c.TerminalState().Kitty
+}
+
+// Visible reports whether the controller is currently visible.
+func (c *Controller) Visible() bool {
+	return c != nil && c.visible
 }
 
 // SetVisible hides or shows the picture. Hiding cancels pending work (including
@@ -456,6 +509,14 @@ func (c *Controller) stop() {
 	c.submitted = nil
 }
 
+// Background reports the configured background color.
+func (c *Controller) Background() color.Color {
+	if c == nil {
+		return nil
+	}
+	return c.pic.Background()
+}
+
 // SetBackground re-prepares the current frame without seeking or restarting playback.
 func (c *Controller) SetBackground(bg color.Color) tea.Cmd {
 	return c.presentation(c.pic.SetBackground(bg))
@@ -516,6 +577,26 @@ func (c *Controller) SetAnchor(anchor picture.FitAnchor) tea.Cmd {
 	return c.presentation(c.pic.SetAnchor(anchor))
 }
 
+// Crop reports the configured source-pixel crop rectangle (empty when uncropped).
+func (c *Controller) Crop() image.Rectangle {
+	if c == nil {
+		return image.Rectangle{}
+	}
+	return c.pic.Crop()
+}
+
+// SetCrop sets an optional source-pixel crop rectangle applied before Fit
+// scaling, re-preparing the current frame without seeking or restarting playback.
+func (c *Controller) SetCrop(r image.Rectangle) tea.Cmd {
+	return c.presentation(c.pic.SetCrop(r))
+}
+
+// ResetCrop clears any source-pixel crop rectangle so the full source image is
+// prepared.
+func (c *Controller) ResetCrop() tea.Cmd {
+	return c.presentation(c.pic.ResetCrop())
+}
+
 // SetViewport clips the prepared picture without seeking or restarting playback.
 func (c *Controller) SetViewport(v picture.Viewport) { c.pic.SetViewport(v) }
 
@@ -544,6 +625,14 @@ func (c *Controller) MaxRasterPixels() int { return c.pic.MaxRasterPixels() }
 // SetMaxRasterPixels sets the Kitty raster pixel cap without seeking or restarting playback.
 func (c *Controller) SetMaxRasterPixels(maxPixels int) tea.Cmd {
 	return c.presentation(c.pic.SetMaxRasterPixels(maxPixels))
+}
+
+// Resolution reports the configured Kitty resolution factor in (0, 1].
+func (c *Controller) Resolution() float64 {
+	if c == nil {
+		return 0
+	}
+	return c.pic.Resolution()
 }
 
 // SetResolution changes Kitty encoding resolution without changing cell layout.
