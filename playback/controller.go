@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"reflect"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -82,7 +83,20 @@ type job struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	due    time.Time
+	source atomic.Pointer[animation.Source]
 }
+
+func (j *job) setSource(src animation.Source) {
+	j.source.Store(&src)
+}
+
+func (j *job) getSource() animation.Source {
+	if p := j.source.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
 type result struct {
 	source animation.Source
 	owner  *Controller
@@ -289,6 +303,7 @@ func (c *Controller) schedule() tea.Cmd {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{ctx: ctx, cancel: cancel}
+	j.setSource(c.source)
 	c.job = j
 	seeker, source, waiter, now := c.seeker, c.source, c.wait, c.now
 	if target == nil && !restart {
@@ -303,11 +318,11 @@ func (c *Controller) schedule() tea.Cmd {
 	return func() tea.Msg {
 		out := result{owner: c, job: j, more: true}
 		if restart {
-			out.source, out.err = source.Reset(ctx)
+			out.source, out.err = j.getSource().Reset(ctx)
 		} else if target != nil {
 			out.source, out.err = seeker.SeekFrame(ctx, *target)
 		} else if waiter(ctx, max(0, j.due.Sub(now()))) {
-			out.source, out.more, out.err = source.Advance(ctx)
+			out.source, out.more, out.err = j.getSource().Advance(ctx)
 		} else {
 			out.err = context.Canceled
 		}
@@ -344,26 +359,24 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 				unchanged := c.source != nil && sameImage(c.source.Image(), m.source.Image())
 				c.setSource(m.source)
 				c.finished = !m.more || c.source.Delay() <= 0
-				if m.more {
-					if !m.job.due.IsZero() {
-						// Carry the timeline through composition and transmission.
-						// If composition alone overruns, rebase rather than building
-						// an unbounded catch-up debt. Never skip frames or overlap jobs.
-						base := m.job.due
-						delay := time.Duration(float64(c.source.Delay()) / c.rate)
-						c.nextDue = base.Add(delay)
-						if c.nextDue.Before(c.now()) {
-							c.nextDue = c.now()
-						}
+				if m.more && !m.job.due.IsZero() {
+					// Carry the timeline through composition and transmission.
+					// If composition alone overruns, rebase rather than building
+					// an unbounded catch-up debt. Never skip frames or overlap jobs.
+					base := m.job.due
+					delay := time.Duration(float64(c.source.Delay()) / c.rate)
+					c.nextDue = base.Add(delay)
+					if c.nextDue.Before(c.now()) {
+						c.nextDue = c.now()
 					}
-					switch {
-					case !unchanged:
-						cmds = append(cmds, c.submit(c.source))
-					case c.submitted != nil:
-						c.submitted.source = c.source // Same pixels as the pending image.
-					case c.presented != nil && sameImage(c.presented.Image(), c.source.Image()):
-						c.presented = c.source // Same pixels as the committed image.
-					}
+				}
+				switch {
+				case !unchanged:
+					cmds = append(cmds, c.submit(c.source))
+				case c.submitted != nil:
+					c.submitted.source = c.source // Same pixels as the pending image.
+				case c.presented != nil && sameImage(c.presented.Image(), c.source.Image()):
+					c.presented = c.source // Same pixels as the committed image.
 				}
 			}
 		}
@@ -407,6 +420,47 @@ func (c *Controller) stop() {
 // SetBackground re-prepares the current frame without seeking or restarting playback.
 func (c *Controller) SetBackground(bg color.Color) tea.Cmd {
 	return c.presentation(c.pic.SetBackground(bg))
+}
+
+// restyleSource updates the current source without cancelling an in-flight
+// advance/seek/restart job or resetting nextDue. If the source's image is
+// unchanged, it updates the tracked source in place without resubmitting to Picture.
+func (c *Controller) restyleSource(source animation.Source) tea.Cmd {
+	if c.closed || source == nil {
+		return nil
+	}
+	unchanged := c.source != nil && sameImage(c.source.Image(), source.Image())
+	c.setSource(source)
+	if c.job != nil {
+		c.job.setSource(source)
+	}
+	if unchanged {
+		switch {
+		case c.submitted != nil:
+			c.submitted.source = c.source
+		case c.presented != nil && sameImage(c.presented.Image(), c.source.Image()):
+			c.presented = c.source
+		}
+		return nil
+	}
+	if c.pic.Status().Err == nil {
+		c.presentationErr = nil
+	}
+	return tea.Batch(c.submit(c.source), c.schedule())
+}
+
+func (c *Controller) restyleBackground(bg color.Color, source animation.Source) tea.Cmd {
+	if c.closed {
+		return nil
+	}
+	if source == nil {
+		return c.SetBackground(bg)
+	}
+	unchanged := c.source != nil && sameImage(c.source.Image(), source.Image())
+	if unchanged {
+		return tea.Batch(c.restyleSource(source), c.SetBackground(bg))
+	}
+	return c.restyleSource(source)
 }
 
 func (c *Controller) Fit() picture.FitMode { return c.pic.Fit() }

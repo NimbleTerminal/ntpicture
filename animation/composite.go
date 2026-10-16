@@ -139,6 +139,18 @@ func (s *Composite) Positions() Positions {
 // Keys reports the saved region keys in sorted order.
 func (p Positions) Keys() []string { return slices.Sorted(maps.Keys(p.positions)) }
 
+// Delay reports the time until the next non-finished region in p is due, or 0
+// when all tracked regions have finished or p is empty.
+func (p Positions) Delay() time.Duration {
+	var delay time.Duration
+	for _, pos := range p.positions {
+		if !pos.finished && (delay == 0 || pos.due < delay) {
+			delay = pos.due
+		}
+	}
+	return delay
+}
+
 // WithPositions returns a new snapshot combining p with others, later
 // arguments winning. Unlike Composite.WithPositions, it copies no pixels and
 // retains all keys present across the sources.
@@ -214,14 +226,21 @@ func (s *Composite) WithPositions(ctx context.Context, others ...PositionSource)
 		n.carry(other)
 	}
 	unchanged := true
+	samePlayers := true
 	for key, p := range n.positions {
-		if p != s.positions[key] {
+		old := s.positions[key]
+		if p != old {
 			unchanged = false
-			break
+			if p.player != old.player {
+				samePlayers = false
+			}
 		}
 	}
 	if unchanged {
 		return s, ctx.Err()
+	}
+	if samePlayers && s.frame != nil {
+		return n, ctx.Err()
 	}
 	return n.compose(ctx)
 }

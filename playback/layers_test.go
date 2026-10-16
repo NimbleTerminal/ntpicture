@@ -1438,6 +1438,16 @@ func TestDefaultFitFillAndFitAnchorReplanOverlays(t *testing.T) {
 		t.Fatal("Snapshot nil while SetFit is pending")
 	}
 	driveLayers(t, l, fitCmd)
+	if len(l.Layers()) != 1 || l.Layers()[0].Cells != image.Rect(0, 0, 10, 2) {
+		t.Fatalf("FitContain overlay cells = %+v, want (0,0)-(10,2)", l.Layers())
+	}
+	ovImg := l.Layers()[0].Status.Presented.Image()
+	if got := color.RGBAModel.Convert(ovImg.At(4, 0)); got != (color.RGBA{}) {
+		t.Fatalf("FitContain letterbox bar pixel (4,0) = %v, want transparent background", got)
+	}
+	if got := color.RGBAModel.Convert(ovImg.At(4, 2)); got != green {
+		t.Fatalf("FitContain content pixel (4,2) = %v, want green", got)
+	}
 
 	// Switch to FitCover with AnchorBottom: 40x20 in 80x64 scales to 128x64 anchored at bottom/center.
 	// Now change to a tall 40x80 composite in 80x64 to test vertical crop anchoring (AnchorTop vs AnchorBottom).
@@ -1527,5 +1537,381 @@ func TestSetCompositeRunsOffLoopAndPreservesPositionsOnLayoutFailure(t *testing.
 	driveLayers(t, l, l.SetComposite(comp2))
 	if got := color.RGBAModel.Convert(l.Snapshot().At(20, 20)); got != green {
 		t.Fatalf("failed layout overwrote harvested position: got %v, want green", got)
+	}
+}
+
+// Under FitContain, an overlay whose cell grid straddles a letterbox or
+// pillarbox bar places the source crop only within the inscribed destination
+// sub-rectangle of its cell box and fills the bar portion with the background
+// color across initial layout, frame advances, and SetBackground.
+func TestFitContainLetterboxedOverlayDoesNotStretchAcrossBars(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	navy := color.RGBA{B: 128, A: 255}
+	baseCol := color.RGBA{R: 20, G: 20, B: 20, A: 255}
+
+	// 20x40 composite (1:2 aspect) on a 9x4 cell grid with 8x16 cells (72x64 target raster).
+	// Under FitContain + AnchorCenter, 20x40 scales by 1.6 to 32x64 at x=20..52, y=0..64.
+	// Left edge x=20 is inside cell column 2 (x=16..24), so x=16..20 is pillarbox bar
+	// and x=20..24 is content.
+	const cols, rows, cw, ch = 9, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, 20, 40), baseCol)
+	player := colorPlayer(t, image.Pt(16, 64), red, green)
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "left", Rect: image.Rect(0, 0, 10, 40), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var allowSteps atomic.Int32
+	l := NewLayers(comp, Options{
+		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+
+	l.Pause(true)
+	l.SetFit(picture.FitContain)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	// Region (0,0)-(10,40) maps to target (20,0)-(36,64) -> cells (2,0)-(5,4), cellPx (16,0)-(40,64).
+	// tWin = cellPx.Intersect(dst) = (20,0)-(40,64): within the 24x64 overlay image,
+	// x=0..3 is the pillarbox bar, x=4..19 is the region (red), and x=20..23 is the base composite (baseCol).
+	if len(l.Layers()) != 1 || l.Layers()[0].Cells != image.Rect(2, 0, 5, 4) {
+		t.Fatalf("FitContain pillarboxed overlay cells = %+v, want (2,0)-(5,4)", l.Layers())
+	}
+	ov1 := l.Layers()[0].Status.Presented.Image()
+	if ov1.Bounds() != image.Rect(0, 0, 24, 64) {
+		t.Fatalf("overlay image bounds = %v, want (0,0)-(24,64)", ov1.Bounds())
+	}
+	if got := color.RGBAModel.Convert(ov1.At(2, 10)); got != (color.RGBA{}) {
+		t.Fatalf("frame 1 pillarbox bar pixel (2,10) = %v, want transparent background", got)
+	}
+	if got := color.RGBAModel.Convert(ov1.At(8, 10)); got != red {
+		t.Fatalf("frame 1 content pixel (8,10) = %v, want red", got)
+	}
+	if got := color.RGBAModel.Convert(ov1.At(22, 10)); got != baseCol {
+		t.Fatalf("frame 1 right cell bleed pixel (22,10) = %v, want baseCol %v", got, baseCol)
+	}
+
+	// Step one frame so the overlay advances from red to green.
+	allowSteps.Store(1)
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+
+	ov2 := l.Layers()[0].Status.Presented.Image()
+	if got := color.RGBAModel.Convert(ov2.At(2, 10)); got != (color.RGBA{}) {
+		t.Fatalf("frame 2 pillarbox bar pixel (2,10) = %v, want transparent background", got)
+	}
+	if got := color.RGBAModel.Convert(ov2.At(8, 10)); got != green {
+		t.Fatalf("frame 2 content pixel (8,10) = %v, want green", got)
+	}
+
+	// Updating background color re-fills the pillarbox bar without disturbing the advanced frame
+	// or leaking the bar color into the source-coordinate Snapshot().
+	driveLayers(t, l, l.SetBackground(navy))
+	ov3 := l.Layers()[0].Status.Presented.Image()
+	if got := color.RGBAModel.Convert(ov3.At(2, 10)); got != navy {
+		t.Fatalf("after SetBackground pillarbox bar pixel (2,10) = %v, want navy %v", got, navy)
+	}
+	if got := color.RGBAModel.Convert(ov3.At(8, 10)); got != green {
+		t.Fatalf("after SetBackground content pixel (8,10) = %v, want green", got)
+	}
+	snap := l.Snapshot()
+	if got := color.RGBAModel.Convert(snap.At(1, 10)); got != green {
+		t.Fatalf("source Snapshot pixel (1,10) = %v, want green (no pillarbox bar leak)", got)
+	}
+	if got := color.RGBAModel.Convert(snap.At(15, 10)); got != baseCol {
+		t.Fatalf("source Snapshot pixel (15,10) = %v, want baseCol %v", got, baseCol)
+	}
+}
+
+// Status().Presented keeps its pixels and playback clock (Delay, Advance, Reset)
+// aligned with the committed screen state after Kitty overlay advances, while
+// replacements are pending in Kitty or Glyph mode, and when finite clips end.
+func TestStatusPresentedPixelsAndClockAgree(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	blue := color.RGBA{B: 255, A: 255}
+	yellow := color.RGBA{R: 255, G: 255, A: 255}
+	const cols, rows, cw, ch = 6, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	rBounds := image.Rect(0, 0, 16, 16)
+
+	clip := &animation.Clip{
+		Bounds:    rBounds,
+		LoopCount: 0, // infinite loop
+		Frames: []animation.ClipFrame{
+			{Image: solidImage(rBounds, red), Rect: rBounds, Delay: 30 * time.Millisecond},
+			{Image: solidImage(rBounds, green), Rect: rBounds, Delay: 50 * time.Millisecond},
+			{Image: solidImage(rBounds, blue), Rect: rBounds, Delay: 70 * time.Millisecond},
+		},
+	}
+	player, err := animation.NewPlayer(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "anim", Rect: rBounds, Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var allowSteps atomic.Int32
+	l := NewLayers(comp, Options{
+		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+
+	l.Pause(true)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	// Frame 1 (red, 30ms) is committed on screen.
+	pres1 := l.Status().Presented
+	if pres1 == nil {
+		t.Fatal("Presented nil after Init")
+	}
+	if got := color.RGBAModel.Convert(pres1.Image().At(4, 4)); got != red {
+		t.Fatalf("frame 1 Presented pixel = %v, want red", got)
+	}
+	if pres1.Delay() != 30*time.Millisecond {
+		t.Fatalf("frame 1 Presented.Delay() = %v, want 30ms", pres1.Delay())
+	}
+
+	// Step one timer wait so the overlay commits frame 2 (green, 50ms).
+	allowSteps.Store(1)
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+
+	pres2 := l.Status().Presented
+	if got := color.RGBAModel.Convert(pres2.Image().At(4, 4)); got != green {
+		t.Fatalf("frame 2 Presented pixel = %v, want green", got)
+	}
+	if pres2.Delay() != 50*time.Millisecond {
+		t.Fatalf("frame 2 Presented.Delay() = %v, want 50ms", pres2.Delay())
+	}
+	next2, more2, err := pres2.Advance(context.Background())
+	if err != nil || !more2 {
+		t.Fatalf("pres2.Advance() = (%v, %v), want more=true, err=nil", more2, err)
+	}
+	if got := color.RGBAModel.Convert(next2.Image().At(4, 4)); got != blue {
+		t.Fatalf("pres2.Advance() pixel = %v, want blue (frame 3, not stale frame 2)", got)
+	}
+	if next2.Delay() != 70*time.Millisecond {
+		t.Fatalf("pres2.Advance().Delay() = %v, want 70ms", next2.Delay())
+	}
+	resetSrc, err := pres2.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("pres2.Reset() error: %v", err)
+	}
+	if got := color.RGBAModel.Convert(resetSrc.Image().At(4, 4)); got != red {
+		t.Fatalf("pres2.Reset() pixel = %v, want red (frame 1)", got)
+	}
+
+	// Start a replacement composite with a 100ms initial delay without running its command yet.
+	otherClip := &animation.Clip{
+		Bounds:    rBounds,
+		LoopCount: 0,
+		Frames: []animation.ClipFrame{
+			{Image: solidImage(rBounds, yellow), Rect: rBounds, Delay: 100 * time.Millisecond},
+			{Image: solidImage(rBounds, red), Rect: rBounds, Delay: 110 * time.Millisecond},
+		},
+	}
+	otherPlayer, err := animation.NewPlayer(otherClip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherComp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "other", Rect: rBounds, Player: otherPlayer},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pendingCmd := l.SetComposite(otherComp)
+	presPending := l.Status().Presented
+	if got := color.RGBAModel.Convert(presPending.Image().At(4, 4)); got != green {
+		t.Fatalf("pending Kitty replacement Presented pixel = %v, want committed green", got)
+	}
+	if presPending.Delay() != 50*time.Millisecond {
+		t.Fatalf("pending Kitty replacement Presented.Delay() = %v, want committed 50ms", presPending.Delay())
+	}
+	nextPending, _, err := presPending.Advance(context.Background())
+	if err != nil {
+		t.Fatalf("pending Kitty replacement Advance error: %v", err)
+	}
+	if got := color.RGBAModel.Convert(nextPending.Image().At(4, 4)); got != blue || nextPending.Delay() != 70*time.Millisecond {
+		t.Fatalf("pending Kitty replacement Advance = (%v, %v), want (blue, 70ms)",
+			color.RGBAModel.Convert(nextPending.Image().At(4, 4)), nextPending.Delay())
+	}
+	_ = pendingCmd
+
+	// Switch to Glyph mode on comp (which carries frame 2 green, 50ms) and advance one frame to blue (70ms).
+	driveLayers(t, l, tea.Batch(l.SetTerminal(false, cw, ch), l.SetComposite(comp)))
+	allowSteps.Store(1)
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+
+	glyphPendingCmd := l.SetComposite(otherComp)
+	presGlyphPending := l.Status().Presented
+	if got := color.RGBAModel.Convert(presGlyphPending.Image().At(4, 4)); got != blue {
+		t.Fatalf("pending Glyph replacement Presented pixel = %v, want committed blue", got)
+	}
+	if presGlyphPending.Delay() != 70*time.Millisecond {
+		t.Fatalf("pending Glyph replacement Presented.Delay() = %v, want committed 70ms", presGlyphPending.Delay())
+	}
+	_ = glyphPendingCmd
+}
+
+// Disjoint overlays sharing a key update follower positions on the finishing
+// tick and let the leader win in presentedPositions, so Status().Presented.Delay()
+// reaches 0 when a finite shared-key clip finishes and does not rewind when a
+// follower's commit lags the leader.
+func TestSharedKeyFiniteClipFinishesPresentedClock(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 8, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	rBounds := image.Rect(0, 0, 16, 16)
+
+	clip := &animation.Clip{
+		Bounds:    rBounds,
+		LoopCount: -1, // finite 2-frame clip
+		Frames: []animation.ClipFrame{
+			{Image: solidImage(rBounds, red), Rect: rBounds, Delay: 30 * time.Millisecond},
+			{Image: solidImage(rBounds, green), Rect: rBounds, Delay: 70 * time.Millisecond},
+		},
+	}
+	player, err := animation.NewPlayer(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two disjoint regions sharing key "shared" -> leader at cells (0,0)-(2,1) and follower at (4,2)-(6,3).
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "shared", Rect: image.Rect(0, 0, 16, 16), Player: player},
+		{Key: "shared", Rect: image.Rect(32, 32, 48, 48), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLayers(comp, Options{
+		Wait:    func(context.Context, time.Duration) bool { return true },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	if !l.Status().Finished {
+		t.Fatalf("expected Status().Finished after finite shared-key clip, got %+v", l.Status())
+	}
+	if got := l.Positions().Delay(); got != 0 {
+		t.Fatalf("Positions().Delay() = %v, want 0", got)
+	}
+	pres := l.Status().Presented
+	if pres == nil {
+		t.Fatal("Status().Presented is nil")
+	}
+	if got := pres.Delay(); got != 0 {
+		t.Fatalf("Status().Presented.Delay() = %v, want 0 (not follower's stale 70ms)", got)
+	}
+	if _, more, err := pres.Advance(context.Background()); err != nil || more {
+		t.Fatalf("finished Presented.Advance() = (more=%v, err=%v), want (false, nil)", more, err)
+	}
+	for i, ov := range l.Layers() {
+		if !ov.Status.Finished || ov.Status.Presented == nil || ov.Status.Presented.Delay() != 0 {
+			t.Fatalf("overlay %d status after finish = %+v, want Finished=true and Presented.Delay()=0", i, ov.Status)
+		}
+	}
+}
+
+// SetBackground on a playing FitContain padded overlay (and linked leader)
+// updates the letterbox bar color without cancelling the in-flight timer,
+// resetting nextDue, or dropping an advance that was already composing.
+func TestSetBackgroundPreservesPaddedOverlayTimer(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	navy := color.RGBA{B: 128, A: 255}
+	baseCol := color.RGBA{R: 20, G: 20, B: 20, A: 255}
+
+	// 20x40 composite on 9x4 grid of 8x16 cells (72x64 target).
+	// Under FitContain, inscribed dst is (20,0)-(52,64), so both left (x=20..28)
+	// and right (x=44..52) regions straddle pillarbox bars in cells (2,0)-(4,1) and (5,2)-(7,3).
+	const cols, rows, cw, ch = 9, 4, 8, 16
+	base := solidImage(image.Rect(0, 0, 20, 40), baseCol)
+	player := colorPlayer(t, image.Pt(8, 10), red, green)
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "shared", Rect: image.Rect(0, 0, 5, 10), Player: player},
+		{Key: "shared", Rect: image.Rect(15, 20, 20, 30), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var allowSteps atomic.Int32
+	l := NewLayers(comp, Options{
+		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer l.Close()
+
+	l.Pause(true)
+	l.SetFit(picture.FitContain)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	if len(l.overlays) != 2 {
+		t.Fatalf("expected 2 linked overlays, got %d", len(l.overlays))
+	}
+	lead := l.overlays[0]
+
+	// Start playback so lead.ctrl schedules its timer job for frame 1 -> frame 2,
+	// without executing the timer command yet.
+	playCmd := l.Pause(false)
+	origJob := lead.ctrl.job
+	origDue := lead.ctrl.nextDue
+	if origJob == nil || origDue.IsZero() {
+		t.Fatalf("expected active timer job and non-zero nextDue after unpausing, got job=%v due=%v", origJob, origDue)
+	}
+
+	// Change background while the timer job is in flight: must not cancel origJob or reset nextDue.
+	driveLayers(t, l, l.SetBackground(navy))
+	if lead.ctrl.job != origJob || origJob.ctx.Err() != nil {
+		t.Fatal("SetBackground cancelled the in-flight overlay timer job")
+	}
+	if !lead.ctrl.nextDue.Equal(origDue) {
+		t.Fatalf("SetBackground changed nextDue: got %v, want %v", lead.ctrl.nextDue, origDue)
+	}
+	if got := color.RGBAModel.Convert(l.Layers()[0].Status.Presented.Image().At(0, 0)); got != navy {
+		t.Fatalf("leader pillarbox bar after SetBackground = %v, want navy", got)
+	}
+
+	// Now allow the original timer job to complete one advance to frame 2 (green):
+	// both leader and follower must preserve the navy background on frame 2.
+	allowSteps.Store(1)
+	driveLayers(t, l, playCmd)
+	l.Pause(true)
+
+	ovLead := l.Layers()[0].Status.Presented.Image()
+	if got := color.RGBAModel.Convert(ovLead.At(0, 0)); got != navy {
+		t.Fatalf("leader frame 2 pillarbox bar = %v, want navy", got)
+	}
+	if got := color.RGBAModel.Convert(ovLead.At(ovLead.Bounds().Dx()/2, ovLead.Bounds().Dy()/2)); got != green {
+		t.Fatalf("leader frame 2 content = %v, want green", got)
+	}
+	ovFollow := l.Layers()[1].Status.Presented.Image()
+	if got := color.RGBAModel.Convert(ovFollow.At(ovFollow.Bounds().Dx()-1, 0)); got != navy {
+		t.Fatalf("follower frame 2 pillarbox bar = %v, want navy", got)
 	}
 }
