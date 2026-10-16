@@ -265,13 +265,9 @@ func (m *model) start() tea.Cmd {
 	phase := float64(m.frames) * phaseStep
 	due := m.lastStart.Add(m.interval)
 	return func() tea.Msg {
-		if wait := time.Until(due); wait > 0 {
-			timer := time.NewTimer(wait)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
+		if wait := time.Until(due); wait > 0 || m.frames > 0 {
+			if !demohelp.Wait(ctx, max(0, wait)) {
 				return frameMsg{request: request, geometry: g, err: ctx.Err()}
-			case <-timer.C:
 			}
 		}
 		started := time.Now()

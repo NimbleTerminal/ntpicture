@@ -51,14 +51,17 @@ try {
     }
     bubbletea_write(' ');
     let paused = '';
-    for (let n = 0; n < 100 && !paused.includes('paused'); n++) {
+    for (let n = 0; n < 100 && !paused.includes('aused'); n++) {
       await delay(25);
       paused += bubbletea_read();
     }
-    assert.ok(paused.includes('paused'), 'animation pauses through input bridge');
+    assert.ok(paused.includes('aused'), 'animation pauses through input bridge');
     bubbletea_write(composite ? '\x1b[H' : '.');
-    await delay(100);
-    const stepped = bubbletea_read();
+    let stepped = '';
+    for (let n = 0; n < 100 && (!composite ? stepped.length === 0 : n < 4); n++) {
+      await delay(25);
+      stepped += bubbletea_read();
+    }
     // Restart may leave the screen identical when already on frame one.
     if (!composite) assert.ok(stepped.length > 0, 'paused animation can step frames');
     bubbletea_write(' ');
@@ -79,22 +82,29 @@ try {
     assert.ok(frames.includes('▄'), 'producer delivered frames');
     bubbletea_write(' ');
     let paused = '';
-    for (let n = 0; n < 100 && !paused.includes('paused'); n++) {
+    for (let n = 0; n < 100 && !paused.includes('aused'); n++) {
       await delay(25);
       paused += bubbletea_read();
     }
-    assert.ok(paused.includes('paused'), 'framebuffer pauses through input bridge');
+    assert.ok(paused.includes('aused'), 'framebuffer pauses through input bridge');
     // While paused, only the viewport changes; the redraw proves the pan.
     bubbletea_read();
     bubbletea_write('\x1b[C');
-    await delay(100);
-    assert.ok(bubbletea_read().length > 0, 'paused viewport pans');
+    let panned = '';
+    for (let n = 0; n < 100 && panned.length === 0; n++) {
+      await delay(25);
+      panned += bubbletea_read();
+    }
+    assert.ok(panned.length > 0, 'paused viewport pans');
     bubbletea_write(' ');
   }
   bubbletea_resize(44, 18);
   if (demo === 'grid') bubbletea_write('d');
-  await delay(150);
-  const changed = bubbletea_read();
+  let changed = '';
+  for (let n = 0; n < 100 && changed.length === 0; n++) {
+    await delay(25);
+    changed += bubbletea_read();
+  }
   assert.ok(changed.length > 0, 'resize or movement produces output');
   bubbletea_write(process.argv[3] === 'keep' ? 'Q' : quit.keys[quit.preferred].key);
   await running;

@@ -133,16 +133,6 @@ func (c *Controller) setSource(source animation.Source) {
 	c.source = source
 	c.finished = source != nil && source.Delay() <= 0
 }
-func wait(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
 func (c *Controller) Init() tea.Cmd {
 	var cmd tea.Cmd
 	if c.source != nil {
