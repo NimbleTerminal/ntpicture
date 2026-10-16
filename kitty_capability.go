@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"nimbleterminal.dev/ntpicture/internal/legacybridge"
 )
 
 // KittyCapability reports whether the host terminal supports the Kitty
@@ -55,14 +54,12 @@ var (
 	kittySharedAutoUnsupported atomic.Bool
 )
 
-type kittyCapabilityMsg struct{ Capability KittyCapability }
+// KittyCapabilityMsg reports probe resolution on the default terminal session.
+type KittyCapabilityMsg struct{ Capability KittyCapability }
 
 func kittyCapabilityCommand(c KittyCapability) tea.Cmd {
 	return func() tea.Msg {
-		if legacybridge.WrapCapabilityMsg != nil {
-			return legacybridge.WrapCapabilityMsg(int8(c))
-		}
-		return kittyCapabilityMsg{Capability: c}
+		return KittyCapabilityMsg{Capability: c}
 	}
 }
 

@@ -642,3 +642,52 @@ func TestNormalizeConfigRejectsOver24BitKittyID(t *testing.T) {
 		t.Fatalf("normalizeConfig(1<<24) = %d, want DefaultKittyID (%d)", got, DefaultKittyID)
 	}
 }
+
+type uncomparableValueImage struct {
+	pix    []color.RGBA
+	bounds image.Rectangle
+}
+
+func (u uncomparableValueImage) ColorModel() color.Model { return color.RGBAModel }
+func (u uncomparableValueImage) Bounds() image.Rectangle { return u.bounds }
+func (u uncomparableValueImage) At(x, y int) color.Color {
+	if !(image.Point{X: x, Y: y}.In(u.bounds)) || len(u.pix) == 0 {
+		return color.RGBA{}
+	}
+	return u.pix[0]
+}
+
+func TestFailPreparedJobWithUncomparableValueImagesDoesNotPanic(t *testing.T) {
+	p := testPicture(false)
+	defer func() { drivePicture(t, p, p.Close()) }()
+
+	imgA := uncomparableValueImage{
+		pix:    []color.RGBA{{R: 200, G: 20, B: 20, A: 255}},
+		bounds: image.Rect(0, 0, 16, 32),
+	}
+	imgB := uncomparableValueImage{
+		pix:    []color.RGBA{{R: 20, G: 20, B: 200, A: 255}},
+		bounds: image.Rect(0, 0, 16, 32),
+	}
+
+	drivePicture(t, p, p.SetImageImmutable(imgA))
+	if p.front == nil || p.front.cols != 2 || p.front.rows != 2 {
+		t.Fatalf("initial front = %+v, want 2x2", p.front)
+	}
+
+	// Queue a resize to 4x3 and submit imgB as a value-type image with a slice field.
+	_ = p.SetSize(4, 3)
+	_ = p.SetImageImmutable(imgB)
+	if p.job == nil {
+		t.Fatal("expected in-flight job for imgB")
+	}
+
+	// Simulate an asynchronous preparation failure for imgB; failPreparedJob must
+	// not panic when comparing value-type images and must re-prepare imgA at 4x3.
+	recCmd := p.Update(picturePrepared{owner: p, job: p.job, frame: nil})
+	drivePicture(t, p, recCmd)
+
+	if p.front == nil || p.front.cols != 4 || p.front.rows != 3 {
+		t.Fatalf("front after failPreparedJob recovery = %+v, want 4x3", p.front)
+	}
+}

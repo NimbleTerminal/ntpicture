@@ -2,7 +2,6 @@ package ntpicture
 
 type Model = legacyModel
 type KittyFrameMsg = kittyFrameMsg
-type KittyCapabilityMsg = kittyCapabilityMsg
 
 var (
 	NewModel               = newLegacyModel

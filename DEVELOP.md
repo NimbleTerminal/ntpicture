@@ -172,8 +172,7 @@ open the local site in this session and no Kitty terminal was driven
 interactively. Automated evidence: `task check-site` (Node smoke of all five
 demos including framebuffer pause, pan, and keep-screen exit), native and WASM
 unit tests with the race detector, and a pseudo-terminal run of
-`bin/ntpicture-framebuffer`. With `NTPICTURE_KITTY=supported` (then named
-`NTCHARTS_KITTY=supported`) and an answered
+`bin/ntpicture-framebuffer`. With `NTPICTURE_KITTY=supported` and an answered
 cell-size query, that run transmitted 57 zlib frames under one stable image ID
 at 480×248 px for 120×31 cells, used a fresh ID at 720×372 px with the same
 cells after `]`, another after a resize to 150×39 cells, and deleted all three

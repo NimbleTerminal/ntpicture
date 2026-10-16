@@ -3,7 +3,6 @@ package legacybridge
 import (
 	"context"
 	"image"
-	"image/color"
 
 	tea "charm.land/bubbletea/v2"
 	"nimbleterminal.dev/ntpicture/internal/kittyshm"
@@ -22,21 +21,6 @@ type FrameFields struct {
 	SharedMemory *kittyshm.Object
 }
 
-// ConfigFields carries renderer configuration across root ntpicture and
-// ntpicture/legacy without cyclic package imports.
-type ConfigFields struct {
-	KittyZ                int
-	KittyID               int
-	Background            color.Color
-	Fit                   int8
-	Anchor                int8
-	CellPixelWidth        int
-	CellPixelHeight       int
-	KittyResolutionFactor float64
-	KittyFormat           int8
-	KittyMedium           int8
-}
-
 var (
 	EnsureLegacyEnv        func()
 	DefaultTerminalSession func() any
@@ -49,13 +33,11 @@ var (
 	RequestCellSize        func() tea.Cmd
 	IsPictureMsg           func(tea.Msg) bool
 
-	WrapFrameMsg      func(FrameFields) tea.Msg
-	UnwrapFrameMsg    func(tea.Msg) (FrameFields, bool)
-	WrapCapabilityMsg func(int8) tea.Msg
-	IsCapabilityMsg   func(tea.Msg) bool
+	WrapFrameMsg   func(FrameFields) tea.Msg
+	UnwrapFrameMsg func(tea.Msg) (FrameFields, bool)
 
 	NewModel                      func() any
-	NewModelWithConfig            func(ConfigFields) any
+	NewModelWithConfig            func(cfg any) any
 	ModelSetImage                 func(m any, img image.Image) (any, tea.Cmd)
 	ModelSetSize                  func(m any, cols, rows int) (any, tea.Cmd)
 	ModelToggleBlocked            func(m any) error

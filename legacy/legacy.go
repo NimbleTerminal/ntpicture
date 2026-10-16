@@ -42,13 +42,6 @@ func init() {
 			SharedMemory: f.sharedMemory,
 		}, true
 	}
-	legacybridge.WrapCapabilityMsg = func(c int8) tea.Msg {
-		return KittyCapabilityMsg{Capability: ntpicture.KittyCapability(c)}
-	}
-	legacybridge.IsCapabilityMsg = func(msg tea.Msg) bool {
-		_, ok := msg.(KittyCapabilityMsg)
-		return ok
-	}
 	if legacybridge.EnsureLegacyEnv != nil {
 		legacybridge.EnsureLegacyEnv()
 	}
@@ -70,9 +63,7 @@ type KittyFrameMsg struct {
 }
 
 // KittyCapabilityMsg reports probe resolution on the legacy process-wide session.
-type KittyCapabilityMsg struct {
-	Capability ntpicture.KittyCapability
-}
+type KittyCapabilityMsg = ntpicture.KittyCapabilityMsg
 
 // Model renders an image.Image as half-blocks or Kitty graphics inside a
 // Bubble Tea program using the extracted low-level NTCharts API. New consumers
@@ -96,20 +87,7 @@ func NewModel() Model {
 // NewModelWithConfig returns a Model with the supplied Config. Zero/nil fields
 // are filled with defaults.
 func NewModelWithConfig(cfg ntpicture.Config) Model {
-	return Model{
-		inner: legacybridge.NewModelWithConfig(legacybridge.ConfigFields{
-			KittyZ:                cfg.KittyZ,
-			KittyID:               cfg.KittyID,
-			Background:            cfg.Background,
-			Fit:                   int8(cfg.Fit),
-			Anchor:                int8(cfg.Anchor),
-			CellPixelWidth:        cfg.CellPixelWidth,
-			CellPixelHeight:       cfg.CellPixelHeight,
-			KittyResolutionFactor: cfg.KittyResolutionFactor,
-			KittyFormat:           int8(cfg.KittyFormat),
-			KittyMedium:           int8(cfg.KittyMedium),
-		}),
-	}
+	return Model{inner: legacybridge.NewModelWithConfig(cfg)}
 }
 
 // SetImage retains the image without copying; callers must keep its pixels immutable.

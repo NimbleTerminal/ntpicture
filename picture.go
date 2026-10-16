@@ -112,6 +112,7 @@ type Picture struct {
 	viewport              Viewport
 	viewportSet           bool
 	img                   image.Image
+	imgID                 uint64
 	generation, presented uint64
 	front                 *picturePlacement
 	job                   *pictureJob
@@ -134,6 +135,7 @@ type picturePlacement struct {
 	transport   kittyTransport
 	kittyShared *kittySharedState
 	image       image.Image
+	imgID       uint64
 	grid        string
 	generation  uint64
 	retireAt    time.Time
@@ -260,6 +262,7 @@ func (p *Picture) SetImageImmutable(img image.Image) tea.Cmd {
 		}
 	}
 	p.img = img
+	p.imgID++
 	return p.changed()
 }
 func checkImage(img image.Image) error {
@@ -304,11 +307,11 @@ func (p *Picture) failSubmission(err error) tea.Cmd {
 	p.err = err
 	p.dirty = false
 	if p.opts.ClearOnReplace && p.visible {
-		p.img = nil
+		p.img, p.imgID = nil, 0
 	} else if p.front != nil {
-		p.img = p.front.image
+		p.img, p.imgID = p.front.image, p.front.imgID
 	} else if p.visible && p.cols > 0 && p.rows > 0 {
-		p.img = nil
+		p.img, p.imgID = nil, 0
 	}
 	if p.job != nil {
 		p.job.cancel()
@@ -330,17 +333,17 @@ func (p *Picture) failPreparedJob(j *pictureJob, err error) tea.Cmd {
 	p.job = nil
 	cleanup := p.dispose(j.placement)
 	if p.opts.ClearOnReplace && p.visible {
-		p.img = nil
+		p.img, p.imgID = nil, 0
 		return tea.Batch(cleanup, p.clearFront(), p.reportError(err))
 	}
 	if p.front != nil {
-		failedImg := j.placement.image
-		p.img = p.front.image
-		if failedImg != p.front.image && p.frontNeedsPrepare() {
+		failedImgID := j.placement.imgID
+		p.img, p.imgID = p.front.image, p.front.imgID
+		if (failedImgID != p.front.imgID || (p.front.lease != nil && p.front.lease.overwritten.Load())) && p.frontNeedsPrepare() {
 			p.dirty = true
 		}
 	} else if p.visible && p.cols > 0 && p.rows > 0 {
-		p.img = nil
+		p.img, p.imgID = nil, 0
 	}
 	return tea.Batch(cleanup, p.reportError(err), p.schedule())
 }
@@ -496,6 +499,7 @@ func (p *Picture) schedule() tea.Cmd {
 		transport:   transport,
 		kittyShared: &kittySharedState{},
 		image:       p.img,
+		imgID:       p.imgID,
 		generation:  p.generation,
 	}
 	placement.active.Store(true)

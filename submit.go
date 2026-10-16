@@ -65,5 +65,6 @@ func (p *Picture) Submit(f Frame) tea.Cmd {
 		img = snapshotImage(img)
 	}
 	p.img = img
+	p.imgID++
 	return p.changed()
 }
