@@ -598,7 +598,13 @@ func TestControllerHiddenRepeatSetVisiblePreservesQueuedSeekAndPostCloseGuards(t
 	}
 
 	// After Close(), Pause and SetRate must be no-ops that do not mutate Status.
+	if c.Closed() {
+		t.Fatal("expected controller not to be closed before Close()")
+	}
 	drive(t, c, c.Close())
+	if !c.Closed() || !(*Controller)(nil).Closed() {
+		t.Fatal("expected Closed() to report true after Close() and on nil receiver")
+	}
 	before := c.Status()
 	if c.Pause(false) != nil || c.SetRate(3) != nil {
 		t.Fatal("expected Pause and SetRate after Close to return nil")
@@ -606,5 +612,23 @@ func TestControllerHiddenRepeatSetVisiblePreservesQueuedSeekAndPostCloseGuards(t
 	after := c.Status()
 	if after.Paused != before.Paused || after.Rate != before.Rate {
 		t.Fatalf("post-Close Pause/SetRate mutated status: before=%+v after=%+v", before, after)
+	}
+
+	session := picture.NewTerminalSession(picture.TerminalOptions{
+		Kitty:           picture.KittyCapabilitySupported,
+		CellPixelWidth:  11,
+		CellPixelHeight: 22,
+	})
+	defer session.Close()
+	cSess := New(testPlayer(t), Options{Picture: picture.Options{Session: session}})
+	if cSess.KittySupported() != picture.KittyCapabilitySupported {
+		t.Fatalf("KittySupported() = %v, want Supported", cSess.KittySupported())
+	}
+	if st := cSess.TerminalState(); st.CellPixelWidth != 11 || st.CellPixelHeight != 22 {
+		t.Fatalf("TerminalState() = %+v, want 11x22", st)
+	}
+	drive(t, cSess, cSess.Keep())
+	if !cSess.Closed() {
+		t.Fatal("expected Closed() to report true after Keep()")
 	}
 }

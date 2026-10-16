@@ -150,3 +150,120 @@ func TestGlyphRasterLimitUsesEffectiveDimensions(t *testing.T) {
 		t.Fatal("rejected boundary-sized raster")
 	}
 }
+
+func TestMaxRasterPixelsClampsKittyTargetAndPreservesAspect(t *testing.T) {
+	// 800x400 target with MaxRasterPixels=100000:
+	// sqrt(100000 / 320000) * (800, 400) = (447.213595, 223.606797).
+	// Naive math.Round gives 447 * 224 = 100128 > 100000; MaxRasterPixels must clamp <= 100000.
+	p := New(Options{
+		StableID:    true,
+		RetireDelay: -1,
+		Render: Config{
+			Fit:             FitFill,
+			CellPixelWidth:  8,
+			CellPixelHeight: 16,
+			MaxRasterPixels: 100000,
+			KittyFormat:     KittyFormatRGBA,
+		},
+	})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	p.SetSize(100, 25) // 800x400 terminal pixels
+	p.SetTerminal(true, 8, 16)
+
+	g := p.RasterGeometry()
+	if g.Pixels.X <= 0 || g.Pixels.Y <= 0 || g.Pixels.X*g.Pixels.Y > 100000 {
+		t.Fatalf("Pixels = %v (%d px), want <= 100000", g.Pixels, g.Pixels.X*g.Pixels.Y)
+	}
+	if g.Pixels != image.Pt(447, 223) {
+		t.Fatalf("Pixels = %v, want 447x223", g.Pixels)
+	}
+	if math.Abs(g.DisplayAspect-2.0) > 1e-12 {
+		t.Fatalf("DisplayAspect = %v, want 2.0", g.DisplayAspect)
+	}
+	if p.MaxRasterPixels() != 100000 {
+		t.Fatalf("MaxRasterPixels() = %d, want 100000", p.MaxRasterPixels())
+	}
+
+	// Glyph mode ignores MaxRasterPixels (stays at cols x 2*rows = 100x50).
+	p.SetTerminal(false, 8, 16)
+	if got := p.RasterGeometry().Pixels; got != image.Pt(100, 50) {
+		t.Fatalf("glyph Pixels = %v, want 100x50", got)
+	}
+	p.SetTerminal(true, 8, 16)
+
+	// Runtime SetMaxRasterPixels updates the raster target and re-prepares when needed.
+	img := image.NewRGBA(image.Rectangle{Max: g.Pixels})
+	drivePicture(t, p, p.SetImageImmutable(img))
+	if cmd := p.SetMaxRasterPixels(100000); cmd != nil {
+		t.Fatal("unchanged MaxRasterPixels scheduled work")
+	}
+	cmd := p.SetMaxRasterPixels(20000)
+	if cmd == nil {
+		t.Fatal("tightened MaxRasterPixels did not schedule work")
+	}
+	g2 := p.RasterGeometry()
+	if g2.Pixels.X*g2.Pixels.Y > 20000 {
+		t.Fatalf("Pixels = %v (%d px), want <= 20000", g2.Pixels, g2.Pixels.X*g2.Pixels.Y)
+	}
+	msgs := drivePicture(t, p, cmd)
+	if !strings.Contains(output(msgs), "s=200,v=100") {
+		t.Fatalf("expected encoded s=200,v=100, got %q", output(msgs))
+	}
+
+	// Removing cap (0 or negative) restores full 800x400 target.
+	drivePicture(t, p, p.SetMaxRasterPixels(0))
+	if got := p.RasterGeometry().Pixels; got != image.Pt(800, 400) {
+		t.Fatalf("uncapped Pixels = %v, want 800x400", got)
+	}
+}
+
+func TestSetImageForAndSetImageImmutableForDropStaleGeometry(t *testing.T) {
+	p := rasterPicture(t)
+	g1 := p.RasterGeometry()
+	frame1 := image.NewRGBA(image.Rectangle{Max: g1.Pixels})
+	for y := range g1.Pixels.Y {
+		for x := range g1.Pixels.X {
+			frame1.SetRGBA(x, y, color.RGBA{G: 200, A: 255})
+		}
+	}
+	cmd := p.SetImageImmutableFor(frame1, g1)
+	if cmd == nil {
+		t.Fatal("expected matching geometry frame to be accepted")
+	}
+	drivePicture(t, p, cmd)
+	genAfterFirst := p.Status().Generation
+
+	// Start a slow render for g1, then resize before the slow render finishes.
+	p.SetSize(10, 4) // triggers re-prepare of frame1 for 10x4
+	genAfterResize := p.Status().Generation
+	inFlightJob := p.job
+	if inFlightJob == nil {
+		t.Fatal("expected resize to schedule re-preparation of retained front")
+	}
+
+	staleFrame := image.NewRGBA(image.Rectangle{Max: g1.Pixels})
+	if got := p.SetImageImmutableFor(staleFrame, g1); got != nil {
+		t.Fatal("expected SetImageImmutableFor with stale geometry to return nil")
+	}
+	if got := p.SetImageFor(staleFrame, g1); got != nil {
+		t.Fatal("expected SetImageFor with stale geometry to return nil")
+	}
+	if p.Status().Generation != genAfterResize || p.Status().Err != nil || p.job != inFlightJob {
+		t.Fatalf("stale SetImageFor disturbed picture state: status=%+v job=%v", p.Status(), p.job)
+	}
+	_ = genAfterFirst
+
+	// Finish the resize job and submit a frame for the new geometry g2.
+	drivePicture(t, p, func() tea.Msg {
+		return picturePrepared{
+			owner: p,
+			job:   inFlightJob,
+			frame: kittyFrameMsg{ID: inFlightJob.placement.cfg.KittyID, Seq: 1, APC: "a", Grid: "g"},
+		}
+	})
+	g2 := p.RasterGeometry()
+	freshFrame := image.NewRGBA(image.Rectangle{Max: g2.Pixels})
+	if got := p.SetImageFor(freshFrame, g2); got == nil {
+		t.Fatal("expected SetImageFor with current geometry to succeed")
+	}
+}

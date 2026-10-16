@@ -2308,5 +2308,34 @@ func TestLayersUnchangedSetTerminalDoesNotResetPlayback(t *testing.T) {
 		if cmd := l.SetBackground(color.RGBA{R: 1, G: 2, B: 3, A: 255}); cmd != nil {
 			t.Fatal("expected unchanged SetBackground to return nil")
 		}
+		if l.Closed() {
+			t.Fatal("expected Layers not to be closed before Close()")
+		}
+		driveLayers(t, l, l.Close())
+		if !l.Closed() || !(*Layers)(nil).Closed() {
+			t.Fatal("expected Layers.Closed() to report true after Close() and on nil receiver")
+		}
+	})
+
+	t.Run("SessionStateAccessors", func(t *testing.T) {
+		session := picture.NewTerminalSession(picture.TerminalOptions{
+			Kitty:           picture.KittyCapabilitySupported,
+			CellPixelWidth:  12,
+			CellPixelHeight: 24,
+		})
+		defer session.Close()
+		l := NewLayers(comp, Options{
+			Picture: picture.Options{Session: session, RetireDelay: -1},
+		})
+		if l.KittySupported() != picture.KittyCapabilitySupported {
+			t.Fatalf("KittySupported() = %v, want Supported", l.KittySupported())
+		}
+		if st := l.TerminalState(); st.CellPixelWidth != 12 || st.CellPixelHeight != 24 {
+			t.Fatalf("TerminalState() = %+v, want 12x24", st)
+		}
+		driveLayers(t, l, l.Keep())
+		if !l.Closed() {
+			t.Fatal("expected Layers.Closed() to report true after Keep()")
+		}
 	})
 }

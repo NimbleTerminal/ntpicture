@@ -34,10 +34,86 @@ func (p *Picture) RasterGeometry() RasterGeometry {
 	g.DisplayAspect = width / height
 	g.Pixels = image.Pt(p.cols, 2*p.rows)
 	if p.mode == PictureKitty {
-		factor := p.opts.Render.KittyResolutionFactor
-		g.Pixels = image.Pt(max(1, int(math.Round(width*factor))), max(1, int(math.Round(height*factor))))
+		g.Pixels = kittyRasterPixels(width, height, p.opts.Render.KittyResolutionFactor, p.opts.Render.MaxRasterPixels)
 	}
 	return g
+}
+
+func kittyRasterPixels(width, height, factor float64, maxPixels int) image.Point {
+	w, h := width*factor, height*factor
+	pxW, pxH := max(1, int(math.Round(w))), max(1, int(math.Round(h)))
+	if maxPixels <= 0 || pxW <= maxPixels/pxH {
+		return image.Pt(pxW, pxH)
+	}
+	if maxPixels == 1 {
+		return image.Pt(1, 1)
+	}
+	scale := math.Sqrt(float64(maxPixels) / (w * h))
+	sw, sh := w*scale, h*scale
+	pxW, pxH = max(1, int(math.Round(sw))), max(1, int(math.Round(sh)))
+	if pxW <= maxPixels/pxH {
+		return image.Pt(pxW, pxH)
+	}
+	pxW, pxH = max(1, int(math.Floor(sw))), max(1, int(math.Floor(sh)))
+	if pxW == 1 && pxH > maxPixels {
+		pxH = maxPixels
+	} else if pxH == 1 && pxW > maxPixels {
+		pxW = maxPixels
+	}
+	for pxW > maxPixels/pxH && (pxW > 1 || pxH > 1) {
+		if pxW >= pxH && pxW > 1 {
+			pxW--
+		} else if pxH > 1 {
+			pxH--
+		}
+	}
+	return image.Pt(pxW, pxH)
+}
+
+// MaxRasterPixels reports the configured Kitty raster pixel cap (0 when uncapped).
+func (p *Picture) MaxRasterPixels() int { return p.opts.Render.MaxRasterPixels }
+
+// SetMaxRasterPixels sets the Kitty raster pixel cap. Zero or negative removes
+// the cap (bounded by MaxImagePixels). When the resulting Kitty target Pixels
+// change, a new placement is prepared while retaining the old front.
+func (p *Picture) SetMaxRasterPixels(maxPixels int) tea.Cmd {
+	if p.closed {
+		return nil
+	}
+	maxPixels = normalizeMaxRasterPixels(maxPixels)
+	before := p.RasterGeometry().Pixels
+	p.opts.Render.MaxRasterPixels = maxPixels
+	if p.mode != PictureKitty || p.RasterGeometry().Pixels == before {
+		return nil
+	}
+	return p.changed()
+}
+
+// SetImageFor submits img only if g still matches p.RasterGeometry() (with
+// positive pixel dimensions when img is non-nil). If the picture's size, mode,
+// cell pixel dimensions, or resolution changed while img was being rendered,
+// the stale frame is dropped and SetImageFor returns nil without reporting an
+// error or cancelling in-flight work.
+func (p *Picture) SetImageFor(img image.Image, g RasterGeometry) tea.Cmd {
+	if p.closed || g != p.RasterGeometry() {
+		return nil
+	}
+	if img != nil && (g.Pixels.X <= 0 || g.Pixels.Y <= 0) {
+		return nil
+	}
+	return p.SetImage(img)
+}
+
+// SetImageImmutableFor is like SetImageFor, but avoids a pixel copy with the
+// same immutability promise as SetImageImmutable.
+func (p *Picture) SetImageImmutableFor(img image.Image, g RasterGeometry) tea.Cmd {
+	if p.closed || g != p.RasterGeometry() {
+		return nil
+	}
+	if img != nil && (g.Pixels.X <= 0 || g.Pixels.Y <= 0) {
+		return nil
+	}
+	return p.SetImageImmutable(img)
 }
 
 // SetResolution sets the Kitty raster scale in (0,1], relative to terminal

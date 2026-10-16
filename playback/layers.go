@@ -99,6 +99,10 @@ func NewLayers(composite *animation.Composite, options Options) *Layers {
 		if state.Kitty == picture.KittyCapabilitySupported {
 			mode = picture.PictureKitty
 		}
+	} else if options.Picture.AutoMode && !options.Picture.HostGeometry {
+		if (*picture.Picture)(nil).KittySupported() == picture.KittyCapabilitySupported {
+			mode = picture.PictureKitty
+		}
 	}
 	if cw <= 0 {
 		cw = 8
@@ -112,7 +116,9 @@ func NewLayers(composite *animation.Composite, options Options) *Layers {
 	baseOpts.FreshIDs = true
 	base := NewSource(nil, baseOpts)
 	if mode == picture.PictureKitty {
-		_ = base.SetTerminal(true, cw, ch)
+		if !options.Picture.AutoMode {
+			_ = base.SetTerminal(true, cw, ch)
+		}
 		_ = base.Pause(true)
 	}
 	return &Layers{
@@ -333,6 +339,26 @@ func (l *Layers) Mode() picture.PictureMode { return l.mode }
 // CellPixelSize reports the current terminal cell dimensions in pixels.
 func (l *Layers) CellPixelSize() (int, int) { return l.cw, l.ch }
 
+// Closed reports whether Close or Keep has permanently stopped the layers.
+// A nil receiver reports true.
+func (l *Layers) Closed() bool {
+	return l == nil || l.closed
+}
+
+// TerminalState returns a snapshot of the base picture's terminal session.
+func (l *Layers) TerminalState() picture.TerminalState {
+	if l == nil {
+		return (*picture.Picture)(nil).TerminalState()
+	}
+	return l.base.TerminalState()
+}
+
+// KittySupported reports the Kitty graphics capability of the base picture's
+// terminal session.
+func (l *Layers) KittySupported() picture.KittyCapability {
+	return l.TerminalState().Kitty
+}
+
 // RasterGeometry reports the base picture's full preparation target before clipping.
 func (l *Layers) RasterGeometry() picture.RasterGeometry { return l.base.RasterGeometry() }
 
@@ -536,28 +562,37 @@ func (l *Layers) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	return tea.Batch(baseCmd, pauseCmd)
 }
 
-// SetMode switches between PictureGlyph and PictureKitty using the configured session.
+// SetMode switches between PictureGlyph and PictureKitty using the configured
+// session, or follows the session automatically when PictureAuto is passed.
 func (l *Layers) SetMode(mode picture.PictureMode) tea.Cmd {
-	if l.closed || mode == l.mode {
+	if l.closed {
 		return nil
 	}
+	if mode != picture.PictureAuto && mode == l.mode {
+		return nil
+	}
+	prevMode := l.mode
+	prevCW, prevCH := l.cw, l.ch
 	prevRetained, prevRetainedPres := l.retainedSnapshot, l.retainedPresented
 	if l.submitted {
 		l.captureRetainedSnapshot()
 	}
 	baseCmd := l.base.SetMode(mode)
-	if l.base.Status().Picture.Err != nil || l.base.pic.Mode() != mode {
+	if l.base.Status().Picture.Err != nil || (mode != picture.PictureAuto && l.base.pic.Mode() != mode) {
 		l.retainedSnapshot, l.retainedPresented = prevRetained, prevRetainedPres
 		return baseCmd
 	}
 	l.err = nil
-	l.mode = mode
+	l.mode = l.base.pic.Mode()
 	l.cw, l.ch = l.base.pic.CellPixelSize()
+	modeChanged := l.mode != prevMode
+	geomChanged := l.cw != prevCW || l.ch != prevCH
 	pauseCmd := l.syncBasePause()
-	if !l.submitted {
+	if !l.submitted || (!modeChanged && !geomChanged) {
+		l.retainedSnapshot, l.retainedPresented = prevRetained, prevRetainedPres
 		return tea.Batch(baseCmd, pauseCmd)
 	}
-	return tea.Batch(baseCmd, pauseCmd, l.syncGeometryAndMode(true))
+	return tea.Batch(baseCmd, pauseCmd, l.syncGeometryAndMode(modeChanged))
 }
 
 // SetVisible hides or shows all layers. Hiding cancels pending work and clears
@@ -768,11 +803,12 @@ func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 	}
 	var cmds []tea.Cmd
 	prevCW, prevCH := l.base.pic.CellPixelSize()
+	prevMode := l.base.pic.Mode()
 	prevBaseSource := l.base.Status().Source
 	prevBasePresented := l.base.Status().Presented
 
-	// If a terminal event may change cell pixel size on the base picture, preserve
-	// the last committed snapshot before base.Update mutates base state.
+	// If a terminal event may change cell pixel size or mode on the base picture,
+	// preserve the last committed snapshot before base.Update mutates base state.
 	var preEventSnap image.Image
 	var preEventPres animation.Source
 	if !l.opts.Picture.HostGeometry && l.submitted && !l.opts.Picture.ClearOnReplace {
@@ -827,14 +863,22 @@ func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, o.ctrl.Update(msg))
 	}
 
-	if nw, nh := l.base.pic.CellPixelSize(); (nw != prevCW || nh != prevCH) && nw > 0 && nh > 0 {
+	nw, nh := l.base.pic.CellPixelSize()
+	newMode := l.base.pic.Mode()
+	modeChanged := newMode != prevMode && newMode != l.mode
+	geomChanged := (nw != prevCW || nh != prevCH) && nw > 0 && nh > 0
+	if modeChanged || geomChanged {
 		if preEventSnap != nil {
 			l.retainedSnapshot = preEventSnap
 			l.retainedPresented = preEventPres
 		}
-		l.cw, l.ch = nw, nh
+		l.mode = newMode
+		if nw > 0 && nh > 0 {
+			l.cw, l.ch = nw, nh
+		}
+		cmds = append(cmds, l.syncBasePause())
 		if l.submitted {
-			cmds = append(cmds, l.syncGeometryAndMode(false))
+			cmds = append(cmds, l.syncGeometryAndMode(modeChanged))
 		}
 	}
 

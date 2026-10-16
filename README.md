@@ -105,10 +105,11 @@ changes do not clear them. Use `Restart`, a valid player `Seek`, or `SetSource`
 to retry or replace the source; restart/seek preserve or set pause as documented.
 
 `SetVisible(false)` cancels work and removes placements while retaining the
-source. `Close` is final and idempotent. Local resources are released even if
-its command is not run, but terminal deletion requires running that command. An
-accepted transmission carries a cleanup guard for removal races. No component
-clears other images globally.
+source. `Close` is final and idempotent (`Closed()` reports whether `Close` or
+`Keep` has stopped the component, or whether the receiver is nil). Local
+resources are released even if its command is not run, but terminal deletion
+requires running that command. An accepted transmission carries a cleanup guard
+for removal races. No component clears other images globally.
 
 `Keep()` is a final alternative to `Close()` for still images, mesh frames, and
 playback controllers. It cancels pending replacements and freezes the last
@@ -162,18 +163,22 @@ Configure `FitFill` and submit an opaque, immutable framebuffer at exactly
 the resolution change may have scheduled work that a newer frame supersedes.
 The sketch renders synchronously and is suitable only for inexpensive work.
 For expensive meshes, run rendering in a command that captures the geometry and
-an application request ID. In Update, reject obsolete results and submit the
-accepted immutable frame. Bound producer concurrency separately; Picture's
-preparation limit does not limit application render jobs.
+an application request ID. In Update, use `SetImageImmutableFor(frame, g)` (or
+`SetImageFor(frame, g)`) so a frame rendered for a stale geometry is dropped
+cleanly without stretching if the terminal resized while the worker ran. Bound
+producer concurrency separately; Picture's preparation limit does not limit
+application render jobs.
 
 `SetResolution` accepts a finite factor in `(0, 1]`, relative to terminal pixel
 size. Kitty scales the full raster and rounds each dimension once, to at least
-one pixel. It preserves cell footprint and physical aspect, with unavoidable
-pixel rounding, and retains the front until the new placement is ready. Factors
-that round to the same dimensions do not trigger preparation. Glyph output stays
-at `cols × (2 * rows)`; the factor is saved for a later switch to Kitty. Invalid
-factors report `ErrorMsg` without cancelling pending work. Playback controllers
-forward both methods. `legacy.Model` retains its existing per-cell rounding.
+one pixel. `Config.MaxRasterPixels` (or `SetMaxRasterPixels`) optionally caps
+the total Kitty target pixels (`Pixels.X * Pixels.Y <= MaxRasterPixels`),
+scaling both dimensions down proportionally while preserving cell footprint and
+physical `DisplayAspect`. Factors or caps that round to the same dimensions do
+not trigger preparation. Glyph output stays at `cols × (2 * rows)`; the factor
+and cap are saved for a later switch to Kitty. Invalid factors report `ErrorMsg`
+without cancelling pending work. Playback controllers forward these methods.
+`legacy.Model` retains its existing per-cell rounding.
 
 `Picture` bounds source and prepared images to 32 Mi pixels and validates Kitty
 placeholder dimensions. This is a pixel bound, not a total RAM budget: source,
@@ -184,12 +189,16 @@ visible destination when the scaled image overflows, preserving its anchor and
 fractional sampling coordinates without allocating the full off-screen raster.
 
 Use `SetTerminal(kitty, cellWidth, cellHeight)` when the host already knows its
-capability and geometry. It does not probe. Otherwise run `Init`, route replies,
-and select Kitty on `KittyCapabilityMsg{Capability: KittyCapabilitySupported}`.
-The message also reports timeouts and already-known results; handle duplicates
-and late positive replies. Invalid terminal cell-size reports are ignored, while
-explicit `SetTerminal` calls still validate their inputs. This is the legacy
-default-session flow; explicit sessions use `TerminalSessionMsg` as shown below.
+capability and geometry. It does not probe. Otherwise set `Options.AutoMode: true`
+(or call `SetMode(PictureAuto)`) so `Picture` selects `PictureKitty`
+automatically when the session reports `KittyCapabilitySupported` (at
+construction or during `Update`) and `PictureGlyph` otherwise; calling
+`SetMode(PictureGlyph)` or `SetMode(PictureKitty)` overrides automatic selection
+until `SetMode(PictureAuto)` is called. Hosts that prefer manual transition
+handling can leave `AutoMode` false and select Kitty on `TerminalSessionMsg` or
+`KittyCapabilityMsg{Capability: KittyCapabilitySupported}`. Invalid terminal
+cell-size reports are ignored, while explicit `SetTerminal` calls still validate
+their inputs.
 
 Shared memory uses the unchanged browser registry
 `globalThis.ghosttyKittySharedMemory` (`Map<string, Uint8Array>`), Linux named
@@ -211,18 +220,13 @@ Background, fit, encoding, and glyph/Kitty selection remain per-picture policy.
 
 ```go
 session := ntpicture.NewTerminalSession(ntpicture.TerminalOptions{})
-a := ntpicture.New(ntpicture.Options{Session: session})
-b := ntpicture.New(ntpicture.Options{Session: session})
+a := ntpicture.New(ntpicture.Options{Session: session, AutoMode: true})
+b := ntpicture.New(ntpicture.Options{Session: session, AutoMode: true})
 cmd := tea.Batch(a.Init(), b.Init()) // one session probe
 
 // In Update, forward every message to both pictures and run their commands.
+// AutoMode switches each picture to PictureKitty when session discovery succeeds.
 cmd = tea.Batch(a.Update(msg), b.Update(msg))
-if event, ok := msg.(ntpicture.TerminalSessionMsg); ok &&
-    event.Session == session &&
-    session.Snapshot().Kitty == ntpicture.KittyCapabilitySupported {
-    cmd = tea.Batch(cmd, a.SetMode(ntpicture.PictureKitty),
-        b.SetMode(ntpicture.PictureKitty))
-}
 ```
 
 `TerminalOptions` accepts known Kitty/shared-memory capabilities, initial cell
@@ -230,7 +234,9 @@ pixel dimensions, and an optional tmux override. Explicit values take precedence
 over `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` environment hints.
 Unknown capabilities are discovered independently;
 allocation failures still fall back to direct transport. `Snapshot` reports
-capabilities and geometry; each picture's `Status` reports its actual transport.
+capabilities and geometry (also accessible directly on a picture or playback
+controller via `TerminalState()` and `KittySupported()`); each picture's
+`Status` reports its actual transport.
 Forward raw terminal events only to the session for that connection. Close each
 picture and execute its cleanup command, then call `session.Close()` to release
 pending probe resources. Keep-screen also requires closing the session on exit.

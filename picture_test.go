@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi/kitty"
 )
 
 // Drive the actual Bubble Tea command tree, including its private sequence
@@ -796,5 +797,100 @@ func TestCancelledStableIDBorrowerBeforeStep0ClearsOutputDone(t *testing.T) {
 	// Keep on the untouched direct front must take the fast path and emit no APC.
 	if got := output(drivePicture(t, p, p.Keep())); got != "" {
 		t.Fatalf("Keep() retransmitted untouched direct front after pre-step0 borrower cancellation: %q", got)
+	}
+}
+
+func TestPictureClosedTerminalStateAndKittySupported(t *testing.T) {
+	var nilPic *Picture
+	if !nilPic.Closed() {
+		t.Fatal("expected nil Picture.Closed() to report true")
+	}
+
+	session := NewTerminalSession(TerminalOptions{
+		Kitty:           KittyCapabilitySupported,
+		CellPixelWidth:  10,
+		CellPixelHeight: 20,
+	})
+	defer session.Close()
+
+	p := New(Options{Session: session, RetireDelay: -1})
+	if p.Closed() {
+		t.Fatal("expected newly created Picture not to be closed")
+	}
+	if got := p.KittySupported(); got != KittyCapabilitySupported {
+		t.Fatalf("KittySupported() = %v, want %v", got, KittyCapabilitySupported)
+	}
+	if st := p.TerminalState(); st.Kitty != KittyCapabilitySupported || st.CellPixelWidth != 10 || st.CellPixelHeight != 20 {
+		t.Fatalf("TerminalState() = %+v, want Kitty=Supported 10x20", st)
+	}
+
+	drivePicture(t, p, p.Close())
+	if !p.Closed() {
+		t.Fatal("expected Picture.Closed() to report true after Close()")
+	}
+
+	pKeep := New(Options{Session: session, RetireDelay: -1})
+	drivePicture(t, pKeep, pKeep.Keep())
+	if !pKeep.Closed() {
+		t.Fatal("expected Picture.Closed() to report true after Keep()")
+	}
+}
+
+func TestPictureAutoModeAndSetModePictureAuto(t *testing.T) {
+	// 1. Session already reporting KittyCapabilitySupported selects PictureKitty at construction.
+	supportedSession := NewTerminalSession(TerminalOptions{
+		Kitty:           KittyCapabilitySupported,
+		CellPixelWidth:  9,
+		CellPixelHeight: 18,
+	})
+	defer supportedSession.Close()
+
+	pImmediate := New(Options{Session: supportedSession, AutoMode: true, RetireDelay: -1})
+	defer func() { drivePicture(t, pImmediate, pImmediate.Close()) }()
+	if pImmediate.Mode() != PictureKitty {
+		t.Fatalf("AutoMode with supported session started in %v, want PictureKitty", pImmediate.Mode())
+	}
+
+	// 2. Session starting Unknown begins in PictureGlyph and switches to PictureKitty on probe reply.
+	t.Setenv("TERM", "xterm-kitty")
+	t.Setenv("NTPICTURE_KITTY", "")
+	probingSession := NewTerminalSession(TerminalOptions{
+		CellPixelWidth:  8,
+		CellPixelHeight: 16,
+	})
+	defer probingSession.Close()
+
+	pProbe := New(Options{Session: probingSession, AutoMode: true, RetireDelay: -1})
+	defer func() { drivePicture(t, pProbe, pProbe.Close()) }()
+	if pProbe.Mode() != PictureGlyph {
+		t.Fatalf("AutoMode with unknown session started in %v, want PictureGlyph", pProbe.Mode())
+	}
+	pProbe.SetSize(2, 2)
+	drivePicture(t, pProbe, pProbe.SetImage(testPixels(color.RGBA{R: 200, A: 255})))
+	_ = pProbe.Init()
+
+	drivePicture(t, pProbe, pProbe.Update(uv.KittyGraphicsEvent{
+		Options: kitty.Options{ID: probingSession.probeID},
+		Payload: []byte("OK"),
+	}))
+	if pProbe.Mode() != PictureKitty {
+		t.Fatalf("AutoMode did not switch to PictureKitty on probe reply: got %v", pProbe.Mode())
+	}
+
+	// 3. Explicit SetMode(PictureGlyph) (e.g. dropping to glyphs after an error) disables AutoMode
+	// so subsequent session events do not override the manual glyph mode.
+	drivePicture(t, pProbe, pProbe.SetMode(PictureGlyph))
+	if pProbe.Mode() != PictureGlyph {
+		t.Fatalf("SetMode(PictureGlyph) left mode as %v", pProbe.Mode())
+	}
+	drivePicture(t, pProbe, pProbe.Update(uv.CellSizeEvent{Width: 10, Height: 20}))
+	if pProbe.Mode() != PictureGlyph {
+		t.Fatalf("CellSizeEvent re-enabled Kitty after explicit SetMode(PictureGlyph): got %v", pProbe.Mode())
+	}
+
+	// 4. SetMode(PictureAuto) re-enables automatic selection from the session.
+	drivePicture(t, pProbe, pProbe.SetMode(PictureAuto))
+	if pProbe.Mode() != PictureKitty {
+		t.Fatalf("SetMode(PictureAuto) did not restore PictureKitty: got %v", pProbe.Mode())
 	}
 }

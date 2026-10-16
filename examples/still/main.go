@@ -35,11 +35,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
 		return m, tea.Batch(m.pic.Update(msg), m.pic.SetSize(max(0, size.Width), max(0, size.Height-1)))
 	}
-	cmd := m.pic.Update(msg)
-	if event, ok := msg.(nt.TerminalSessionMsg); ok && event.Session == m.session && m.session.Snapshot().Kitty == nt.KittyCapabilitySupported && m.pic.Mode() != nt.PictureKitty {
-		return m, tea.Batch(cmd, m.pic.SetMode(nt.PictureKitty))
-	}
-	return m, cmd
+	return m, m.pic.Update(msg)
 }
 func (m model) View() tea.View {
 	v := tea.NewView(m.pic.View() + "\n" + m.HelpKeys().View())
@@ -47,13 +43,13 @@ func (m model) View() tea.View {
 	return v
 }
 func (m model) HelpKeys() demohelp.Keys {
-	return demohelp.New(false, m.session.Snapshot().Kitty == nt.KittyCapabilitySupported)
+	return demohelp.New(false, m.pic.KittySupported() == nt.KittyCapabilitySupported)
 }
 
 func main() {
 	session := nt.NewTerminalSession(nt.TerminalOptions{})
 	defer session.Close()
-	p := nt.New(nt.Options{Session: session})
+	p := nt.New(nt.Options{Session: session, AutoMode: true})
 	defer func() { _ = p.Close() }() // Local resources are also released on abnormal program exit.
 	if err := demohelp.Run(model{session: session, pic: p}, "Still image"); err != nil {
 		fmt.Fprintln(os.Stderr, err)

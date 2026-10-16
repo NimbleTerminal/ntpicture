@@ -36,7 +36,15 @@ func (p *Picture) Submit(f Frame) tea.Cmd {
 	if f.Cols < 0 || f.Rows < 0 || f.CellWidth <= 0 || f.CellHeight <= 0 {
 		return p.failSubmission(errors.New("ntpicture: invalid frame geometry"))
 	}
-	if f.Mode != PictureGlyph && f.Mode != PictureKitty {
+	autoMode := f.Mode == PictureAuto
+	mode := f.Mode
+	if autoMode {
+		mode = PictureGlyph
+		if p.KittySupported() == KittyCapabilitySupported {
+			mode = PictureKitty
+		}
+	}
+	if mode != PictureGlyph && mode != PictureKitty {
 		return p.failSubmission(errors.New("ntpicture: invalid picture mode"))
 	}
 	if f.Image != nil {
@@ -44,8 +52,8 @@ func (p *Picture) Submit(f Frame) tea.Cmd {
 			return p.failSubmission(err)
 		}
 	}
-	oldCols, oldRows, oldMode, oldConfig := p.cols, p.rows, p.mode, p.opts.Render
-	p.cols, p.rows, p.mode = f.Cols, f.Rows, f.Mode
+	oldCols, oldRows, oldMode, oldAuto, oldConfig := p.cols, p.rows, p.mode, p.autoMode, p.opts.Render
+	p.cols, p.rows, p.mode, p.autoMode = f.Cols, f.Rows, mode, autoMode
 	p.opts.Render.CellPixelWidth, p.opts.Render.CellPixelHeight = f.CellWidth, f.CellHeight
 	var err error
 	if f.Cols > 0 && f.Rows > 0 {
@@ -57,7 +65,7 @@ func (p *Picture) Submit(f Frame) tea.Cmd {
 		}
 	}
 	if err != nil {
-		p.cols, p.rows, p.mode, p.opts.Render = oldCols, oldRows, oldMode, oldConfig
+		p.cols, p.rows, p.mode, p.autoMode, p.opts.Render = oldCols, oldRows, oldMode, oldAuto, oldConfig
 		return p.failSubmission(err)
 	}
 	img := f.Image

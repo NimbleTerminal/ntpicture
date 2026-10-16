@@ -239,6 +239,26 @@ func (c *Controller) Mode() picture.PictureMode { return c.pic.Mode() }
 // CellPixelSize returns the current cell pixel dimensions.
 func (c *Controller) CellPixelSize() (width, height int) { return c.pic.CellPixelSize() }
 
+// Closed reports whether Close or Keep has permanently stopped the controller.
+// A nil receiver reports true.
+func (c *Controller) Closed() bool {
+	return c == nil || c.closed
+}
+
+// TerminalState returns a snapshot of the picture's terminal session.
+func (c *Controller) TerminalState() picture.TerminalState {
+	if c == nil {
+		return (*picture.Picture)(nil).TerminalState()
+	}
+	return c.pic.TerminalState()
+}
+
+// KittySupported reports the Kitty graphics capability of the picture's
+// terminal session.
+func (c *Controller) KittySupported() picture.KittyCapability {
+	return c.TerminalState().Kitty
+}
+
 // SetVisible hides or shows the picture. Hiding cancels pending work (including
 // any in-flight or queued Seek or Restart) and clears terminal placements while
 // retaining the current source position. Seeking or restarting while already
@@ -517,6 +537,14 @@ func sameImage(a, b image.Image) bool {
 
 // RasterGeometry reports the picture's full preparation target before clipping.
 func (c *Controller) RasterGeometry() picture.RasterGeometry { return c.pic.RasterGeometry() }
+
+// MaxRasterPixels reports the configured Kitty raster pixel cap (0 when uncapped).
+func (c *Controller) MaxRasterPixels() int { return c.pic.MaxRasterPixels() }
+
+// SetMaxRasterPixels sets the Kitty raster pixel cap without seeking or restarting playback.
+func (c *Controller) SetMaxRasterPixels(maxPixels int) tea.Cmd {
+	return c.presentation(c.pic.SetMaxRasterPixels(maxPixels))
+}
 
 // SetResolution changes Kitty encoding resolution without changing cell layout.
 func (c *Controller) SetResolution(factor float64) tea.Cmd {

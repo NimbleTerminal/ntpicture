@@ -20,6 +20,7 @@ type PictureMode int8
 const (
 	PictureGlyph PictureMode = iota // Universal half-block ANSI
 	PictureKitty                    // High-res Kitty graphics protocol
+	PictureAuto                     // Select PictureKitty when session supports Kitty, otherwise PictureGlyph
 )
 
 // FitMode controls how the source image is mapped onto the cell rectangle.
@@ -98,6 +99,14 @@ type Config struct {
 	// this factor at runtime; Picture.RasterGeometry reports the exact target.
 	KittyResolutionFactor float64
 
+	// MaxRasterPixels caps the total pixels (X * Y) of Picture's Kitty
+	// preparation target in RasterGeometry().Pixels. Zero or negative means
+	// no additional limit beyond MaxImagePixels. When the scaled Kitty raster
+	// exceeds MaxRasterPixels, Picture scales both dimensions down to fit
+	// while preserving aspect ratio (with a minimum of 1x1 pixel). Glyph mode
+	// is unaffected because glyph resolution is fixed at cols x 2*rows.
+	MaxRasterPixels int
+
 	// KittyFormat selects how Kitty frames are transmitted: PNG (default;
 	// small on the wire, one encode per frame), raw RGBA (no encode or
 	// decode, about 5.3 bytes per pixel through the terminal stream), or
@@ -125,6 +134,13 @@ func normalizeAnchor(anchor FitAnchor) FitAnchor {
 	return AnchorCenter
 }
 
+func normalizeMaxRasterPixels(maxPixels int) int {
+	if maxPixels <= 0 {
+		return 0
+	}
+	return min(maxPixels, MaxImagePixels)
+}
+
 func normalizeConfig(cfg Config) Config {
 	if cfg.KittyID <= 0 || cfg.KittyID >= 1<<24 {
 		cfg.KittyID = DefaultKittyID
@@ -144,6 +160,7 @@ func normalizeConfig(cfg Config) Config {
 	if math.IsNaN(cfg.KittyResolutionFactor) || cfg.KittyResolutionFactor <= 0 || cfg.KittyResolutionFactor > 1 {
 		cfg.KittyResolutionFactor = 1.0
 	}
+	cfg.MaxRasterPixels = normalizeMaxRasterPixels(cfg.MaxRasterPixels)
 	cfg.KittyFormat = normalizeKittyFormat(cfg.KittyFormat)
 	cfg.KittyMedium = normalizeKittyMedium(cfg.KittyMedium)
 	return cfg

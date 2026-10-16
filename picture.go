@@ -56,6 +56,13 @@ type Options struct {
 	Session *TerminalSession
 	Render  Config
 	NextID  func() (int, error)
+	// AutoMode selects PictureKitty automatically when the picture's terminal
+	// session reports KittyCapabilitySupported (at construction or during
+	// Update) and PictureGlyph otherwise. Explicit SetMode(PictureGlyph),
+	// SetMode(PictureKitty), SetTerminal, or Submit calls override automatic
+	// selection until SetMode(PictureAuto) is called. Ignored when HostGeometry
+	// is true.
+	AutoMode bool
 	// ClearOnReplace removes old content immediately, as required for QR codes.
 	// Otherwise the displayed picture remains until its replacement is ready.
 	ClearOnReplace bool
@@ -106,6 +113,7 @@ type ErrorMsg struct {
 type Picture struct {
 	opts                  Options
 	mode                  PictureMode
+	autoMode              bool
 	cols, rows            int
 	visible, closed       bool
 	keptView              string
@@ -220,8 +228,9 @@ type pictureReady struct {
 type pictureRetire struct{ owner *Picture }
 
 // New creates a Picture. Terminal probing remains explicit: run Init and
-// select Kitty after affirmative detection, or call SetTerminal with a known
-// host capability and cell geometry. Application UI is never rendered here.
+// select Kitty after affirmative detection (or enable Options.AutoMode), or
+// call SetTerminal with a known host capability and cell geometry. Application
+// UI is never rendered here.
 func New(opts Options) *Picture {
 	if opts.NextID == nil {
 		opts.NextID = NextImageID
@@ -229,15 +238,22 @@ func New(opts Options) *Picture {
 	if opts.RetireDelay == 0 {
 		opts.RetireDelay = 50 * time.Millisecond
 	}
+	autoMode := opts.AutoMode && !opts.HostGeometry
+	mode := PictureGlyph
 	if opts.Session != nil {
 		state := opts.Session.Snapshot()
 		opts.Render.CellPixelWidth, opts.Render.CellPixelHeight = state.CellPixelWidth, state.CellPixelHeight
+		if autoMode && state.Kitty == KittyCapabilitySupported {
+			mode = PictureKitty
+		}
+	} else if autoMode && defaultSession().Snapshot().Kitty == KittyCapabilitySupported {
+		mode = PictureKitty
 	}
 	// Normalize all renderer defaults once and preserve them across replacements.
 	opts.Render = normalizeConfig(opts.Render)
 	opts.Render.Background = color.RGBA64Model.Convert(opts.Render.Background)
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Picture{opts: opts, visible: true, lifetime: ctx, closeCancel: cancel}
+	return &Picture{opts: opts, mode: mode, autoMode: autoMode, visible: true, lifetime: ctx, closeCancel: cancel}
 }
 
 func (p *Picture) Init() tea.Cmd {
@@ -252,6 +268,23 @@ func (p *Picture) Status() Status {
 func (p *Picture) Mode() PictureMode { return p.mode }
 func (p *Picture) CellPixelSize() (int, int) {
 	return p.opts.Render.CellPixelWidth, p.opts.Render.CellPixelHeight
+}
+
+// Closed reports whether Close or Keep has permanently stopped the picture.
+// A nil receiver reports true.
+func (p *Picture) Closed() bool {
+	return p == nil || p.closed
+}
+
+// TerminalState returns a snapshot of the picture's terminal session.
+func (p *Picture) TerminalState() TerminalState {
+	return p.session().Snapshot()
+}
+
+// KittySupported reports the Kitty graphics capability of the picture's
+// terminal session.
+func (p *Picture) KittySupported() KittyCapability {
+	return p.TerminalState().Kitty
 }
 
 // SetImage copies pixels before returning. The caller may then reuse its image.
@@ -403,6 +436,22 @@ func (p *Picture) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	if cellWidth <= 0 || cellHeight <= 0 {
 		return p.reportError(errors.New("ntpicture: invalid cell geometry"))
 	}
+	oldAuto := p.autoMode
+	p.autoMode = false
+	cmd := p.applyTerminal(kitty, cellWidth, cellHeight)
+	if p.err != nil {
+		p.autoMode = oldAuto
+	}
+	return cmd
+}
+
+func (p *Picture) applyTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
+	if p.closed {
+		return nil
+	}
+	if cellWidth <= 0 || cellHeight <= 0 {
+		return p.reportError(errors.New("ntpicture: invalid cell geometry"))
+	}
 	mode := PictureGlyph
 	if kitty {
 		mode = PictureKitty
@@ -424,16 +473,39 @@ func (p *Picture) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	return p.changed()
 }
 
-// SetMode uses the picture’s terminal session capability. Hosts with known capability can
-// use SetTerminal instead. An unavailable Kitty mode leaves the mode unchanged.
+// SetMode uses the picture’s terminal session capability. Pass PictureAuto to
+// follow the session's Kitty capability automatically. Hosts with known
+// capability can use SetTerminal instead. An unavailable Kitty mode leaves the
+// mode unchanged.
 func (p *Picture) SetMode(mode PictureMode) tea.Cmd {
-	if p.closed || mode == p.mode {
+	if p.closed {
 		return nil
+	}
+	if mode == PictureAuto {
+		oldAuto := p.autoMode
+		p.autoMode = true
+		cw, ch := p.CellPixelSize()
+		if p.opts.Session != nil {
+			st := p.opts.Session.Snapshot()
+			cw, ch = st.CellPixelWidth, st.CellPixelHeight
+		}
+		cmd := p.applyTerminal(p.KittySupported() == KittyCapabilitySupported, cw, ch)
+		if p.err != nil {
+			p.autoMode = oldAuto
+		}
+		return cmd
+	}
+	if mode != PictureGlyph && mode != PictureKitty {
+		return p.reportError(errors.New("ntpicture: invalid picture mode"))
 	}
 	if mode == PictureKitty {
 		if err := p.session().unavailable(); err != nil {
 			return p.reportError(err)
 		}
+	}
+	if mode == p.mode {
+		p.autoMode = false
+		return nil
 	}
 	cw, ch := p.CellPixelSize()
 	return p.SetTerminal(mode == PictureKitty, cw, ch)
@@ -614,7 +686,11 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		if terminal {
 			cmd := p.opts.Session.Update(msg)
 			state := p.opts.Session.Snapshot()
-			return tea.Batch(cmd, p.SetTerminal(p.mode == PictureKitty, state.CellPixelWidth, state.CellPixelHeight))
+			kitty := p.mode == PictureKitty
+			if p.autoMode {
+				kitty = state.Kitty == KittyCapabilitySupported
+			}
+			return tea.Batch(cmd, p.applyTerminal(kitty, state.CellPixelWidth, state.CellPixelHeight))
 		}
 	}
 	switch v := msg.(type) {
@@ -718,11 +794,30 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		defaultTerminalSession.setCellSize(v.Width, v.Height)
-		return p.SetTerminal(p.mode == PictureKitty, v.Width, v.Height)
+		kitty := p.mode == PictureKitty
+		if p.autoMode {
+			kitty = p.KittySupported() == KittyCapabilitySupported
+		}
+		return p.applyTerminal(kitty, v.Width, v.Height)
 	case uv.KittyGraphicsEvent:
-		return recordKittyResponse(v)
+		cmd := recordKittyResponse(v)
+		if p.autoMode {
+			cw, ch := p.CellPixelSize()
+			return tea.Batch(cmd, p.applyTerminal(p.KittySupported() == KittyCapabilitySupported, cw, ch))
+		}
+		return cmd
 	case kittyProbeTickMsg:
-		return recordKittyTimeout()
+		cmd := recordKittyTimeout()
+		if p.autoMode {
+			cw, ch := p.CellPixelSize()
+			return tea.Batch(cmd, p.applyTerminal(p.KittySupported() == KittyCapabilitySupported, cw, ch))
+		}
+		return cmd
+	case TerminalSessionMsg:
+		if v.Session == defaultTerminalSession && p.autoMode {
+			state := defaultTerminalSession.Snapshot()
+			return p.applyTerminal(state.Kitty == KittyCapabilitySupported, state.CellPixelWidth, state.CellPixelHeight)
+		}
 	}
 	return nil
 }
@@ -954,7 +1049,7 @@ func (p *Picture) Close() tea.Cmd {
 }
 
 func (p *Picture) session() *TerminalSession {
-	if p.opts.Session != nil {
+	if p != nil && p.opts.Session != nil {
 		return p.opts.Session
 	}
 	return defaultSession()

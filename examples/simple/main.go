@@ -29,8 +29,9 @@ type model struct {
 func initialModel() (model, error) {
 	session := picture.NewTerminalSession(picture.TerminalOptions{})
 	pic := picture.New(picture.Options{
-		Session: session,
-		Render:  picture.Config{KittyMedium: picture.KittyMediumSharedMemory},
+		Session:  session,
+		AutoMode: true,
+		Render:   picture.Config{KittyMedium: picture.KittyMediumSharedMemory},
 	})
 
 	img, _, err := image.Decode(bytes.NewReader(fujiPNG))
@@ -69,9 +70,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, c)
 	}
 
-	if event, ok := msg.(picture.TerminalSessionMsg); ok && event.Session == m.session && m.session.Snapshot().Kitty == picture.KittyCapabilitySupported && m.pic.Mode() != picture.PictureKitty {
-		cmds = append(cmds, m.pic.SetMode(picture.PictureKitty))
-	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -90,7 +88,7 @@ func (m model) View() tea.View {
 }
 
 func (m model) HelpKeys() demohelp.Keys {
-	return demohelp.New(false, m.session.Snapshot().Kitty == picture.KittyCapabilitySupported)
+	return demohelp.New(false, m.pic.KittySupported() == picture.KittyCapabilitySupported)
 }
 
 func main() {

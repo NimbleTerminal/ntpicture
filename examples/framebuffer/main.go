@@ -43,7 +43,6 @@ type frameMsg struct {
 type model struct {
 	session *picture.TerminalSession
 	pic     *picture.Picture
-	kitty   bool // Kitty selected after discovery
 
 	width, height int
 	cols, rows    int // full prepared picture
@@ -81,6 +80,7 @@ func newModel(opts picture.TerminalOptions) *model {
 	}
 	m.pic = picture.New(picture.Options{
 		Session:  session,
+		AutoMode: true,
 		StableID: true,
 		Render: picture.Config{
 			Fit:                   picture.FitFill,
@@ -99,7 +99,7 @@ func (m *model) HelpKeys() demohelp.Keys {
 	if m.keeping {
 		return demohelp.Keys{}
 	}
-	kitty := m.session.Snapshot().Kitty == picture.KittyCapabilitySupported
+	kitty := m.pic.KittySupported() == picture.KittyCapabilitySupported
 	return demohelp.Framebuffer(m.paused, kitty, m.pic.Mode() == picture.PictureKitty)
 }
 
@@ -133,11 +133,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	cmds = append(cmds, m.pic.Update(msg))
-	if event, ok := msg.(picture.TerminalSessionMsg); ok && event.Session == m.session && !m.kitty &&
-		m.session.Snapshot().Kitty == picture.KittyCapabilitySupported {
-		m.kitty = true
-		cmds = append(cmds, m.pic.SetMode(picture.PictureKitty))
-	}
 	// Any change to the raster target makes an in-flight render obsolete.
 	if g := m.pic.RasterGeometry(); g != m.geometry {
 		m.geometry = g
@@ -283,14 +278,17 @@ func (m *model) handleFrame(f frameMsg) tea.Cmd {
 		return m.start()
 	}
 	m.inflight = false
-	if f.err != nil || f.geometry != m.pic.RasterGeometry() {
+	if f.err != nil {
+		return m.start()
+	}
+	cmd := m.pic.SetImageImmutableFor(f.img, f.geometry)
+	if cmd == nil {
 		return m.start()
 	}
 	m.frames++
 	m.took = f.took
 	m.lastStart = time.Now()
 	m.awaiting = true
-	cmd := m.pic.SetImageImmutable(f.img)
 	m.submitted = m.pic.Status().Generation
 	return cmd
 }
