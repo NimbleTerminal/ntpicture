@@ -86,7 +86,7 @@ func (p *Picture) SetMaxRasterPixels(maxPixels int) tea.Cmd {
 	if p.mode != PictureKitty || p.RasterGeometry().Pixels == before {
 		return nil
 	}
-	return p.changed()
+	return p.changedConfig()
 }
 
 // SetImageFor submits img only if g still matches p.RasterGeometry() (with
@@ -144,7 +144,7 @@ func (p *Picture) SetResolution(factor float64) tea.Cmd {
 	if p.mode != PictureKitty || p.RasterGeometry().Pixels == before {
 		return nil
 	}
-	return p.changed()
+	return p.changedConfig()
 }
 
 // Background reports the configured background color.
@@ -174,7 +174,7 @@ func (p *Picture) SetBackground(c color.Color) tea.Cmd {
 	if p.img == nil {
 		return nil
 	}
-	return p.changed()
+	return p.changedConfig()
 }
 
 // Fit reports how source images are mapped onto the cell rectangle.
@@ -196,7 +196,7 @@ func (p *Picture) SetFit(fit FitMode) tea.Cmd {
 	if p.img == nil {
 		return nil
 	}
-	return p.changed()
+	return p.changedConfig()
 }
 
 // Anchor reports the crop anchor used by FitCover.
@@ -218,7 +218,7 @@ func (p *Picture) SetAnchor(anchor FitAnchor) tea.Cmd {
 	if p.img == nil {
 		return nil
 	}
-	return p.changed()
+	return p.changedConfig()
 }
 
 // Crop reports the configured source-pixel crop rectangle (empty when uncropped).
@@ -247,7 +247,7 @@ func (p *Picture) SetCrop(r image.Rectangle) tea.Cmd {
 	if p.img == nil {
 		return nil
 	}
-	return p.changed()
+	return p.changedConfig()
 }
 
 // ResetCrop clears any source-pixel crop rectangle so the full source image is

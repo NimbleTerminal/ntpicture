@@ -214,7 +214,27 @@ type pictureJob struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	outputDone chan struct{} // Closed by accepted transmission completion.
+	fromConfig bool
+	started    atomic.Bool
+	run        func() tea.Msg
+	replacedBy atomic.Pointer[pictureJob]
 }
+
+func (j *pictureJob) execute() tea.Msg {
+	cur := j
+	for {
+		next := cur.replacedBy.Load()
+		if next == nil {
+			break
+		}
+		cur = next
+	}
+	if !cur.started.CompareAndSwap(false, true) {
+		return nil
+	}
+	return cur.run()
+}
+
 type picturePrepared struct {
 	owner *Picture
 	job   *pictureJob
@@ -362,6 +382,41 @@ func (p *Picture) SetImageImmutable(img image.Image) tea.Cmd {
 	p.imgID++
 	return p.changed()
 }
+
+// SetImageCropped atomically updates the source-pixel crop rectangle and copies
+// pixels from img in a single generation without scheduling an intermediate job
+// against the previous image. Pass an empty crop for the full source image.
+func (p *Picture) SetImageCropped(img image.Image, crop image.Rectangle) tea.Cmd {
+	if p == nil || p.closed {
+		return nil
+	}
+	if img == nil {
+		return p.SetImageImmutableCropped(nil, crop)
+	}
+	if err := checkImage(img); err != nil {
+		return p.failSubmission(err)
+	}
+	return p.SetImageImmutableCropped(snapshotImage(img), crop)
+}
+
+// SetImageImmutableCropped atomically updates the source-pixel crop rectangle
+// and sets an immutable source image in a single generation without scheduling
+// an intermediate job against the previous image. Pass an empty crop for the
+// full source image.
+func (p *Picture) SetImageImmutableCropped(img image.Image, crop image.Rectangle) tea.Cmd {
+	if p == nil || p.closed {
+		return nil
+	}
+	if img != nil {
+		if err := checkImage(img); err != nil {
+			return p.failSubmission(err)
+		}
+	}
+	p.opts.Render.Crop = normalizeCrop(crop)
+	p.img = img
+	p.imgID++
+	return p.changed()
+}
 func checkImage(img image.Image) error {
 	b := img.Bounds()
 	if b.Empty() || b.Dx() <= 0 || b.Dy() <= 0 || b.Dx() > MaxImagePixels/b.Dy() {
@@ -478,6 +533,10 @@ func (p *Picture) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	cmd := p.applyTerminal(kitty, cellWidth, cellHeight)
 	if p.err != nil {
 		p.autoMode = oldAuto
+		return cmd
+	}
+	if p.ownsSession && p.opts.Session != nil {
+		p.opts.Session.setTerminalKitty(kitty)
 	}
 	return cmd
 }
@@ -584,7 +643,13 @@ func (p *Picture) SetMode(mode PictureMode) tea.Cmd {
 		return nil
 	}
 	cw, ch := p.CellPixelSize()
-	return p.SetTerminal(mode == PictureKitty, cw, ch)
+	oldAuto := p.autoMode
+	p.autoMode = false
+	cmd := p.applyTerminal(mode == PictureKitty, cw, ch)
+	if p.err != nil {
+		p.autoMode = oldAuto
+	}
+	return cmd
 }
 
 // ToggleMode switches between PictureGlyph and PictureKitty. When currently in
@@ -615,18 +680,42 @@ func (p *Picture) SetVisible(visible bool) tea.Cmd {
 }
 
 func (p *Picture) changed() tea.Cmd {
+	return p.changedWith(false)
+}
+
+func (p *Picture) changedConfig() tea.Cmd {
+	return p.changedWith(true)
+}
+
+func (p *Picture) changedWith(fromConfig bool) tea.Cmd {
 	p.generation++
 	p.err = nil
 	p.dirty = true
+	var aborted *pictureJob
 	if p.job != nil {
 		p.job.cancel()
 		p.job.placement.deactivate()
+		if p.job.fromConfig && p.job.started.CompareAndSwap(false, true) {
+			if p.job.placement.ownsID && p.job.placement.lease != nil {
+				p.job.placement.lease.active.Store(false)
+			}
+			p.job.placement.kittyShared.release()
+			aborted = p.job
+			p.job = nil
+		}
 	}
 	var cleanup tea.Cmd
 	if !p.visible || p.img == nil || p.cols == 0 || p.rows == 0 || p.opts.ClearOnReplace {
 		cleanup = p.clearFront()
 	}
-	return tea.Batch(cleanup, p.schedule())
+	sched := p.schedule()
+	if p.job != nil && fromConfig {
+		p.job.fromConfig = true
+	}
+	if aborted != nil && p.job != nil {
+		aborted.replacedBy.Store(p.job)
+	}
+	return tea.Batch(cleanup, sched)
 }
 
 func (p *Picture) geometryError() error {
@@ -739,7 +828,7 @@ func (p *Picture) schedule() tea.Cmd {
 		}
 		params.shared.begin(params.seq)
 	}
-	return func() tea.Msg {
+	job.run = func() tea.Msg {
 		var frame tea.Msg
 		if ctx.Err() == nil {
 			if mode == PictureKitty {
@@ -754,6 +843,7 @@ func (p *Picture) schedule() tea.Cmd {
 		}
 		return picturePrepared{p, job, frame}
 	}
+	return job.execute
 }
 
 // Update routes all internal messages by owner and job identity. Superseded
@@ -762,7 +852,7 @@ func (p *Picture) schedule() tea.Cmd {
 func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	if p.opts.HostGeometry {
 		switch msg.(type) {
-		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, kittyProbeTickMsg, TerminalSessionMsg:
+		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, kittyProbeTickMsg, TerminalSessionMsg, KittyCapabilityMsg:
 			return nil
 		}
 	}
@@ -776,6 +866,20 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		terminal = true
+	case KittyCapabilityMsg:
+		if !p.ownsSession {
+			return nil
+		}
+		if v.Capability != KittyCapabilityUnknown && v.Capability != KittyCapabilityUnsupported && v.Capability != KittyCapabilitySupported {
+			return nil
+		}
+		sess.setKitty(v.Capability)
+		state := sess.Snapshot()
+		kitty := p.mode == PictureKitty
+		if p.autoMode {
+			kitty = state.Kitty == KittyCapabilitySupported
+		}
+		return p.applyTerminal(kitty, state.CellPixelWidth, state.CellPixelHeight)
 	}
 	if terminal {
 		beforeKitty := sess.Snapshot().Kitty

@@ -16,9 +16,13 @@ type Frame struct {
 	Cols, Rows            int
 	Mode                  PictureMode
 	CellWidth, CellHeight int
-	// Exact requires Image bounds to equal the resulting RasterGeometry().Pixels,
-	// so the image is never resampled to fit. Use it with FitFill for QR modules
-	// and framebuffers rendered at the target resolution.
+	// Crop optionally restricts fitting and scaling to a source-pixel sub-rectangle.
+	// An empty rectangle uses the full source image.
+	Crop image.Rectangle
+	// Exact requires Image bounds (or the cropped sub-rectangle when Crop is set)
+	// to equal the resulting RasterGeometry().Pixels, so the image is never
+	// resampled to fit. Use it with FitFill for QR modules and framebuffers
+	// rendered at the target resolution.
 	Exact bool
 	// Immutable skips the pixel copy, with the same promise as SetImageImmutable.
 	Immutable bool
@@ -55,6 +59,7 @@ func (p *Picture) Submit(f Frame) tea.Cmd {
 	oldCols, oldRows, oldMode, oldAuto, oldConfig := p.cols, p.rows, p.mode, p.autoMode, p.opts.Render
 	p.cols, p.rows, p.mode, p.autoMode = f.Cols, f.Rows, mode, autoMode
 	p.opts.Render.CellPixelWidth, p.opts.Render.CellPixelHeight = f.CellWidth, f.CellHeight
+	p.opts.Render.Crop = normalizeCrop(f.Crop)
 	var err error
 	if f.Cols > 0 && f.Rows > 0 {
 		err = p.geometryError()
@@ -74,6 +79,9 @@ func (p *Picture) Submit(f Frame) tea.Cmd {
 	}
 	if p.ownsSession && p.opts.Session != nil {
 		p.opts.Session.setCellSize(f.CellWidth, f.CellHeight)
+		if !autoMode {
+			p.opts.Session.setTerminalKitty(mode == PictureKitty)
+		}
 	}
 	img := f.Image
 	if img != nil && !f.Immutable {

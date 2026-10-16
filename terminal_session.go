@@ -97,6 +97,34 @@ func (s *TerminalSession) isKittyForced() bool {
 	return s.kittyForced
 }
 
+func (s *TerminalSession) setKitty(c KittyCapability) {
+	if s == nil || s.closed.Load() {
+		return
+	}
+	if s.legacy {
+		forceKittyCapability(c)
+		return
+	}
+	s.state.Kitty = c
+	s.kittyForced = c != KittyCapabilityUnknown
+	if c == KittyCapabilityUnsupported && !s.sharedForced {
+		s.state.SharedMemory = KittyCapabilityUnsupported
+		_ = s.probe.Unlink()
+		s.probe = nil
+	}
+}
+
+func (s *TerminalSession) setTerminalKitty(kitty bool) {
+	if s == nil || s.closed.Load() || s.legacy {
+		return
+	}
+	if kitty {
+		s.state.Kitty = KittyCapabilitySupported
+	} else if s.state.Kitty == KittyCapabilitySupported && !s.kittyForced {
+		s.state.Kitty = KittyCapabilityUnsupported
+	}
+}
+
 func envTerminalConfig() (tmux bool, kitty KittyCapability, kittyForced bool) {
 	tmux = os.Getenv("TMUX") != ""
 	switch os.Getenv("NTPICTURE_TMUX_PASSTHROUGH") {
@@ -311,17 +339,7 @@ func (s *TerminalSession) SetKittyCapability(c KittyCapability) tea.Cmd {
 		return nil
 	}
 	before := s.Snapshot()
-	if s.legacy {
-		forceKittyCapability(c)
-	} else {
-		s.state.Kitty = c
-		s.kittyForced = c != KittyCapabilityUnknown
-		if c == KittyCapabilityUnsupported && !s.sharedForced {
-			s.state.SharedMemory = KittyCapabilityUnsupported
-			_ = s.probe.Unlink()
-			s.probe = nil
-		}
-	}
+	s.setKitty(c)
 	if before != s.Snapshot() {
 		return s.notification()
 	}

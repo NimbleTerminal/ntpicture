@@ -259,8 +259,9 @@ and `Model` in `nimbleterminal.dev/ntpicture/legacy` use the process-wide
 compatibility session exposed by `legacy.DefaultTerminalSession`; they do not
 change owned or explicit sessions.
 
-`SetCrop(rect)` (or `Config.Crop`) restricts fitting and scaling to a sub-rectangle
-of the source image in source pixel coordinates before preparing the target cell
+`SetCrop(rect)` (or `Config.Crop`, `Frame.Crop`, `SetImageCropped`,
+`SetImageImmutableCropped`) restricts fitting and scaling to a sub-rectangle of
+the source image in source pixel coordinates before preparing the target cell
 grid; `ResetCrop()` restores the full source image. Unlike `Viewport`, changing
 `Crop` re-prepares from the retained source image so zoomed sub-regions scale to
 fill the picture's cell footprint.

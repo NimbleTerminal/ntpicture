@@ -1038,3 +1038,126 @@ func TestPictureCropAndResetCrop(t *testing.T) {
 		}
 	}
 }
+
+func TestSetCropBeforeSetImageDoesNotWedgeOrWasteJob(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	blue := color.RGBA{B: 255, A: 255}
+	img1 := testPixels(red)
+	img2 := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	for y := range 4 {
+		for x := range 4 {
+			if x >= 2 && y >= 2 {
+				img2.SetRGBA(x, y, blue)
+			} else {
+				img2.SetRGBA(x, y, red)
+			}
+		}
+	}
+
+	var idCalls int
+	p := New(Options{
+		Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1},
+		NextID: func() (int, error) {
+			idCalls++
+			return 100 + idCalls, nil
+		},
+		RetireDelay: -1,
+	})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	p.SetSize(2, 2)
+	p.SetTerminal(true, 1, 1)
+
+	drivePicture(t, p, p.SetImageImmutable(img1))
+	idAfterFirst := idCalls
+
+	// Case 1: Caller discards SetCrop's returned tea.Cmd (_ = p.SetCrop(...)) and
+	// only runs SetImageImmutable's returned tea.Cmd. Must not wedge p.job!
+	_ = p.SetCrop(image.Rect(2, 2, 4, 4))
+	cmd := p.SetImageImmutable(img2)
+	if cmd == nil {
+		t.Fatal("expected non-nil tea.Cmd from SetImageImmutable after discarded SetCrop")
+	}
+	drivePicture(t, p, cmd)
+	if p.Status().Busy || p.Crop() != image.Rect(2, 2, 4, 4) || p.front.image != img2 {
+		t.Fatalf("after discarded SetCrop + SetImageImmutable: status=%+v crop=%v", p.Status(), p.Crop())
+	}
+
+	// Case 2: Caller batches SetCrop and SetImageImmutable. Only one frame should be prepared.
+	msgs := drivePicture(t, p, tea.Batch(p.ResetCrop(), p.SetImageImmutable(img1)))
+	presentedCount := 0
+	for _, m := range msgs {
+		if _, ok := m.(PresentedMsg); ok {
+			presentedCount++
+		}
+	}
+	if presentedCount != 1 || p.Status().Busy || !p.Crop().Empty() || p.front.image != img1 {
+		t.Fatalf("after batched ResetCrop + SetImageImmutable: presented=%d status=%+v crop=%v", presentedCount, p.Status(), p.Crop())
+	}
+	_ = idAfterFirst
+
+	// Case 3: SetImageCropped and SetImageImmutableCropped set both in one call.
+	idBeforeCropped := idCalls
+	drivePicture(t, p, p.SetImageImmutableCropped(img2, image.Rect(2, 2, 4, 4)))
+	if idCalls != idBeforeCropped+1 || p.Crop() != image.Rect(2, 2, 4, 4) || p.front.image != img2 {
+		t.Fatalf("SetImageImmutableCropped allocated %d IDs (want 1), crop=%v", idCalls-idBeforeCropped, p.Crop())
+	}
+	drivePicture(t, p, p.SetImageCropped(img1, image.Rectangle{}))
+	if !p.Crop().Empty() || p.Status().Busy {
+		t.Fatalf("SetImageCropped failed: crop=%v status=%+v", p.Crop(), p.Status())
+	}
+
+	// Case 4: Submit with Frame.Crop.
+	drivePicture(t, p, p.Submit(Frame{
+		Image:      img2,
+		Cols:       2,
+		Rows:       2,
+		Mode:       PictureKitty,
+		CellWidth:  1,
+		CellHeight: 1,
+		Crop:       image.Rect(2, 2, 4, 4),
+		Exact:      true,
+		Immutable:  true,
+	}))
+	if p.Crop() != image.Rect(2, 2, 4, 4) || p.Status().Err != nil {
+		t.Fatalf("Submit with Frame.Crop: crop=%v err=%v", p.Crop(), p.Status().Err)
+	}
+}
+
+func TestSetTerminalSyncsOwnedSessionKittyCapabilityAndUpdateHandlesKittyCapabilityMsg(t *testing.T) {
+	p := New(Options{AutoMode: true})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	p.SetSize(2, 2)
+
+	// Forwarding synthetic KittyCapabilityMsg to Update on an owned-session Picture
+	// updates KittySupported() and switches AutoMode Picture to PictureKitty.
+	drivePicture(t, p, p.Update(KittyCapabilityMsg{Capability: KittyCapabilitySupported}))
+	if p.KittySupported() != KittyCapabilitySupported || p.Mode() != PictureKitty {
+		t.Fatalf("after Update(KittyCapabilityMsg{Supported}): KittySupported=%v Mode=%v", p.KittySupported(), p.Mode())
+	}
+	drivePicture(t, p, p.Update(KittyCapabilityMsg{Capability: KittyCapabilityUnsupported}))
+	if p.KittySupported() != KittyCapabilityUnsupported || p.Mode() != PictureGlyph {
+		t.Fatalf("after Update(KittyCapabilityMsg{Unsupported}): KittySupported=%v Mode=%v", p.KittySupported(), p.Mode())
+	}
+
+	// SetTerminal(true, cw, ch) on an owned-session Picture sets KittySupported()
+	// to Supported so ToggleMode() can round-trip Kitty -> Glyph -> Kitty.
+	p2 := New(Options{})
+	defer func() { drivePicture(t, p2, p2.Close()) }()
+	p2.SetSize(2, 2)
+	p2.SetTerminal(true, 10, 20)
+	if p2.Mode() != PictureKitty || p2.KittySupported() != KittyCapabilitySupported {
+		t.Fatalf("after SetTerminal(true, 10, 20): Mode=%v KittySupported=%v", p2.Mode(), p2.KittySupported())
+	}
+	p2.ToggleMode()
+	if p2.Mode() != PictureGlyph || p2.KittySupported() != KittyCapabilitySupported {
+		t.Fatalf("after first ToggleMode() (Kitty->Glyph): Mode=%v KittySupported=%v", p2.Mode(), p2.KittySupported())
+	}
+	p2.ToggleMode()
+	if p2.Mode() != PictureKitty {
+		t.Fatalf("after second ToggleMode() (Glyph->Kitty): Mode=%v, want PictureKitty", p2.Mode())
+	}
+	p2.SetTerminal(false, 10, 20)
+	if p2.Mode() != PictureGlyph || p2.KittySupported() != KittyCapabilityUnsupported {
+		t.Fatalf("after SetTerminal(false, 10, 20): Mode=%v KittySupported=%v", p2.Mode(), p2.KittySupported())
+	}
+}
