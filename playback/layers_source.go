@@ -336,6 +336,7 @@ type layerLayoutJob struct {
 	cancel        context.CancelFunc
 	prevComp      *animation.Composite
 	prevPositions animation.Positions
+	submitBase    bool
 }
 
 type layerLayoutResult struct {

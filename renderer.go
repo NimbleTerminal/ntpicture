@@ -99,8 +99,9 @@ type Config struct {
 	KittyResolutionFactor float64
 
 	// KittyFormat selects how Kitty frames are transmitted: PNG (default;
-	// small on the wire, one encode per frame) or raw RGBA (no encode or
-	// decode, about 5.3 bytes per pixel through the terminal stream).
+	// small on the wire, one encode per frame), raw RGBA (no encode or
+	// decode, about 5.3 bytes per pixel through the terminal stream), or
+	// zlib-compressed RGBA (KittyFormatZlib).
 	KittyFormat KittyFormat
 
 	// KittyMedium chooses direct transmission (default) or shared memory.
@@ -131,6 +132,7 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.Background == nil {
 		cfg.Background = color.Transparent
 	}
+	cfg.Background = color.RGBA64Model.Convert(cfg.Background)
 	cfg.Fit = normalizeFit(cfg.Fit)
 	cfg.Anchor = normalizeAnchor(cfg.Anchor)
 	if cfg.CellPixelWidth <= 0 {

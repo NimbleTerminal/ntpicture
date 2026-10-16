@@ -113,6 +113,7 @@ func NewLayers(composite *animation.Composite, options Options) *Layers {
 	base := NewSource(nil, baseOpts)
 	if mode == picture.PictureKitty {
 		_ = base.SetTerminal(true, cw, ch)
+		_ = base.Pause(true)
 	}
 	return &Layers{
 		opts:      options,
@@ -137,6 +138,13 @@ func (l *Layers) backgroundColor() color.Color {
 
 func (l *Layers) basePaused() bool {
 	return l.mode == picture.PictureKitty || l.paused || !l.active
+}
+
+func (l *Layers) syncBasePause() tea.Cmd {
+	if want := l.basePaused(); l.base.Status().Paused != want {
+		return l.base.Pause(want)
+	}
+	return nil
 }
 
 func (l *Layers) invalidateSnapshot() {
@@ -195,7 +203,7 @@ func (l *Layers) Status() Status {
 	if !l.closed {
 		if l.comp != nil {
 			source = l.comp
-			if l.mode == picture.PictureGlyph {
+			if l.mode == picture.PictureGlyph && l.visible && l.layoutJob == nil {
 				if comp, ok := baseStatus.Source.(*animation.Composite); ok && comp != nil {
 					source = comp
 				}
@@ -220,7 +228,7 @@ func (l *Layers) presentedSource() animation.Source {
 	if l.closed {
 		return l.retainedPresented
 	}
-	if !l.visible {
+	if !l.visible || l.cols <= 0 || l.rows <= 0 {
 		return nil
 	}
 	if l.presentedLayout != l.layoutGen || l.layoutGen == 0 || l.basePending {
@@ -342,7 +350,7 @@ func (l *Layers) SetActive(active bool) tea.Cmd {
 	}
 	l.active = active
 	if l.mode == picture.PictureGlyph {
-		return l.base.Pause(l.basePaused())
+		return l.syncBasePause()
 	}
 	if !l.active {
 		if l.layoutJob != nil && !l.basePending {
@@ -464,7 +472,7 @@ func (l *Layers) SetSize(cols, rows int) tea.Cmd {
 	}
 	// Capture before base.SetSize mutates base generation, but restore if rejected.
 	prevRetained, prevRetainedPres := l.retainedSnapshot, l.retainedPresented
-	if l.submitted {
+	if l.submitted && cols > 0 && rows > 0 {
 		l.captureRetainedSnapshot()
 	}
 	baseCmd := l.base.SetSize(cols, rows)
@@ -478,12 +486,13 @@ func (l *Layers) SetSize(cols, rows int) tea.Cmd {
 		return baseCmd
 	}
 	if cols == 0 || rows == 0 {
-		retireCmd := l.retireOverlays()
+		l.harvestOverlayPositions()
+		closeCmd := l.closeAllOverlays()
 		l.cancelLayout()
+		l.clearSnapshots()
 		l.layoutGen++
 		l.baseTargetGen = l.base.Status().Picture.Generation
-		l.basePending = false
-		return tea.Batch(baseCmd, retireCmd)
+		return tea.Batch(baseCmd, closeCmd)
 	}
 	return tea.Batch(baseCmd, l.syncGeometryAndMode(false))
 }
@@ -500,6 +509,10 @@ func (l *Layers) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	}
 	modeChanged := mode != l.mode
 	geomChanged := cellWidth != l.cw || cellHeight != l.ch
+	if !modeChanged && !geomChanged && cellWidth > 0 && cellHeight > 0 && l.base.Status().Picture.Err == nil && l.err == nil {
+		l.explicitTerminal = true
+		return l.syncBasePause()
+	}
 	prevRetained, prevRetainedPres := l.retainedSnapshot, l.retainedPresented
 	if l.submitted && (modeChanged || geomChanged) {
 		l.captureRetainedSnapshot()
@@ -513,7 +526,7 @@ func (l *Layers) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	l.explicitTerminal = true
 	l.mode = mode
 	l.cw, l.ch = cellWidth, cellHeight
-	pauseCmd := l.base.Pause(l.basePaused())
+	pauseCmd := l.syncBasePause()
 	if !l.submitted {
 		return tea.Batch(baseCmd, pauseCmd)
 	}
@@ -540,7 +553,7 @@ func (l *Layers) SetMode(mode picture.PictureMode) tea.Cmd {
 	l.err = nil
 	l.mode = mode
 	l.cw, l.ch = l.base.pic.CellPixelSize()
-	pauseCmd := l.base.Pause(l.basePaused())
+	pauseCmd := l.syncBasePause()
 	if !l.submitted {
 		return tea.Batch(baseCmd, pauseCmd)
 	}
@@ -641,6 +654,9 @@ func (l *Layers) SetBackground(bg color.Color) tea.Cmd {
 		bg = color.Transparent
 	}
 	bg = color.RGBA64Model.Convert(bg)
+	if bg == l.opts.Picture.Render.Background && l.base.Status().Picture.Err == nil && l.err == nil {
+		return nil
+	}
 	l.opts.Picture.Render.Background = bg
 	cmds := []tea.Cmd{l.base.SetBackground(bg)}
 	for _, o := range l.overlays {
@@ -838,8 +854,8 @@ func (l *Layers) Update(msg tea.Msg) tea.Cmd {
 				} else if m.comp != nil {
 					l.comp = m.comp
 					l.positions = m.job.prevPositions.WithPositions(m.comp)
-					if m.submitBase || (l.presentedLayout != l.layoutGen && m.comp != m.origComp) {
-						cmds = append(cmds, l.base.Pause(l.basePaused()))
+					if m.submitBase || l.base.Status().Source != l.comp || (l.presentedLayout != l.layoutGen && m.comp != m.origComp) {
+						cmds = append(cmds, l.syncBasePause())
 						cmds = append(cmds, l.base.SetSource(l.comp))
 						l.baseTargetGen = l.base.Status().Picture.Generation
 					} else if l.presentedLayout == l.layoutGen {
@@ -910,7 +926,7 @@ func (l *Layers) Snapshot() image.Image {
 	if l.closed {
 		return l.retainedSnapshot
 	}
-	if !l.visible {
+	if !l.visible || l.cols <= 0 || l.rows <= 0 {
 		return nil
 	}
 	if l.presentedLayout != l.layoutGen || l.layoutGen == 0 || l.basePending {
@@ -1049,10 +1065,19 @@ func (l *Layers) applySource(newLayout bool) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 
+	if !l.visible {
+		l.cancelLayout()
+		l.clearSnapshots()
+		if l.still != nil {
+			cmds = append(cmds, l.base.SetSource(&imageSource{img: l.still}))
+		}
+		return tea.Batch(cmds...)
+	}
+
 	l.layoutGen++
 	l.cachedSnapshot = nil
 	l.invalidateSnapshot()
-	cmds = append(cmds, l.base.Pause(l.basePaused()))
+	cmds = append(cmds, l.syncBasePause())
 
 	if l.comp != nil {
 		cmds = append(cmds, l.startLayout(l.comp, true))
@@ -1067,20 +1092,25 @@ func (l *Layers) applySource(newLayout bool) tea.Cmd {
 }
 
 func (l *Layers) syncGeometryAndMode(modeChanged bool) tea.Cmd {
+	if !l.visible {
+		l.cancelLayout()
+		l.clearSnapshots()
+		return l.closeAllOverlays()
+	}
 	var cmds []tea.Cmd
 	cmds = append(cmds, l.retireOverlays())
 	l.layoutGen++
 	l.baseTargetGen = l.base.Status().Picture.Generation
 	l.cachedSnapshot = nil
 	l.invalidateSnapshot()
-	if l.comp != nil {
+	if l.comp != nil && (l.mode == picture.PictureKitty || modeChanged || l.layoutJob != nil) {
 		cmds = append(cmds, l.startLayout(l.comp, false))
 	} else {
 		l.cancelLayout()
 		l.basePending = false
 	}
 	if modeChanged && l.mode == picture.PictureGlyph {
-		cmds = append(cmds, l.base.Pause(l.basePaused()))
+		cmds = append(cmds, l.syncBasePause())
 	}
 	cmds = append(cmds, l.promoteBase())
 	return tea.Batch(cmds...)
@@ -1092,6 +1122,7 @@ func (l *Layers) startLayout(comp *animation.Composite, submitBase bool) tea.Cmd
 	if l.layoutJob != nil {
 		prevComp = l.layoutJob.prevComp
 		prevPositions = l.layoutJob.prevPositions
+		submitBase = submitBase || l.layoutJob.submitBase
 	}
 	l.cancelLayout()
 	var cmds []tea.Cmd
@@ -1164,6 +1195,7 @@ func (l *Layers) startLayout(comp *animation.Composite, submitBase bool) tea.Cmd
 		cancel:        cancel,
 		prevComp:      prevComp,
 		prevPositions: prevPositions,
+		submitBase:    submitBase,
 	}
 	l.layoutJob = job
 	positions := prevPositions

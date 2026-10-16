@@ -163,6 +163,17 @@ func (id *pictureImageID) setOutputDone(ch <-chan struct{}) {
 	id.outputMu.Unlock()
 }
 
+func (id *pictureImageID) clearOutputDone(ch <-chan struct{}) {
+	if id == nil {
+		return
+	}
+	id.outputMu.Lock()
+	if id.outputDone == ch {
+		id.outputDone = nil
+	}
+	id.outputMu.Unlock()
+}
+
 func (id *pictureImageID) loadOutputDone() <-chan struct{} {
 	if id == nil {
 		return nil
@@ -170,6 +181,22 @@ func (id *pictureImageID) loadOutputDone() <-chan struct{} {
 	id.outputMu.Lock()
 	defer id.outputMu.Unlock()
 	return id.outputDone
+}
+
+func (f *picturePlacement) deactivate() {
+	if f == nil {
+		return
+	}
+	if f.lease == nil {
+		f.active.Store(false)
+		return
+	}
+	f.lease.outputMu.Lock()
+	f.active.Store(false)
+	if !f.ownsID && !f.lease.overwritten.Load() {
+		f.lease.outputDone = nil
+	}
+	f.lease.outputMu.Unlock()
 }
 
 type pictureJob struct {
@@ -315,7 +342,7 @@ func (p *Picture) failSubmission(err error) tea.Cmd {
 	}
 	if p.job != nil {
 		p.job.cancel()
-		p.job.placement.active.Store(false)
+		p.job.placement.deactivate()
 	}
 	var clear tea.Cmd
 	if p.opts.ClearOnReplace {
@@ -339,7 +366,7 @@ func (p *Picture) failPreparedJob(j *pictureJob, err error) tea.Cmd {
 	if p.front != nil {
 		failedImgID := j.placement.imgID
 		p.img, p.imgID = p.front.image, p.front.imgID
-		if (failedImgID != p.front.imgID || (p.front.lease != nil && p.front.lease.overwritten.Load())) && p.frontNeedsPrepare() {
+		if failedImgID != p.front.imgID && p.frontNeedsPrepare() {
 			p.dirty = true
 		}
 	} else if p.visible && p.cols > 0 && p.rows > 0 {
@@ -428,7 +455,7 @@ func (p *Picture) changed() tea.Cmd {
 	p.dirty = true
 	if p.job != nil {
 		p.job.cancel()
-		p.job.placement.active.Store(false)
+		p.job.placement.deactivate()
 	}
 	var cleanup tea.Cmd
 	if !p.visible || p.img == nil || p.cols == 0 || p.rows == 0 || p.opts.ClearOnReplace {
@@ -622,15 +649,28 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		}
 		ready := func() tea.Msg { return pictureReady{p, j, f.Grid, f.Format, f.Medium} }
 		return tea.Sequence(func() tea.Msg {
-			if !j.placement.active.Load() {
+			if j.placement.lease != nil {
+				j.placement.lease.outputMu.Lock()
+				if !j.placement.active.Load() {
+					if !j.placement.ownsID && j.placement.lease.outputDone == j.outputDone {
+						j.placement.lease.outputDone = nil
+					}
+					j.placement.lease.outputMu.Unlock()
+					return nil
+				}
+				if !j.placement.ownsID {
+					j.placement.lease.overwritten.Store(true)
+				}
+				j.placement.lease.outputMu.Unlock()
+			} else if !j.placement.active.Load() {
 				return nil
-			}
-			if !j.placement.ownsID && j.placement.lease != nil {
-				j.placement.lease.overwritten.Store(true)
 			}
 			return tea.RawMsg{Msg: f.APC}
 		}, func() tea.Msg {
-			defer close(j.outputDone)
+			defer func() {
+				close(j.outputDone)
+				j.placement.lease.clearOutputDone(j.outputDone)
+			}()
 			// A Close/replacement can race with the raw output after acceptance.
 			// Cleanup survives removal of this Picture from the host's routing table.
 			if !j.placement.active.Load() {
@@ -759,7 +799,7 @@ func (p *Picture) retirePlacement(f *picturePlacement) tea.Cmd {
 	if f == nil {
 		return nil
 	}
-	f.active.Store(false)
+	f.deactivate()
 	if f.ownsID && f.lease != nil {
 		f.lease.active.Store(false)
 	}
@@ -772,7 +812,7 @@ func (p *Picture) dispose(f *picturePlacement) tea.Cmd {
 	if f == nil {
 		return nil
 	}
-	f.active.Store(false)
+	f.deactivate()
 	if f.ownsID && f.lease != nil {
 		f.lease.active.Store(false)
 	}
@@ -832,21 +872,18 @@ func (p *Picture) Keep() tea.Cmd {
 	if p.closed {
 		return nil
 	}
-	var outputDone <-chan struct{}
-	var overwritten bool
-	if p.front != nil && p.front.lease != nil {
-		outputDone = p.front.lease.loadOutputDone()
-		overwritten = p.front.lease.overwritten.Load()
-	}
-	if outputDone == nil && p.job != nil && p.front != nil && p.job.placement.lease != nil && p.job.placement.lease == p.front.lease {
-		outputDone = p.job.outputDone
-	}
 	p.keptView = p.View()
 	front := p.front
 	p.front = nil // Close must never delete the kept terminal ID.
 	cleanup := p.Close()
 	if front == nil || front.mode != PictureKitty {
 		return cleanup
+	}
+	var outputDone <-chan struct{}
+	var overwritten bool
+	if front.lease != nil {
+		outputDone = front.lease.loadOutputDone()
+		overwritten = front.lease.overwritten.Load()
 	}
 	if p.medium == KittyMediumDirect && outputDone == nil && !overwritten {
 		// The terminal already owns these pixels. Only shared-memory fronts or

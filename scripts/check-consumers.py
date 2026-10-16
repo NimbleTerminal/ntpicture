@@ -60,12 +60,14 @@ def main():
         shutil.copy2(ROOT / "testdata/compat/picture.go", picture / "picture.go")
         legacy_calls = (
             "KittySupported(",
+            "KittyEnvSignalled(",
+            "QueryKittySupport(",
+            "KittyUnavailable(",
+            "RequestCellSize(",
+            "IsPictureMsg(",
             "ForceKittyCapability(",
             "SetTmuxPassthrough(",
             "DefaultTerminalSession(",
-            "DetectKittyCapability(",
-            "QueryKittyCapability(",
-            "TmuxPassthrough(",
             "NewModel(",
             "NewModelWithConfig(",
         )

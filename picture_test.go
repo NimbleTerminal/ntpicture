@@ -691,3 +691,110 @@ func TestFailPreparedJobWithUncomparableValueImagesDoesNotPanic(t *testing.T) {
 		t.Fatalf("front after failPreparedJob recovery = %+v, want 4x3", p.front)
 	}
 }
+
+type uncomparableColor struct {
+	rgba []uint16
+}
+
+func (u uncomparableColor) RGBA() (r, g, b, a uint32) {
+	return uint32(u.rgba[0]), uint32(u.rgba[1]), uint32(u.rgba[2]), uint32(u.rgba[3])
+}
+
+func TestNormalizeConfigConvertsUncomparableBackgroundColor(t *testing.T) {
+	bg := uncomparableColor{rgba: []uint16{0xffff, 0, 0, 0xffff}}
+	cfg := normalizeConfig(Config{Background: bg})
+	if cfg != cfg {
+		t.Fatal("normalized Config should be comparable")
+	}
+	p := New(Options{Render: Config{Background: bg, Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1}, RetireDelay: -1})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	drivePicture(t, p, p.Submit(Frame{
+		Image:      testPixels(color.RGBA{R: 200, A: 255}),
+		Cols:       2,
+		Rows:       2,
+		Mode:       PictureGlyph,
+		CellWidth:  1,
+		CellHeight: 1,
+	}))
+	if p.frontNeedsPrepare() {
+		t.Fatal("frontNeedsPrepare should be false and not panic after Submit with uncomparable Background")
+	}
+}
+
+func TestFailPreparedJobDoesNotLoopOnOverwrittenFrontResizeFailure(t *testing.T) {
+	p := New(Options{
+		StableID:    true,
+		RetireDelay: -1,
+		Render:      Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyFormat: KittyFormatRGBA},
+	})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	p.SetSize(2, 2)
+	p.SetTerminal(true, 1, 1)
+	imgA := testPixels(color.RGBA{R: 250, A: 255})
+	drivePicture(t, p, p.SetImage(imgA))
+
+	// Mark front's lease overwritten as if an earlier borrower emitted step0.
+	p.front.lease.overwritten.Store(true)
+
+	// Resize to 4x3 (which schedules p.front's image under a new lease) and
+	// simulate a preparation failure for p.front itself (failedImgID == p.front.imgID).
+	_ = p.SetSize(4, 3)
+	if p.job == nil || p.job.placement.imgID != p.front.imgID {
+		t.Fatalf("expected resize job for front image, got %+v", p.job)
+	}
+	cmd := p.Update(picturePrepared{owner: p, job: p.job, frame: nil})
+	if p.job != nil || p.dirty {
+		t.Fatalf("failPreparedJob re-scheduled a failing front job in a loop: job=%v dirty=%v", p.job, p.dirty)
+	}
+	msgs := drivePicture(t, p, cmd)
+	errCount := 0
+	for _, m := range msgs {
+		if _, ok := m.(ErrorMsg); ok {
+			errCount++
+		}
+	}
+	if errCount != 1 {
+		t.Fatalf("expected single ErrorMsg without retry loop, got %d error messages", errCount)
+	}
+}
+
+func TestCancelledStableIDBorrowerBeforeStep0ClearsOutputDone(t *testing.T) {
+	p := New(Options{
+		StableID:    true,
+		RetireDelay: -1,
+		Render:      Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyFormat: KittyFormatRGBA},
+	})
+	p.SetSize(2, 2)
+	p.SetTerminal(true, 1, 1)
+	imgA := testPixels(color.RGBA{R: 250, A: 255})
+	imgB := testPixels(color.RGBA{G: 250, A: 255})
+	drivePicture(t, p, p.SetImage(imgA))
+
+	// Prepare borrower B and deliver picturePrepared to Update, setting lease.outputDone,
+	// then cancel B via a rejected SetImage BEFORE step0 of B's sequence ever runs.
+	prepMsg := p.SetImage(imgB)()
+	seqCmd := p.Update(prepMsg)
+	if p.front.lease.loadOutputDone() == nil {
+		t.Fatal("expected non-nil outputDone before borrower cancellation")
+	}
+
+	errCmd := p.SetImage(image.NewRGBA(image.Rectangle{}))
+	if p.front.lease.loadOutputDone() != nil {
+		t.Fatal("expected cancelled borrower before step0 to clear lease.outputDone")
+	}
+	if p.dirty {
+		t.Fatal("expected untouched front not to mark p.dirty on failSubmission")
+	}
+	msgs := drivePicture(t, p, tea.Batch(seqCmd, errCmd))
+	if got := output(msgs); got != "" {
+		t.Fatalf("expected no APC output when borrower was cancelled before step0, got %q", got)
+	}
+	if p.dirty || p.job != nil {
+		t.Fatalf("expected idle picture after draining cancelled borrower, got dirty=%v job=%v", p.dirty, p.job)
+	}
+
+	// Keep on the untouched direct front must take the fast path and emit no APC.
+	if got := output(drivePicture(t, p, p.Keep())); got != "" {
+		t.Fatalf("Keep() retransmitted untouched direct front after pre-step0 borrower cancellation: %q", got)
+	}
+}

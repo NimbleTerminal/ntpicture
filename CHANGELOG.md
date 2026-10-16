@@ -30,9 +30,10 @@ Initial extraction of NTCharts and Gloss terminal image rendering into
   `SetComposite` window cropping and position carry, `SetActive` suspension, and
   `Snapshot` export of the committed frame.
 - `ntpicture/legacy` compatibility subpackage (`Model`, `NewModel`,
-  `NewModelWithConfig`, `DefaultTerminalSession`, `DetectKittyCapability`,
-  `QueryKittyCapability`, `ForceKittyCapability`, `SetTmuxPassthrough`,
-  `TmuxPassthrough`) isolating the low-level NTCharts surface and process-wide
+  `NewModelWithConfig`, `DefaultTerminalSession`, `QueryKittySupport`,
+  `KittySupported`, `KittyEnvSignalled`, `KittyUnavailable`,
+  `ForceKittyCapability`, `SetTmuxPassthrough`, `RequestCellSize`,
+  `IsPictureMsg`) isolating the low-level NTCharts surface and process-wide
   capability helpers from the root package.
 - Examples (still, simple, grid, animation, and live framebuffer) built for
   native terminals and the browser via booba, plus task-based QA

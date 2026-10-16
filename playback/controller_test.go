@@ -570,3 +570,41 @@ func FuzzControllerActions(f *testing.F) {
 		}
 	})
 }
+
+func TestControllerHiddenRepeatSetVisiblePreservesQueuedSeekAndPostCloseGuards(t *testing.T) {
+	c := New(testPlayer(t), Options{Wait: func(context.Context, time.Duration) bool { return true }})
+	c.Pause(true)
+	c.SetSize(2, 2)
+	c.SetTerminal(true, 9, 18)
+	drive(t, c, c.Init())
+
+	if c.Mode() != picture.PictureKitty {
+		t.Fatalf("Mode() = %v, want PictureKitty", c.Mode())
+	}
+	if w, h := c.CellPixelSize(); w != 9 || h != 18 {
+		t.Fatalf("CellPixelSize() = %dx%d, want 9x18", w, h)
+	}
+
+	// Hide, queue a Seek(2) while hidden, then call SetVisible(false) again:
+	// redundant SetVisible(false) must not drop the queued Seek.
+	drive(t, c, c.SetVisible(false))
+	drive(t, c, c.Seek(2))
+	if cmd := c.SetVisible(false); cmd != nil {
+		t.Fatal("expected redundant SetVisible(false) to return nil")
+	}
+	drive(t, c, c.SetVisible(true))
+	if c.Status().Player == nil || c.Status().Player.Frame() != 2 {
+		t.Fatalf("Player.Frame() after SetVisible(true) = %+v, want 2", c.Status().Player)
+	}
+
+	// After Close(), Pause and SetRate must be no-ops that do not mutate Status.
+	drive(t, c, c.Close())
+	before := c.Status()
+	if c.Pause(false) != nil || c.SetRate(3) != nil {
+		t.Fatal("expected Pause and SetRate after Close to return nil")
+	}
+	after := c.Status()
+	if after.Paused != before.Paused || after.Rate != before.Rate {
+		t.Fatalf("post-Close Pause/SetRate mutated status: before=%+v after=%+v", before, after)
+	}
+}

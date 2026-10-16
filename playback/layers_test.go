@@ -2093,3 +2093,220 @@ func TestLayersRestartWhileHiddenRunsOnShow(t *testing.T) {
 		t.Fatalf("Snapshot pixel after Restart while hidden + SetVisible(true) = %v, want red (frame 1)", got)
 	}
 }
+
+func TestLayersSetSizeZeroClosesOverlaysAndClearsSnapshots(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 4, 2, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	player := colorPlayer(t, image.Pt(8, 16), red, green)
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a", Rect: image.Rect(0, 0, 8, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nextID := 500
+	var allowSteps atomic.Int32
+	l := NewLayers(comp, Options{
+		Wait: func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+		Picture: picture.Options{
+			NextID:      func() (int, error) { nextID++; return nextID, nil },
+			RetireDelay: -1,
+		},
+	})
+	defer func() { _ = l.Close() }()
+	l.Pause(true)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	// Advance overlay to frame 2 (green).
+	allowSteps.Store(1)
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+	if got := color.RGBAModel.Convert(l.Snapshot().At(4, 4)); got != green {
+		t.Fatalf("expected green on frame 2 before SetSize(0,0), got %v", got)
+	}
+
+	// SetSize(0, 0) must close both base and overlay Kitty placements (not leave overlays in retainedOverlays)
+	// and clear Snapshot() and Status().Presented to nil.
+	var zeroMsgs []tea.Msg
+	driveLayersCollect(t, l, l.SetSize(0, 0), &zeroMsgs)
+	if len(l.retainedOverlays) != 0 || len(l.overlays) != 0 {
+		t.Fatalf("SetSize(0,0) retained overlays: retained=%d active=%d", len(l.retainedOverlays), len(l.overlays))
+	}
+	if l.Snapshot() != nil || l.Status().Presented != nil || l.View() != "" {
+		t.Fatalf("SetSize(0,0) kept non-nil Snapshot/Presented or View: snap=%v pres=%v view=%q", l.Snapshot(), l.Status().Presented, l.View())
+	}
+	var rawDeletes string
+	for _, m := range zeroMsgs {
+		if raw, ok := m.(tea.RawMsg); ok {
+			if s, ok := raw.Msg.(string); ok {
+				rawDeletes += s
+			}
+		}
+	}
+	for _, id := range []int{501, 502} {
+		if !strings.Contains(rawDeletes, fmt.Sprintf("i=%d", id)) {
+			t.Fatalf("SetSize(0,0) did not delete Kitty ID %d in %q", id, rawDeletes)
+		}
+	}
+
+	// Resizing back to non-zero dimensions restores the harvested frame 2 (green).
+	driveLayers(t, l, l.SetSize(cols, rows))
+	if l.Snapshot() == nil || color.RGBAModel.Convert(l.Snapshot().At(4, 4)) != green {
+		t.Fatalf("Snapshot after resize from 0x0 = %v, want green", l.Snapshot())
+	}
+}
+
+func TestLayersHiddenUpdatesDeferLayoutWorkUntilShown(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 4, 2, 8, 16
+	base1 := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	base2 := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{B: 20, A: 255})
+	player := colorPlayer(t, image.Pt(8, 16), red, green)
+	comp1, err := animation.NewComposite(context.Background(), base1, []animation.Region{
+		{Key: "a", Rect: image.Rect(0, 0, 8, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comp2, err := animation.NewComposite(context.Background(), base2, []animation.Region{
+		{Key: "a", Rect: image.Rect(16, 0, 24, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var allowSteps atomic.Int32
+	l := NewLayers(comp1, Options{
+		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer func() { _ = l.Close() }()
+	l.Pause(true)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	// Advance to frame 2 (green), then hide.
+	allowSteps.Store(1)
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+	driveLayers(t, l, l.SetVisible(false))
+
+	// Mutating composite and geometry while hidden must not spawn background layout jobs.
+	_ = l.SetComposite(comp2)
+	_ = l.SetSize(6, 3)
+	_ = l.SetFit(picture.FitContain)
+	_ = l.SetAnchor(picture.AnchorTop)
+	if l.layoutJob != nil || l.Status().Busy {
+		t.Fatalf("expected no background layout job while hidden, got layoutJob=%v Status=%+v", l.layoutJob, l.Status())
+	}
+	if l.Status().Source != comp2 {
+		t.Fatalf("Status().Source while hidden = %v, want comp2", l.Status().Source)
+	}
+
+	// Showing runs layout once and carries frame 2 (green) to the new region position (16, 0).
+	driveLayers(t, l, l.SetVisible(true))
+	if l.Snapshot() == nil || color.RGBAModel.Convert(l.Snapshot().At(20, 4)) != green {
+		t.Fatalf("Snapshot after SetVisible(true) = %v, want green at new region", l.Snapshot())
+	}
+}
+
+func TestLayersUnchangedSetTerminalDoesNotResetPlayback(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 4, 2, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	player := colorPlayer(t, image.Pt(8, 16), red, green)
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a", Rect: image.Rect(0, 0, 8, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("GlyphInFlightAndFinishedPlayback", func(t *testing.T) {
+		var allowWait atomic.Bool
+		l := NewLayers(comp, Options{
+			Wait:    func(context.Context, time.Duration) bool { return allowWait.Load() },
+			Picture: picture.Options{RetireDelay: -1},
+		})
+		defer func() { _ = l.Close() }()
+		l.Pause(true)
+		l.SetSize(cols, rows)
+		l.SetTerminal(false, cw, ch)
+		driveLayers(t, l, l.Init())
+
+		// Unpause to schedule an in-flight advance job on l.base without running it yet.
+		allowWait.Store(true)
+		advanceCmd := l.Pause(false)
+		inFlightJob := l.base.job
+		inFlightDue := l.base.nextDue
+		if advanceCmd == nil || inFlightJob == nil || inFlightDue.IsZero() {
+			t.Fatalf("expected in-flight base job and deadline, got job=%v due=%v", inFlightJob, inFlightDue)
+		}
+
+		// Calling SetTerminal with unchanged mode and cell dimensions before delivering the
+		// advance result (as hosts do when syncing state on Update) must be a no-op that
+		// neither cancels inFlightJob nor resets nextDue.
+		if cmd := l.SetTerminal(false, cw, ch); cmd != nil {
+			t.Fatal("expected unchanged SetTerminal in glyph mode to return nil")
+		}
+		if l.base.job != inFlightJob || inFlightJob.ctx.Err() != nil || !l.base.nextDue.Equal(inFlightDue) {
+			t.Fatalf("unchanged SetTerminal disturbed in-flight base playback: job=%v err=%v due=%v", l.base.job, inFlightJob.ctx.Err(), l.base.nextDue)
+		}
+
+		// Delivering the pending advanceCmd finishes the 2-frame finite clip on frame 2 (green).
+		driveLayers(t, l, advanceCmd)
+		if !l.Status().Finished {
+			t.Fatalf("expected finite glyph composite to finish, got %+v", l.Status())
+		}
+		if got := color.RGBAModel.Convert(l.Snapshot().At(4, 4)); got != green {
+			t.Fatalf("Snapshot pixel at finish = %v, want green", got)
+		}
+
+		// Neither an unchanged SetTerminal nor a cell-pixel resize in glyph mode may
+		// restart the finished finite clip back to frame 1.
+		if cmd := l.SetTerminal(false, cw, ch); cmd != nil {
+			t.Fatal("expected unchanged SetTerminal after finish to return nil")
+		}
+		if !l.Status().Finished {
+			t.Fatalf("unchanged SetTerminal restarted finished clip: %+v", l.Status())
+		}
+		driveLayers(t, l, l.SetTerminal(false, cw+2, ch+4))
+		if !l.Status().Finished {
+			t.Fatalf("cell-pixel resize in glyph mode restarted finished clip: %+v", l.Status())
+		}
+		if got := color.RGBAModel.Convert(l.Snapshot().At(4, 4)); got != green {
+			t.Fatalf("Snapshot pixel after glyph cell resize = %v, want green", got)
+		}
+	})
+
+	t.Run("KittyUnchangedSetTerminalAndSetBackground", func(t *testing.T) {
+		var allowSteps atomic.Int32
+		l := NewLayers(comp, Options{
+			Wait: func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+			Picture: picture.Options{
+				RetireDelay: -1,
+				Render:      picture.Config{Background: color.RGBA{R: 1, G: 2, B: 3, A: 255}},
+			},
+		})
+		defer func() { _ = l.Close() }()
+		l.Pause(true)
+		l.SetSize(cols, rows)
+		l.SetTerminal(true, cw, ch)
+		driveLayers(t, l, l.Init())
+
+		if cmd := l.SetTerminal(true, cw, ch); cmd != nil {
+			t.Fatal("expected unchanged SetTerminal in Kitty mode to return nil")
+		}
+		if cmd := l.SetBackground(color.RGBA{R: 1, G: 2, B: 3, A: 255}); cmd != nil {
+			t.Fatal("expected unchanged SetBackground to return nil")
+		}
+	})
+}

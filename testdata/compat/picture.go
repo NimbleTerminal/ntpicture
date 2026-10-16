@@ -23,6 +23,7 @@ type GridImageConfig = nt.GridImageConfig
 
 const (
 	DefaultKittyID             = nt.DefaultKittyID
+	MaxImagePixels             = nt.MaxImagePixels
 	PictureGlyph               = nt.PictureGlyph
 	PictureKitty               = nt.PictureKitty
 	FitContain                 = nt.FitContain
@@ -52,6 +53,7 @@ var (
 func New() Model                                  { return legacy.NewModel() }
 func NewWithConfig(cfg Config) Model              { return legacy.NewModelWithConfig(cfg) }
 func NewGridImage(cfg GridImageConfig) *GridImage { return nt.NewGridImage(cfg) }
+func DefaultTerminalSession() *nt.TerminalSession { return legacy.DefaultTerminalSession() }
 func IsPictureMsg(msg tea.Msg) bool               { return legacy.IsPictureMsg(msg) }
 func RequestCellSize() tea.Cmd                    { return legacy.RequestCellSize() }
 func QueryKittySupport() tea.Cmd                  { return legacy.QueryKittySupport() }

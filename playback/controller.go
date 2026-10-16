@@ -40,7 +40,7 @@ type Status struct {
 	Rate                   float64
 	Err                    error
 	// Presented is the position whose image was last committed to output, with
-	// picture.PresentedMsg semantics: ordered output, not terminal
+	// ntpicture.PresentedMsg semantics: ordered output, not terminal
 	// acknowledgement. Use it to export the displayed frame or label controls.
 	// A later position with identical pixels is not resubmitted and becomes
 	// Presented immediately. Nil before the first commit and after clearing;
@@ -243,11 +243,20 @@ func (c *Controller) SetMode(mode picture.PictureMode) tea.Cmd {
 	return c.presentation(c.pic.SetMode(mode))
 }
 
+// Mode reports the current rendering mode (PictureGlyph or PictureKitty).
+func (c *Controller) Mode() picture.PictureMode { return c.pic.Mode() }
+
+// CellPixelSize returns the current cell pixel dimensions.
+func (c *Controller) CellPixelSize() (width, height int) { return c.pic.CellPixelSize() }
+
 // SetVisible hides or shows the picture. Hiding cancels pending work (including
 // any in-flight or queued Seek or Restart) and clears terminal placements while
 // retaining the current source position. Seeking or restarting while already
 // hidden queues the operation to run when SetVisible(true) is called.
 func (c *Controller) SetVisible(visible bool) tea.Cmd {
+	if c.closed || c.visible == visible {
+		return nil
+	}
 	c.visible = visible
 	if !visible {
 		c.cancel()
@@ -256,6 +265,9 @@ func (c *Controller) SetVisible(visible bool) tea.Cmd {
 	return tea.Batch(c.pic.SetVisible(visible), c.schedule())
 }
 func (c *Controller) Pause(paused bool) tea.Cmd {
+	if c.closed {
+		return nil
+	}
 	c.paused = paused
 	c.cancel()
 	if !paused && c.finished {
@@ -267,7 +279,7 @@ func (c *Controller) Pause(paused bool) tea.Cmd {
 
 // SetRate clamps speed to Gloss's established 0.25x–4x range.
 func (c *Controller) SetRate(rate float64) tea.Cmd {
-	if rate != rate {
+	if c.closed || rate != rate {
 		return nil
 	} // NaN is not a playback rate.
 	c.rate = max(.25, min(4, rate))
@@ -509,6 +521,7 @@ func sameImage(a, b image.Image) bool {
 	if eq, ok := imageview.Same(a, b); ok {
 		return eq
 	}
+	a, b = imageview.Unwrap(a), imageview.Unwrap(b)
 	return reflect.ValueOf(a).Comparable() && reflect.ValueOf(b).Comparable() && a == b
 }
 

@@ -17,11 +17,11 @@ import (
 type KittyMedium int8
 
 const (
-	// KittyMediumDirect sends the configured PNG or RGBA format through the terminal.
+	// KittyMediumDirect sends the configured PNG, RGBA, or zlib format through the terminal.
 	KittyMediumDirect KittyMedium = iota
 	// KittyMediumSharedMemory sends raw RGBA through a named shared buffer.
 	// Unsupported environments, and native terminals that have not answered
-	// QueryKittySupport's t=s query with OK, fall back to Direct with the
+	// the session probe's t=s query with OK, fall back to Direct with the
 	// configured format.
 	KittyMediumSharedMemory
 )
@@ -41,8 +41,8 @@ func normalizeKittyMedium(m KittyMedium) KittyMedium {
 }
 
 // KittySharedMemorySupported reports whether this process can create shared buffers.
-// It is not a terminal probe: QueryKittySupport asks a native terminal whether
-// it can read them.
+// It is not a terminal probe: TerminalSession.Init (or Picture.Init) asks a native
+// terminal whether it can read them.
 func KittySharedMemorySupported() bool { return kittyshm.Supported() }
 
 // kittySharedProbeID is the image ID used for the shared-memory query.

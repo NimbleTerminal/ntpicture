@@ -265,13 +265,13 @@ layout and the mapping from document regions into these cell rectangles.
 
 `nimbleterminal.dev/ntpicture/legacy` provides `Model`, `NewModel`,
 `NewModelWithConfig`, and the process-wide capability/tmux functions
-(`DefaultTerminalSession`, `DetectKittyCapability`, `QueryKittyCapability`,
-`ForceKittyCapability`, `SetTmuxPassthrough`, `TmuxPassthrough`) that preserve
-the low-level NTCharts surface, while keeping the root `ntpicture` package
-focused on `Picture`, `TerminalSession`, and `GridImage` with no `init()`
-environment side effects. `legacy.Model.SetImage` retains pixels without
-copying, as before, and legacy callers remain responsible for geometry/resource
-limits.
+(`DefaultTerminalSession`, `QueryKittySupport`, `KittySupported`,
+`KittyEnvSignalled`, `KittyUnavailable`, `ForceKittyCapability`,
+`SetTmuxPassthrough`, `RequestCellSize`, `IsPictureMsg`) that preserve the
+low-level NTCharts surface, while keeping the root `ntpicture` package focused
+on `Picture`, `TerminalSession`, and `GridImage` with no `init()` environment
+side effects. `legacy.Model.SetImage` retains pixels without copying, as before,
+and legacy callers remain responsible for geometry/resource limits.
 
 `testdata/compat/picture.go` is a proposed NTCharts alias adapter, exercised by
 `scripts/check-consumers.py` in temporary checkouts. It preserves type/message

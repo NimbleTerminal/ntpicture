@@ -61,13 +61,14 @@ No sibling repository has been modified or released.
 
 ## Implemented: discovery bridge and cell-size handling
 
-KittyCapabilityMsg reports probe resolution through the Bubble Tea loop.
-`legacy.Model.Update` and `Picture.Update` return notification commands on
-transitions; Init/query also reports already-known results. Late positive
-replies may follow a timeout; hosts must tolerate duplicates. Examples select
-Kitty from this message instead of polling on every update. Legacy capability
-state lives in the default session (`legacy.DefaultTerminalSession`);
-`legacy.ForceKittyCapability` does not itself enqueue a message.
+KittyCapabilityMsg and TerminalSessionMsg report probe resolution through the
+Bubble Tea loop. `legacy.Model.Update` and `Picture.Update` return notification
+commands on transitions; Init/query also reports already-known results. Late
+positive replies may follow a timeout; hosts must tolerate duplicates. Examples
+use an explicit `TerminalSession` and select Kitty from `TerminalSessionMsg`
+instead of polling on every update. Legacy capability state lives in the default
+session (`legacy.DefaultTerminalSession`); `legacy.ForceKittyCapability` does
+not itself enqueue a message.
 `legacy.Model.Update` now returns a command for capability transitions where it
 previously returned nil; the NTCharts adapter migration must preserve and
 execute these commands and update any tests that assumed nil.

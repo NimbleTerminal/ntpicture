@@ -13,7 +13,7 @@ import (
 // LogicalCols and LogicalRows are logical grid dimensions. TerminalColsPerCell
 // and TerminalRowsPerCell are the number of terminal cells occupied by each
 // logical cell; zero values default to 1. CellPixelWidth and CellPixelHeight
-// are terminal-cell pixel dimensions; zero values use picture's defaults.
+// are terminal-cell pixel dimensions; zero values use ntpicture's defaults.
 //
 // Scaler controls how backgrounds and sprites are scaled into their target
 // rectangles. It defaults to golang.org/x/image/draw.NearestNeighbor because
