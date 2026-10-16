@@ -30,12 +30,8 @@ func encodeKittyGraphicsData(w io.Writer, data []byte, o *kitty.Options) error {
 		if first {
 			opts = kittyPlacementOptions(o)
 		} else {
-			quiet := o.Quiet
-			if o.Quite > 0 {
-				quiet = o.Quite
-			}
-			if quiet > 0 {
-				opts = append(opts, fmt.Sprintf("q=%d", quiet))
+			if o.Quiet > 0 {
+				opts = append(opts, fmt.Sprintf("q=%d", o.Quiet))
 			}
 			if o.Action == kitty.Frame {
 				opts = append(opts, "a=f")

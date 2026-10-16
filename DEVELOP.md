@@ -1,6 +1,6 @@
 # Development
 
-Use Go 1.27.2 for development and CI (the module minimum is Go 1.26.8). Native
+Use Go 1.27.2 for development and CI (the module minimum is Go 1.26). Native
 dependencies use upstream Bubble Tea; `wasm.work` pins the existing browser
 fork. Generated native binaries belong in `bin/`, WASM output in `web/demos/`,
 and installed QA tools in `.task/bin/`; all are ignored. Do not commit browser
@@ -35,7 +35,7 @@ Node is needed for the WASM tests. These test the Go producer and browser
 registry lifecycle, not visual output in a browser. Native POSIX shared-memory
 tests need an environment allowing `shm_open`; they intentionally fail when that
 facility is blocked. The real-terminal consumption test additionally requires
-`NTCHARTS_SHM_TERMINAL_TEST=1` inside a local Kitty-capable terminal.
+`NTPICTURE_SHM_TERMINAL_TEST=1` inside a local Kitty-capable terminal.
 
 For restricted environments, `CGO_ENABLED=0` on macOS tests the direct fallback.
 A race run may explicitly exclude OS-blocked shared-memory tests; report those
@@ -102,7 +102,7 @@ and result for these checks:
   and confirm no new transmission (the status generation is unchanged and the
   yellow raster border scrolls into view), toggle `g`, then exit with `Q`
   (frame retained) and separately with `q` (cleared). Repeat with
-  `NTCHARTS_KITTY=unsupported` and confirm resolution controls disappear.
+  `NTPICTURE_KITTY=unsupported` and confirm resolution controls disappear.
 
 Unit tests cover stale results, geometry, encoding, and cleanup. Animation
 acceptance also covers GIF/WebP pause/resume, loop completion, frame seeking,
@@ -172,7 +172,8 @@ open the local site in this session and no Kitty terminal was driven
 interactively. Automated evidence: `task check-site` (Node smoke of all five
 demos including framebuffer pause, pan, and keep-screen exit), native and WASM
 unit tests with the race detector, and a pseudo-terminal run of
-`bin/ntpicture-framebuffer`. With `NTCHARTS_KITTY=supported` and an answered
+`bin/ntpicture-framebuffer`. With `NTPICTURE_KITTY=supported` (then named
+`NTCHARTS_KITTY=supported`) and an answered
 cell-size query, that run transmitted 57 zlib frames under one stable image ID
 at 480×248 px for 120×31 cells, used a fresh ID at 720×372 px with the same
 cells after `]`, another after a resize to 150×39 cells, and deleted all three
@@ -185,7 +186,7 @@ For a native operator check, first run `task build-examples` from the repository
 root. Then run `./bin/ntpicture-animation` in Kitty (or record Ghostty
 separately), resize while playing, alternate Space and comma/period/Home, then
 press `Q` and verify both images remain. Run again and press `q`, verifying
-cleanup. Use `NTCHARTS_KITTY=unsupported ./bin/ntpicture-animation` for the
+cleanup. Use `NTPICTURE_KITTY=unsupported ./bin/ntpicture-animation` for the
 glyph case. Record terminal version and actual transport before marking native
 coverage done.
 

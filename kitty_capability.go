@@ -10,29 +10,30 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"nimbleterminal.dev/ntpicture/internal/legacybridge"
 )
 
 // KittyCapability reports whether the host terminal supports the Kitty
-// graphics protocol. Legacy package helpers share process-wide state. Explicit
-// TerminalSession instances track support independently for each connection.
+// graphics protocol. Explicit TerminalSession instances track support
+// independently for each connection; the compatibility helpers in
+// nimbleterminal.dev/ntpicture/legacy share process-wide state.
 type KittyCapability int8
 
 const (
 	// KittyCapabilityUnknown is the default state, before the probe has
-	// completed. Toggle into Kitty is BLOCKED in this state — both
+	// completed. Entering Kitty mode is blocked in this state — both
 	// Unknown and Unsupported keep Kitty escapes off the wire, so a
 	// non-Kitty terminal never sees garbage. Kitty terminals typically
-	// resolve to Supported within a few milliseconds, after which
-	// Toggle works normally.
+	// resolve to Supported within a few milliseconds.
 	KittyCapabilityUnknown KittyCapability = iota
 
 	// KittyCapabilitySupported means the terminal answered the Kitty
-	// query — Kitty graphics escapes will render correctly.
+	// query (or was configured as supported) — Kitty graphics escapes will
+	// render correctly.
 	KittyCapabilitySupported
 
 	// KittyCapabilityUnsupported means the probe timed out without a
-	// response. Toggle into Kitty mode no-ops to avoid emitting Kitty
-	// escapes that would print as garbage.
+	// response or the environment was not recognized as Kitty-capable.
 	KittyCapabilityUnsupported
 )
 
@@ -41,186 +42,163 @@ const (
 // never collide with real images.
 const kittyProbeID = 42069101
 
-// kittyProbeTimeout is how long QueryKittySupport waits for a response
-// before concluding the terminal does not support Kitty graphics.
-// Kitty-supporting terminals typically respond well under 50ms; 250ms
-// is generous enough to accommodate slow ssh paths.
+// kittyProbeTimeout is how long probing waits for a response before concluding
+// the terminal does not support Kitty graphics.
 const kittyProbeTimeout = 250 * time.Millisecond
 
 var (
-	kittyCap          atomic.Int32 // holds KittyCapability values
-	kittyEnvSignalled atomic.Bool  // recorded result of the env preflight
-	kittyQueryOnce    sync.Once
+	kittyCap                   atomic.Int32 // holds KittyCapability values
+	kittyEnvSignalled          atomic.Bool  // recorded result of the env preflight
+	kittyProbeMu               sync.Mutex
+	kittyProbed                atomic.Bool
+	kittySharedProbed          atomic.Bool
+	kittySharedAutoUnsupported atomic.Bool
 )
 
-// KittyCapabilityMsg reports probe resolution. Forward terminal messages to
-// Model.Update or Picture.Update and execute their commands to receive it.
-// A late positive reply can follow a timeout notification. Init/query also
-// reports an already-known capability, so hosts should handle duplicates.
-// ForceKittyCapability itself does not enqueue a Bubble Tea message.
-type KittyCapabilityMsg struct{ Capability KittyCapability }
+type kittyCapabilityMsg struct{ Capability KittyCapability }
 
 func kittyCapabilityCommand(c KittyCapability) tea.Cmd {
-	return func() tea.Msg { return KittyCapabilityMsg{Capability: c} }
+	return func() tea.Msg {
+		if legacybridge.WrapCapabilityMsg != nil {
+			return legacybridge.WrapCapabilityMsg(int8(c))
+		}
+		return kittyCapabilityMsg{Capability: c}
+	}
 }
 
-// KittyEnvSignalled reports whether the env preflight saw a positive
-// indicator (TERM=xterm-{kitty,ghostty}, KITTY_*, GHOSTTY_*, WEZTERM_*,
-// recognized TERM_PROGRAM, or tmux passthrough enabled) at the time
-// QueryKittySupport ran. Useful
-// alongside KittySupported() for diagnostics: if KittySupported() ==
-// Unsupported AND KittyEnvSignalled() == true, the probe ran but no
-// response arrived within the timeout — likely a real terminal-side
-// or transport issue. If env wasn't signalled, the probe was skipped
-// to avoid emitting bytes to a terminal that may not swallow APCs.
-func KittyEnvSignalled() bool { return kittyEnvSignalled.Load() }
+func kittyEnvSignalledFn() bool {
+	ensureLegacyEnv()
+	return kittyEnvSignalled.Load()
+}
 
-// KittySupported reports the current process-wide Kitty graphics
-// capability. Returns KittyCapabilityUnknown until the probe started by
-// QueryKittySupport resolves (typically <50ms after the first Init).
-func KittySupported() KittyCapability {
+func kittySupported() KittyCapability {
+	ensureLegacyEnv()
 	return KittyCapability(kittyCap.Load())
 }
 
-// Errors returned by KittyUnavailable and Model.ToggleBlocked, explaining
-// why Toggle will not enter Kitty mode. Compare with errors.Is.
+// Errors returned by Picture.SetMode and legacy.KittyUnavailable explaining
+// why entering Kitty mode is blocked. Compare with errors.Is.
 var (
 	// ErrKittyProbePending means the Kitty probe has not resolved yet. It
 	// resolves within a few milliseconds of Init in a Kitty-capable
-	// terminal, so a later Toggle will succeed. If Init was never run, the
-	// probe never starts; batch Model.Init (or QueryKittySupport).
+	// terminal, so a later SetMode will succeed.
 	ErrKittyProbePending = errors.New("kitty graphics probe has not resolved yet; try again shortly")
 
 	// ErrKittyNotDetected means the environment did not look Kitty-aware,
 	// so no probe was sent (or the capability was set to unsupported by
-	// NTCHARTS_KITTY or ForceKittyCapability).
-	ErrKittyNotDetected = errors.New("terminal not recognized as Kitty-capable; set NTCHARTS_KITTY=supported or call picture.ForceKittyCapability to override")
+	// NTPICTURE_KITTY or TerminalOptions.Kitty).
+	ErrKittyNotDetected = errors.New("terminal not recognized as Kitty-capable; set NTPICTURE_KITTY=supported or configure TerminalOptions.Kitty to override")
 
 	// ErrKittyProbeTimeout means a probe was sent but the terminal did not
 	// answer in time, which usually points to a multiplexer or transport
 	// that drops the query.
-	ErrKittyProbeTimeout = errors.New("terminal did not answer the Kitty graphics probe; set NTCHARTS_KITTY=supported or call picture.ForceKittyCapability to override")
+	ErrKittyProbeTimeout = errors.New("terminal did not answer the Kitty graphics probe; set NTPICTURE_KITTY=supported or configure TerminalOptions.Kitty to override")
 )
 
-// KittyUnavailable returns nil when the terminal is known to support Kitty
-// graphics, or an error (ErrKittyProbePending, ErrKittyNotDetected, or
-// ErrKittyProbeTimeout) saying why Toggle into Kitty mode is blocked.
-func KittyUnavailable() error {
-	return DefaultTerminalSession().unavailable()
+func kittyUnavailable() error {
+	return defaultSession().unavailable()
 }
 
-// ForceKittyCapability sets the process-wide Kitty graphics capability,
-// bypassing terminal probing. Use it when the application knows more than
-// the probe can: terminals whose environment is not recognized (some ssh
-// paths, custom builds), tmux passthrough setups or multiplexer chains
-// where auto-detection misfires, or tests. Call it before the first
-// Model.Init so the probe is skipped; NTCHARTS_KITTY=supported|unsupported
-// does the same from the environment.
-func ForceKittyCapability(c KittyCapability) {
+func forceKittyCapability(c KittyCapability) {
+	ensureLegacyEnv()
 	defaultTerminalSession.setKittyForced(c != KittyCapabilityUnknown)
 	kittyCap.Store(int32(c))
+	switch c {
+	case KittyCapabilityUnsupported:
+		if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+			kittySharedAutoUnsupported.Store(true)
+		}
+	case KittyCapabilitySupported:
+		if kittySharedAutoUnsupported.CompareAndSwap(true, false) {
+			kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnsupported), int32(KittyCapabilityUnknown))
+		}
+	}
 }
 
-// kittyProbeTickMsg fires kittyProbeTimeout after QueryKittySupport
-// runs; if the capability is still Unknown when Model.Update sees this,
-// it concludes Kitty is unsupported.
+func resetKittyProbeState() {
+	kittyProbeMu.Lock()
+	kittyProbed.Store(false)
+	kittySharedProbed.Store(false)
+	kittySharedAutoUnsupported.Store(false)
+	kittyProbeMu.Unlock()
+}
+
 type kittyProbeTickMsg struct{}
 
-// QueryKittySupport returns a Cmd that probes terminal Kitty graphics
-// support. The probe runs at most once per process via sync.Once;
-// subsequent calls only report the capability when already known. Multiple
-// Models can safely batch this from their Init — only the first emission actually queries the
-// terminal.
-//
-// Pre-flight env check: most well-behaved terminals silently swallow
-// unknown APC sequences, but some non-Kitty terminals display the
-// probe bytes as visible garbage. To avoid that, the probe is only
-// sent when the process environment indicates a terminal known to
-// support Kitty graphics (kitty, Ghostty, WezTerm, iTerm2, or an
-// explicit TERM=xterm-kitty/xterm-ghostty). Terminals without a
-// positive signal resolve immediately to KittyCapabilityUnsupported
-// without sending anything to the wire. False negatives — Kitty-
-// capable terminals whose env vars don't propagate (some ssh paths,
-// custom builds) — can opt in via ForceKittyCapability.
-//
-// tmux hides the outer terminal's environment, so when tmux
-// passthrough is enabled (see SetTmuxPassthrough) the probe is sent
-// through the passthrough wrapper regardless of other signals. Set
-// NTCHARTS_KITTY=unsupported or NTCHARTS_TMUX_PASSTHROUGH=false when
-// the terminal hosting tmux is known not to support Kitty graphics.
-//
-// Two messages drive resolution when a probe is sent:
-//   - uv.KittyGraphicsEvent with the probe's ID arrives if the terminal
-//     supports the protocol; Model.Update sets the capability to
-//     KittyCapabilitySupported.
-//   - kittyProbeTickMsg fires after kittyProbeTimeout; if the
-//     capability is still Unknown, Model.Update sets it to
-//     KittyCapabilityUnsupported.
-//
-// Both messages are intercepted by Model.Update — consumers that
-// forward every tea.Msg to Model.Update don't need to handle them. Run its
-// returned command to receive KittyCapabilityMsg when the result changes.
-//
-// Where this process can create shared-memory objects, the probe also
-// queries the t=s medium (even when the capability was forced to
-// Supported). KittyMediumSharedMemory frames are sent Direct unless the
-// terminal answers that query with OK.
-func QueryKittySupport() tea.Cmd {
+func queryKittySupport() tea.Cmd {
+	ensureLegacyEnv()
 	var cmds []tea.Cmd
-	kittyQueryOnce.Do(func() {
-		var kittyQuery string
-		switch KittySupported() {
-		case KittyCapabilitySupported:
-			// Forced (e.g., by ForceKittyCapability before any Model's
-			// Init ran): only the shared-memory medium is left to probe.
+	kittyProbeMu.Lock()
+	var kittyQuery, sharedQuery string
+	switch kittySupported() {
+	case KittyCapabilitySupported:
+		if !kittySharedProbed.Load() {
 			if !kittySharedProbeable() {
-				return
+				if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+					kittySharedAutoUnsupported.Store(true)
+				}
+			} else {
+				sharedQuery = kittySharedQueryAPC()
+				if sharedQuery != "" {
+					kittySharedProbed.Store(true)
+				} else if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+					kittySharedAutoUnsupported.Store(true)
+				}
 			}
-		case KittyCapabilityUnsupported:
-			return
-		default:
-			// If the environment doesn't indicate a Kitty-aware terminal,
-			// don't send any bytes — go straight to Unsupported.
+		}
+	case KittyCapabilityUnsupported:
+		if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+			kittySharedAutoUnsupported.Store(true)
+		}
+	default:
+		if !kittyProbed.Load() {
 			if !kittyEnvSignal() {
 				kittyEnvSignalled.Store(false)
 				kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
-				return
+				if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+					kittySharedAutoUnsupported.Store(true)
+				}
+			} else {
+				kittyEnvSignalled.Store(true)
+				kittyProbed.Store(true)
+				kittyQuery = tmuxWrap(buildKittyQueryAPC(kittyProbeID))
+				if !kittySharedProbed.Load() {
+					if !kittySharedProbeable() {
+						if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+							kittySharedAutoUnsupported.Store(true)
+						}
+					} else {
+						sharedQuery = kittySharedQueryAPC()
+						if sharedQuery != "" {
+							kittySharedProbed.Store(true)
+						} else if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+							kittySharedAutoUnsupported.Store(true)
+						}
+					}
+				}
 			}
-			kittyEnvSignalled.Store(true)
-			kittyQuery = tmuxWrap(buildKittyQueryAPC(kittyProbeID))
 		}
+	}
+	kittyProbeMu.Unlock()
+	if sharedQuery != "" || kittyQuery != "" {
+		raw := sharedQuery + kittyQuery
 		cmds = append(cmds,
-			// The shared-memory query goes first, so the medium is
-			// resolved by the time Kitty is.
-			func() tea.Msg { return tea.RawMsg{Msg: kittySharedQueryAPC() + kittyQuery} },
+			func() tea.Msg { return tea.RawMsg{Msg: raw} },
 			tea.Tick(kittyProbeTimeout, func(time.Time) tea.Msg {
 				return kittyProbeTickMsg{}
 			}),
 		)
-	})
-	if c := KittySupported(); c != KittyCapabilityUnknown {
+	}
+	if c := kittySupported(); c != KittyCapabilityUnknown {
 		cmds = append(cmds, kittyCapabilityCommand(c))
 	}
 	return tea.Batch(cmds...)
 }
 
-// kittyEnvSignal reports whether the process environment indicates a
-// terminal known to support the Kitty graphics protocol. Used as the
-// pre-flight gate by QueryKittySupport so probes don't go to terminals
-// that may show the probe bytes as garbage.
-//
-// Recognized signals:
-//   - tmux passthrough enabled (TMUX set or NTCHARTS_TMUX_PASSTHROUGH=true):
-//     the outer terminal is unknown, so the probe is sent via passthrough
-//   - KITTY_WINDOW_ID, KITTY_INSTALLATION_DIR (kitty itself)
-//   - GHOSTTY_RESOURCES_DIR (Ghostty)
-//   - WEZTERM_EXECUTABLE, WEZTERM_PANE (WezTerm)
-//   - TERM=xterm-kitty, TERM=xterm-ghostty (explicit terminfo entries)
-//   - TERM_PROGRAM=ghostty, WezTerm, kitty, iTerm.app (well-known terminal IDs)
-//
-// Anything else returns false; consumers can override via
-// ForceKittyCapability if they have out-of-band knowledge.
-func kittyEnvSignal() bool { return kittyEnvSignalFor(tmuxPassthroughEnabled.Load()) }
+func kittyEnvSignal() bool {
+	ensureLegacyEnv()
+	return kittyEnvSignalFor(tmuxPassthroughEnabled.Load())
+}
 
 func kittyEnvSignalFor(tmux bool) bool {
 	if tmux {

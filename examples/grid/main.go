@@ -28,6 +28,7 @@ type point struct {
 }
 
 type model struct {
+	session      *picture.TerminalSession
 	pic          *picture.Picture
 	initCmd      tea.Cmd
 	autoSelected bool
@@ -40,15 +41,20 @@ type model struct {
 }
 
 func initialModel() model {
-	pic := picture.New(picture.Options{Render: picture.Config{
-		KittyMedium: picture.KittyMediumSharedMemory, // raw RGBA via shared memory where supported
-		Fit:         picture.FitFill,
-	}})
+	session := picture.NewTerminalSession(picture.TerminalOptions{})
+	pic := picture.New(picture.Options{
+		Session: session,
+		Render: picture.Config{
+			KittyMedium: picture.KittyMediumSharedMemory, // raw RGBA via shared memory where supported
+			Fit:         picture.FitFill,
+		},
+	})
 
 	m := model{
-		pic:    pic,
-		player: point{1, 1},
-		target: point{11, 5},
+		session: session,
+		pic:     pic,
+		player:  point{1, 1},
+		target:  point{11, 5},
 		walls: map[point]bool{
 			{4, 2}: true,
 			{5, 2}: true,
@@ -72,7 +78,6 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	redraw := false
-	forwardPicture := true
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -81,10 +86,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		keys := m.HelpKeys()
 		switch {
 		case key.Matches(msg, keys.Quit):
+			m.session.Close()
 			return m, tea.Sequence(m.pic.Close(), tea.Quit)
 		case key.Matches(msg, keys.Toggle):
 			mode := picture.PictureGlyph
-			if m.pic.Mode() == picture.PictureGlyph && picture.KittySupported() == picture.KittyCapabilitySupported {
+			if m.pic.Mode() == picture.PictureGlyph && m.session.Snapshot().Kitty == picture.KittyCapabilitySupported {
 				mode = picture.PictureKitty
 			}
 			if c := m.pic.SetMode(mode); c != nil {
@@ -113,21 +119,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			redraw = true
 		}
 	case uv.CellSizeEvent:
-		// Recompose the source bitmap at the terminal's real cell size.
-		if c := m.pic.SetTerminal(m.pic.Mode() == picture.PictureKitty, msg.Width, msg.Height); c != nil {
-			cmds = append(cmds, c)
+		if msg.Width > 0 && msg.Height > 0 {
+			redraw = true
 		}
-		redraw = true
-		// SetCellPixelSize was applied above; forwarding would apply it twice.
-		forwardPicture = false
 	}
 
-	if forwardPicture {
-		if c := m.pic.Update(msg); c != nil {
-			cmds = append(cmds, c)
-		}
+	if c := m.pic.Update(msg); c != nil {
+		cmds = append(cmds, c)
 	}
-	if cap, ok := msg.(picture.KittyCapabilityMsg); ok && !m.autoSelected && cap.Capability == picture.KittyCapabilitySupported {
+	if event, ok := msg.(picture.TerminalSessionMsg); ok && event.Session == m.session && !m.autoSelected && m.session.Snapshot().Kitty == picture.KittyCapabilitySupported {
 		m.autoSelected = true
 		cmds = append(cmds, m.pic.SetMode(picture.PictureKitty))
 	}
@@ -171,7 +171,7 @@ func (m model) kittyBadge() string {
 	label := "KITTY CHECKING"
 	fg := lipgloss.Color("0")
 	bg := lipgloss.Color("11")
-	switch picture.KittySupported() {
+	switch m.session.Snapshot().Kitty {
 	case picture.KittyCapabilitySupported:
 		label = "KITTY AVAILABLE"
 		bg = lipgloss.Color("10")
@@ -315,12 +315,13 @@ func fillCircle(img *image.RGBA, rect image.Rectangle, c color.RGBA) {
 }
 
 func (m model) HelpKeys() demohelp.Keys {
-	return demohelp.New(true, picture.KittySupported() == picture.KittyCapabilitySupported)
+	return demohelp.New(true, m.session.Snapshot().Kitty == picture.KittyCapabilitySupported)
 }
 
 func main() {
 	m := initialModel()
-	defer m.pic.Close()
+	defer m.session.Close()
+	defer func() { _ = m.pic.Close() }()
 	if err := demohelp.Run(m, "Interactive grid"); err != nil {
 		log.Fatal(err)
 	}

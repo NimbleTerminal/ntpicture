@@ -1,6 +1,7 @@
 // Package ntpicture renders images in Bubble Tea with Kitty graphics or
-// half-block glyphs. Picture owns asynchronous replacement and cleanup; Model
-// exposes the extracted low-level NTCharts API for compatibility adapters.
+// half-block glyphs. Picture owns asynchronous replacement and cleanup, and
+// TerminalSession scopes terminal capability and cell-geometry discovery.
+// The low-level compatibility adapter lives in nimbleterminal.dev/ntpicture/legacy.
 // Decoding is opt-in through image format imports or ntpicture/decoders.
 package ntpicture
 
@@ -16,6 +17,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"nimbleterminal.dev/ntpicture/internal/kittyshm"
+	"nimbleterminal.dev/ntpicture/internal/legacybridge"
 )
 
 // PictureMode selects how images are rendered.
@@ -53,18 +55,19 @@ const DefaultKittyID = 43
 
 // Sensible defaults for terminal cell pixel size. Most monospace fonts have
 // ~1:2 cell ratios (8×16, 9×18, 10×20). Consumers can pre-set via Config or
-// update at runtime via Model.SetCellPixelSize when the terminal reports its
-// actual cell dims (CSI 16 t).
+// update at runtime via Picture.SetTerminal or TerminalSession when the
+// terminal reports its actual cell dims (CSI 16 t).
 const (
 	defaultCellPixelW = 8
 	defaultCellPixelH = 16
 )
 
-// Config configures a Model at construction.
+// Config configures rendering policy for Picture (via Options.Render) or
+// legacy.Model at construction.
 type Config struct {
 	// KittyZ sets placement depth; negative values place graphics under text.
 	KittyZ     int
-	KittyID    int         // default 43
+	KittyID    int         // default 43 (ignored by Picture, which uses Options.NextID)
 	Background color.Color // default color.Transparent (no compositing)
 
 	// Fit controls how the source image is mapped onto the cell
@@ -84,7 +87,7 @@ type Config struct {
 	// cell rectangle's pixel dimensions before encoding, so Kitty's
 	// aspect-ratio-preserving placement fills the cell rectangle. Default
 	// 8×16 (typical 1:2 font cell). Update at runtime via
-	// Model.SetCellPixelSize when the terminal reports its real cell size.
+	// Picture.SetTerminal or TerminalSession when the terminal reports its real cell size.
 	CellPixelWidth  int
 	CellPixelHeight int
 
@@ -111,10 +114,9 @@ type Config struct {
 	KittyMedium KittyMedium
 }
 
-// Model renders an image.Image as half-blocks or Kitty graphics inside a
-// Bubble Tea program. The Model has no notion of where images come from;
-// callers feed it via SetImage. New consumers should normally use Picture.
-type Model struct {
+// legacyModel renders an image.Image as half-blocks or Kitty graphics inside a
+// Bubble Tea program. Exported as legacy.Model in nimbleterminal.dev/ntpicture/legacy.
+type legacyModel struct {
 	kittyZ     int
 	modelID    uint64
 	mode       PictureMode
@@ -160,7 +162,7 @@ type Model struct {
 
 // kittyGeom is the five-tuple of "what dimensions and fit mode does the Kitty
 // image currently on screen occupy". Zero value means "no image currently
-// placed at this Model's kittyID" — used as a sentinel by renderCmd to
+// placed at this model's kittyID" — used as a sentinel by renderCmd to
 // skip the delete-prepend on first render.
 type kittyGeom struct {
 	cols, rows             int
@@ -188,7 +190,7 @@ func normalizeAnchor(anchor FitAnchor) FitAnchor {
 }
 
 func normalizeConfig(cfg Config) Config {
-	if cfg.KittyID <= 0 {
+	if cfg.KittyID <= 0 || cfg.KittyID >= 1<<24 {
 		cfg.KittyID = DefaultKittyID
 	}
 	if cfg.Background == nil {
@@ -210,16 +212,13 @@ func normalizeConfig(cfg Config) Config {
 	return cfg
 }
 
-// NewModel returns a low-level Model with default Config.
-func NewModel() Model {
-	return NewModelWithConfig(Config{})
+func newLegacyModel() legacyModel {
+	return newLegacyModelWithConfig(Config{})
 }
 
-// NewModelWithConfig returns a Model with the supplied Config. Zero/nil fields
-// are filled with defaults.
-func NewModelWithConfig(cfg Config) Model {
+func newLegacyModelWithConfig(cfg Config) legacyModel {
 	cfg = normalizeConfig(cfg)
-	return Model{
+	return legacyModel{
 		modelID:               nextModelID.Add(1),
 		kittyZ:                cfg.KittyZ,
 		mode:                  PictureGlyph,
@@ -236,20 +235,7 @@ func NewModelWithConfig(cfg Config) Model {
 	}
 }
 
-// SetImage retains the image without copying; callers must keep its pixels immutable.
-// It sets the image to render. Pass nil to clear. Returns a tea.Cmd if
-// rendering needs to be scheduled (Kitty mode), or a cleanup Cmd if Kitty was
-// previously placed and is now being cleared, or nil otherwise. Clearing also
-// releases pending shared-memory objects; call SetImage(nil) when disposing
-// a model, even if the returned terminal cleanup command will not be run.
-//
-// In Kitty mode with a non-nil new image, the previous placeholder grid is
-// preserved until the new KittyFrameMsg arrives. The grid is a pure function
-// of (cols, rows, kittyID) — byte-identical between renders when those are
-// stable — and the previously-resident image at kittyID stays visible until
-// the new APC overwrites it. Clearing the grid synchronously would create a
-// visible blank window during animation.
-func (m *Model) SetImage(img image.Image) tea.Cmd {
+func (m *legacyModel) SetImage(img image.Image) tea.Cmd {
 	prev := m.img
 	m.img = img
 	m.seq++
@@ -270,12 +256,7 @@ func (m *Model) SetImage(img image.Image) tea.Cmd {
 	return m.renderCmd()
 }
 
-// SetSize updates the rendering dimensions in terminal cells. Negative values
-// are clamped to 0 — 0 is the existing sentinel for "no size yet" honored by
-// renderCmd's <=0 guard, and clamping at the boundary keeps consumers from
-// needing to defend against negative-dim arithmetic upstream. Returns a
-// render Cmd in Kitty mode (re-encode for the new size) or nil otherwise.
-func (m *Model) SetSize(cols, rows int) tea.Cmd {
+func (m *legacyModel) SetSize(cols, rows int) tea.Cmd {
 	if cols < 0 {
 		cols = 0
 	}
@@ -293,40 +274,17 @@ func (m *Model) SetSize(cols, rows int) tea.Cmd {
 	return m.renderCmd()
 }
 
-// ToggleBlocked reports why Toggle would refuse to switch modes: nil if it
-// will switch, otherwise the error from KittyUnavailable. Toggle itself
-// returns a nil Cmd both when blocked and when there is simply nothing to
-// render, so call this to tell the two apart and show feedback.
-func (m *Model) ToggleBlocked() error {
+func (m *legacyModel) ToggleBlocked() error {
 	if m.mode == PictureGlyph {
-		return KittyUnavailable()
+		return kittyUnavailable()
 	}
 	return nil
 }
 
-// Toggle switches between Glyph and Kitty modes. When toggling away from
-// Kitty after an image was placed, returns a Cmd that emits the Kitty delete
-// sequence; otherwise returns the Cmd to render in the new mode (or nil).
-// Entering Kitty mode is a silent no-op until Kitty support is confirmed;
-// see ToggleBlocked for the reason.
-//
-// Caches are NOT eagerly invalidated: the seq bump is enough to invalidate
-// them via the cache key check on next render, and keeping the leaving-mode
-// cache around lets View show transitional content while the new mode's
-// async render is in flight (avoids a visible "blank window" during a
-// Glyph→Kitty toggle).
-func (m *Model) Toggle() tea.Cmd {
+func (m *legacyModel) Toggle() tea.Cmd {
 	prev := m.mode
 	if m.mode == PictureGlyph {
-		// Only enter Kitty when capability is affirmatively Supported.
-		// Both Unknown and Unsupported block: Kitty escapes printed to
-		// a non-Kitty terminal show up as visible garbage, so we'd
-		// rather force a second keypress after the probe resolves than
-		// risk a glitch in the early-startup window before the
-		// capability lands. Transports where auto-detection is
-		// unreliable (ssh multiplexers, tmux passthrough) can opt in
-		// via ForceKittyCapability(KittyCapabilitySupported).
-		if KittySupported() != KittyCapabilitySupported {
+		if kittySupported() != KittyCapabilitySupported {
 			return nil
 		}
 		m.mode = PictureKitty
@@ -339,10 +297,6 @@ func (m *Model) Toggle() tea.Cmd {
 		m.kittyShared.clear(m.seq)
 	}
 	if prev == PictureKitty && m.img != nil {
-		// Leaving Kitty: the Kitty image is being deleted from the
-		// terminal registry; the placeholder grid would resolve to
-		// nothing now, so clear it. Also clear the geom snapshot —
-		// nothing is placed at this kittyID anymore.
 		m.invalidateKitty()
 		m.lastRenderedGeom = kittyGeom{}
 		return tea.Raw(kittyDeleteImage(m.kittyID))
@@ -350,19 +304,13 @@ func (m *Model) Toggle() tea.Cmd {
 	return m.renderCmd()
 }
 
-// Mode returns the current rendering mode.
-func (m *Model) Mode() PictureMode { return m.mode }
+func (m *legacyModel) Mode() PictureMode { return m.mode }
 
-// Fit returns the current fit mode.
-func (m *Model) Fit() FitMode { return m.fit }
+func (m *legacyModel) Fit() FitMode { return m.fit }
 
-// Anchor returns the current fit anchor.
-func (m *Model) Anchor() FitAnchor { return m.anchor }
+func (m *legacyModel) Anchor() FitAnchor { return m.anchor }
 
-// SetFit updates the fit mode. No-ops if fit is unchanged. Otherwise stores
-// it, bumps seq, invalidates both render caches, and returns m.renderCmd()
-// (nil in Glyph mode, a render Cmd in Kitty mode with an image set).
-func (m *Model) SetFit(fit FitMode) tea.Cmd {
+func (m *legacyModel) SetFit(fit FitMode) tea.Cmd {
 	fit = normalizeFit(fit)
 	if fit == m.fit {
 		return nil
@@ -374,11 +322,7 @@ func (m *Model) SetFit(fit FitMode) tea.Cmd {
 	return m.renderCmd()
 }
 
-// SetAnchor updates the fit anchor. No-ops if anchor is unchanged. Otherwise
-// stores it, bumps seq, invalidates both render caches, and returns
-// m.renderCmd() (nil in Glyph mode, a render Cmd in Kitty mode with an image
-// set).
-func (m *Model) SetAnchor(anchor FitAnchor) tea.Cmd {
+func (m *legacyModel) SetAnchor(anchor FitAnchor) tea.Cmd {
 	anchor = normalizeAnchor(anchor)
 	if anchor == m.anchor {
 		return nil
@@ -390,30 +334,17 @@ func (m *Model) SetAnchor(anchor FitAnchor) tea.Cmd {
 	return m.renderCmd()
 }
 
-// Init returns a Cmd that asks the terminal for its cell pixel size and
-// probes Kitty graphics support. The cell-size response auto-applies via
-// SetCellPixelSize; the Kitty probe response auto-applies to the
-// process-wide capability state read by KittySupported. Consumers
-// batch this with their own Init Cmd.
-func (m *Model) Init() tea.Cmd {
-	return tea.Batch(RequestCellSize(), QueryKittySupport())
+func (m *legacyModel) Init() tea.Cmd {
+	return tea.Batch(requestCellSize(), queryKittySupport())
 }
 
-// KittySupported is a convenience for KittySupported() — the Kitty
-// graphics capability is process-wide, not per-Model.
-func (m *Model) KittySupported() KittyCapability { return KittySupported() }
+func (m *legacyModel) KittySupported() KittyCapability { return kittySupported() }
 
-// CellPixelSize returns the configured terminal cell pixel size used to
-// pre-scale Kitty image sources to the placement cell rectangle.
-func (m *Model) CellPixelSize() (w, h int) {
+func (m *legacyModel) CellPixelSize() (w, h int) {
 	return m.cellPixelW, m.cellPixelH
 }
 
-// SetCellPixelSize updates the terminal cell pixel size used for Kitty
-// placements. Non-positive values are clamped to 1. Returns a render Cmd if
-// the new size differs from the current one and there's an in-flight image
-// in Kitty mode; otherwise nil.
-func (m *Model) SetCellPixelSize(w, h int) tea.Cmd {
+func (m *legacyModel) SetCellPixelSize(w, h int) tea.Cmd {
 	if w < 1 {
 		w = 1
 	}
@@ -430,16 +361,9 @@ func (m *Model) SetCellPixelSize(w, h int) tea.Cmd {
 	return m.renderCmd()
 }
 
-// KittyResolutionFactor returns the current Kitty-image resolution
-// multiplier. See Config.KittyResolutionFactor.
-func (m *Model) KittyResolutionFactor() float64 { return m.kittyResolutionFactor }
+func (m *legacyModel) KittyResolutionFactor() float64 { return m.kittyResolutionFactor }
 
-// SetKittyResolutionFactor updates the multiplier applied to cell pixel
-// dimensions when encoding Kitty images. Values in (0, 1] shrink the
-// transmitted bitmap; the terminal upscales to fill the cell rectangle.
-// Out-of-range values clamp to 1.0. Returns a render Cmd if the factor
-// changed and a Kitty image is currently placed; otherwise nil.
-func (m *Model) SetKittyResolutionFactor(f float64) tea.Cmd {
+func (m *legacyModel) SetKittyResolutionFactor(f float64) tea.Cmd {
 	if math.IsNaN(f) || f <= 0 || f > 1 {
 		f = 1.0
 	}
@@ -452,13 +376,9 @@ func (m *Model) SetKittyResolutionFactor(f float64) tea.Cmd {
 	return m.renderCmd()
 }
 
-// KittyFormat returns how Kitty frames are transmitted. See Config.KittyFormat.
-func (m *Model) KittyFormat() KittyFormat { return m.kittyFormat }
+func (m *legacyModel) KittyFormat() KittyFormat { return m.kittyFormat }
 
-// SetKittyFormat switches Kitty frames between PNG and raw RGBA
-// transmission. Unknown values normalise to PNG. Returns a render Cmd if
-// the format changed and a Kitty image is currently placed; otherwise nil.
-func (m *Model) SetKittyFormat(f KittyFormat) tea.Cmd {
+func (m *legacyModel) SetKittyFormat(f KittyFormat) tea.Cmd {
 	f = normalizeKittyFormat(f)
 	if f == m.kittyFormat {
 		return nil
@@ -468,12 +388,9 @@ func (m *Model) SetKittyFormat(f KittyFormat) tea.Cmd {
 	return m.renderCmd()
 }
 
-// KittyMedium returns the requested transport (frames report the actual medium).
-func (m *Model) KittyMedium() KittyMedium { return m.kittyMedium }
+func (m *legacyModel) KittyMedium() KittyMedium { return m.kittyMedium }
 
-// SetKittyMedium changes the transport, normalizing unknown values to Direct.
-// Returns a render command when a Kitty image is present.
-func (m *Model) SetKittyMedium(medium KittyMedium) tea.Cmd {
+func (m *legacyModel) SetKittyMedium(medium KittyMedium) tea.Cmd {
 	medium = normalizeKittyMedium(medium)
 	if medium == m.kittyMedium {
 		return nil
@@ -483,67 +400,39 @@ func (m *Model) SetKittyMedium(medium KittyMedium) tea.Cmd {
 	return m.renderCmd()
 }
 
-// String returns the rendered image content as a plain string.
-func (m *Model) String() string { return m.View().Content }
+func (m *legacyModel) String() string { return m.View().Content }
 
-// applyKittyGridMsg is the second half of the KittyFrameMsg pipeline.
-// KittyFrameMsg's handler returns a tea.Sequence that first emits the APC via
-// tea.Raw and then sends this msg, so the new image is placed at kittyID
-// before View starts rendering placeholder cells that reference it. Setting
-// kittyGrid synchronously in the KittyFrameMsg handler caused the next render
-// to emit cells pointing at a kittyID still holding the *previous* image,
-// producing a one-frame "previous-image" flash during navigation.
+// applyKittyGridMsg is the second half of the kittyFrameMsg pipeline.
 type applyKittyGridMsg struct {
-	modelID uint64
-	// Grid is a pure function of (cols, rows, kittyID); seq is NOT used
-	// for staleness because SetImage bumps seq without invalidating the
-	// grid. We compare geometry instead — if any of these changed since
-	// the grid was computed, the grid is stale and gets dropped. This
-	// matters in WASM where Kitty encode time can exceed the tick
-	// interval, so multiple SetImage bumps happen between KittyFrameMsg
-	// and applyKittyGridMsg arrival.
+	modelID             uint64
 	cols, rows, kittyID int
 	grid                string
 }
 
-// IsPictureMsg reports whether msg is a picture-related async update that
-// should be forwarded to picture models. These messages are shared at the
-// Bubble Tea program/process level, not necessarily owned by a single
-// picture.Model; individual Model.Update calls filter by model ID where
-// applicable.
-//
-// Includes uv.CellSizeEvent and uv.KittyGraphicsEvent because Update
-// auto-applies them — consumers that gate forwarding on this helper must route
-// the terminal's CSI 16 t reply AND Kitty query reply to Update, or Kitty
-// placements stay at the default 8×16 cell-pixel size and the Kitty capability
-// stays Unknown.
-func IsPictureMsg(msg tea.Msg) bool {
+func isPictureMsg(msg tea.Msg) bool {
+	if _, ok := unwrapKittyFrameMsg(msg); ok {
+		return true
+	}
+	if legacybridge.IsCapabilityMsg != nil && legacybridge.IsCapabilityMsg(msg) {
+		return true
+	}
 	switch msg.(type) {
-	case KittyFrameMsg, applyKittyGridMsg, uv.CellSizeEvent, uv.KittyGraphicsEvent, kittyProbeTickMsg,
-		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg, KittyCapabilityMsg, TerminalSessionMsg, terminalSessionTick:
+	case applyKittyGridMsg, uv.CellSizeEvent, uv.KittyGraphicsEvent, kittyProbeTickMsg,
+		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg, kittyCapabilityMsg, TerminalSessionMsg, terminalSessionTick:
 		return true
 	}
 	return false
 }
 
-// Update processes the picture component's own messages. Forward every tea.Msg
-// to it; unknown messages are ignored and return nil. A uv.CellSizeEvent
-// (the terminal's reply to RequestCellSize) is auto-applied via
-// SetCellPixelSize so consumers don't need to relay it manually.
-func (m *Model) Update(msg tea.Msg) tea.Cmd {
-	switch msg := msg.(type) {
-	case KittyFrameMsg:
-		if msg.modelID != m.modelID {
+func (m *legacyModel) Update(msg tea.Msg) tea.Cmd {
+	if frame, ok := unwrapKittyFrameMsg(msg); ok {
+		if frame.modelID != m.modelID {
 			return nil
 		}
-		if msg.Seq != m.seq || (msg.sharedMemory != nil && !m.kittyShared.submit(msg.Seq, msg.sharedMemory)) {
-			_ = msg.sharedMemory.Unlink()
+		if frame.Seq != m.seq || (frame.sharedMemory != nil && !m.kittyShared.submit(frame.Seq, frame.sharedMemory)) {
+			_ = frame.sharedMemory.Unlink()
 			return nil
 		}
-		// Record the geometry now: lastRenderedGeom is consumed by the
-		// next renderCmd, and any SetSize that arrives between the APC
-		// emission and the deferred grid apply must see this snapshot
-		// to compute delete-prev correctly.
 		cpw, cph := m.kittyCellPixelSize()
 		m.lastRenderedGeom = kittyGeom{
 			cols:       m.cols,
@@ -553,21 +442,20 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 			fit:        m.fit,
 			anchor:     m.anchor,
 		}
-		modelID, grid := m.modelID, msg.Grid
+		modelID, grid := m.modelID, frame.Grid
 		gridCols, gridRows, gridID := m.cols, m.rows, m.kittyID
 		return tea.Sequence(
-			tea.Raw(msg.APC),
+			tea.Raw(frame.APC),
 			func() tea.Msg {
 				return applyKittyGridMsg{modelID: modelID, cols: gridCols, rows: gridRows, kittyID: gridID, grid: grid}
 			},
 		)
+	}
+	switch msg := msg.(type) {
 	case applyKittyGridMsg:
 		if msg.modelID != m.modelID {
 			return nil
 		}
-		// Geometry-based staleness: SetImage bumps seq but doesn't change
-		// (cols, rows, kittyID), so an in-flight grid stays valid across
-		// SetImage. SetSize / kittyID changes do invalidate.
 		if msg.cols != m.cols || msg.rows != m.rows || msg.kittyID != m.kittyID {
 			return nil
 		}
@@ -587,26 +475,11 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// RequestCellSize returns a Cmd that asks the terminal for its cell pixel
-// dimensions via CSI 16 t (XTWINOPS). The terminal replies with a
-// uv.CellSizeEvent which Model.Update auto-applies via SetCellPixelSize, so
-// consumers typically just batch this with their own Init Cmd and forward
-// every tea.Msg to Model.Update as usual.
-func RequestCellSize() tea.Cmd {
+func requestCellSize() tea.Cmd {
 	return tea.Raw(ansi.WindowOp(16))
 }
 
-// View returns the rendered image as a tea.View, or an empty view if there is
-// no image or no size. In Kitty mode the placeholder grid is returned; if it
-// hasn't been computed yet (e.g. during a Glyph→Kitty toggle while the new
-// frame is being encoded), View falls through to render Glyph half-blocks of
-// the current image as a transitional fallback, so consumers don't see a
-// blank window during the mode switch.
-//
-// The Model never renders user-facing loading or error text; layers above
-// (e.g. Picture) own that. View mutates caches and scratch buffers and is
-// not safe for concurrent use with View or other Model methods.
-func (m *Model) View() tea.View {
+func (m *legacyModel) View() tea.View {
 	if m.img == nil || m.cols <= 0 || m.rows <= 0 {
 		return tea.NewView("")
 	}
@@ -614,40 +487,30 @@ func (m *Model) View() tea.View {
 	if m.mode == PictureKitty && m.kittyGrid != "" {
 		return tea.NewView(m.kittyGrid)
 	}
-	// Falls through here in two cases:
-	//   - mode == PictureGlyph (the normal Glyph path)
-	//   - mode == PictureKitty but kittyGrid hasn't been computed yet
-	//     (transitional fallback during a Glyph→Kitty toggle)
 
 	key := fmt.Sprintf("%d|%d|%d|%d|%d", m.seq, m.cols, m.rows, m.fit, m.anchor)
 	if m.glyphKey == key && m.glyphCache != "" {
 		return tea.NewView(m.glyphCache)
 	}
 
-	// Half-blocks can display only one horizontal and two vertical pixels
-	// per cell. Fit at that resolution instead of scaling to Kitty pixels
-	// and immediately downsampling again.
 	rendered := prepareSourceWithScratch(m.img, m.fit, m.cols, m.rows, 1, 2, m.background, m.anchor, &m.glyphFit)
 	m.glyphBuf = appendGlyph(m.glyphBuf[:0], rendered)
-	// Copy: previously returned Views must remain immutable when scratch is reused.
 	out := string(m.glyphBuf)
 	m.glyphCache = out
 	m.glyphKey = key
 	return tea.NewView(out)
 }
 
-func (m *Model) invalidateGlyph() {
+func (m *legacyModel) invalidateGlyph() {
 	m.glyphCache = ""
 	m.glyphKey = ""
 }
 
-func (m *Model) invalidateKitty() {
+func (m *legacyModel) invalidateKitty() {
 	m.kittyGrid = ""
 }
 
-// kittyCellPixelSize is shared by encoding and placement bookkeeping so
-// fractional resolution factors and one-pixel clamping compare identically.
-func (m *Model) kittyCellPixelSize() (int, int) {
+func (m *legacyModel) kittyCellPixelSize() (int, int) {
 	return max(1, int(float64(m.cellPixelW)*m.kittyResolutionFactor)),
 		max(1, int(float64(m.cellPixelH)*m.kittyResolutionFactor))
 }
@@ -670,9 +533,9 @@ type kittyPrepareParams struct {
 	shared          *kittySharedState
 }
 
-func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg, bool) {
+func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (kittyFrameMsg, bool) {
 	if ctx.Err() != nil {
-		return KittyFrameMsg{}, false
+		return kittyFrameMsg{}, false
 	}
 	var prepared image.Image
 	if p.rasterSize.X > 0 && p.rasterSize.Y > 0 {
@@ -681,7 +544,7 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg
 		prepared = prepareSource(p.img, p.fit, p.cols, p.rows, p.cpw, p.cph, p.background, p.anchor)
 	}
 	if prepared == nil || ctx.Err() != nil {
-		return KittyFrameMsg{}, false
+		return kittyFrameMsg{}, false
 	}
 	actualMedium, actualFormat := KittyMediumDirect, p.format
 	var apc string
@@ -702,17 +565,17 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg
 	}
 	if ctx.Err() != nil {
 		_ = object.Unlink()
-		return KittyFrameMsg{}, false
+		return kittyFrameMsg{}, false
 	}
 	if !p.shared.replace(p.seq, object) {
-		return KittyFrameMsg{}, false
+		return kittyFrameMsg{}, false
 	}
 	currGeom := kittyGeom{cols: p.cols, rows: p.rows, cellPixelW: p.cpw, cellPixelH: p.cph, fit: p.fit, anchor: p.anchor}
 	if p.prevGeom != (kittyGeom{}) && p.prevGeom != currGeom {
 		apc = p.transport.kittyDeleteImage(p.kittyID) + apc
 	}
 	grid := buildKittyGrid(p.cols, p.rows, p.kittyID)
-	return KittyFrameMsg{
+	return kittyFrameMsg{
 		modelID:      p.modelID,
 		ID:           p.kittyID,
 		Seq:          p.seq,
@@ -724,13 +587,13 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (KittyFrameMsg
 	}, true
 }
 
-func (m *Model) renderCmd() tea.Cmd {
+func (m *legacyModel) renderCmd() tea.Cmd {
 	return m.renderCmdContext(context.Background())
 }
 
 // Cancellation is cooperative between preparation stages. Standard-library
 // encoders/scalers already running must finish; Picture bounds concurrency.
-func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
+func (m *legacyModel) renderCmdContext(ctx context.Context) tea.Cmd {
 	if m.kittyShared == nil {
 		m.kittyShared = &kittySharedState{}
 	}
@@ -738,10 +601,6 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 		m.kittyShared.clear(m.seq)
 		return nil
 	}
-	// Capture inputs by value; defer the heavy work (prepareSource's
-	// CatmullRom scale + bg compositing, plus buildKittyAPC's PNG encode)
-	// to the returned closure so SetImage/SetSize/SetFit/SetAnchor/Update return
-	// immediately and bubbletea runs the render off the main loop.
 	cpw, cph := m.kittyCellPixelSize()
 	params := kittyPrepareParams{
 		modelID:    m.modelID,
@@ -768,6 +627,137 @@ func (m *Model) renderCmdContext(ctx context.Context) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return msg
+		return wrapKittyFrameMsg(msg)
+	}
+}
+
+func init() {
+	legacybridge.EnsureLegacyEnv = ensureLegacyEnv
+	legacybridge.DefaultTerminalSession = func() any { return defaultSession() }
+	legacybridge.ForceKittyCapability = func(c int8) { forceKittyCapability(KittyCapability(c)) }
+	legacybridge.SetTmuxPassthrough = setTmuxPassthrough
+	legacybridge.KittySupported = func() int8 { return int8(kittySupported()) }
+	legacybridge.KittyEnvSignalled = kittyEnvSignalledFn
+	legacybridge.QueryKittySupport = queryKittySupport
+	legacybridge.KittyUnavailable = kittyUnavailable
+	legacybridge.RequestCellSize = requestCellSize
+	legacybridge.IsPictureMsg = isPictureMsg
+	legacybridge.NewModel = func() any { return newLegacyModel() }
+	legacybridge.NewModelWithConfig = func(c legacybridge.ConfigFields) any {
+		return newLegacyModelWithConfig(Config{
+			KittyZ:                c.KittyZ,
+			KittyID:               c.KittyID,
+			Background:            c.Background,
+			Fit:                   FitMode(c.Fit),
+			Anchor:                FitAnchor(c.Anchor),
+			CellPixelWidth:        c.CellPixelWidth,
+			CellPixelHeight:       c.CellPixelHeight,
+			KittyResolutionFactor: c.KittyResolutionFactor,
+			KittyFormat:           KittyFormat(c.KittyFormat),
+			KittyMedium:           KittyMedium(c.KittyMedium),
+		})
+	}
+	legacybridge.ModelSetImage = func(v any, img image.Image) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetImage(img)
+		return m, cmd
+	}
+	legacybridge.ModelSetSize = func(v any, cols, rows int) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetSize(cols, rows)
+		return m, cmd
+	}
+	legacybridge.ModelToggleBlocked = func(v any) error {
+		m := v.(legacyModel)
+		return m.ToggleBlocked()
+	}
+	legacybridge.ModelToggle = func(v any) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.Toggle()
+		return m, cmd
+	}
+	legacybridge.ModelMode = func(v any) int8 {
+		m := v.(legacyModel)
+		return int8(m.Mode())
+	}
+	legacybridge.ModelFit = func(v any) int8 {
+		m := v.(legacyModel)
+		return int8(m.Fit())
+	}
+	legacybridge.ModelAnchor = func(v any) int8 {
+		m := v.(legacyModel)
+		return int8(m.Anchor())
+	}
+	legacybridge.ModelSetFit = func(v any, fit int8) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetFit(FitMode(fit))
+		return m, cmd
+	}
+	legacybridge.ModelSetAnchor = func(v any, anchor int8) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetAnchor(FitAnchor(anchor))
+		return m, cmd
+	}
+	legacybridge.ModelInit = func(v any) tea.Cmd {
+		m := v.(legacyModel)
+		return m.Init()
+	}
+	legacybridge.ModelKittySupported = func(v any) int8 {
+		m := v.(legacyModel)
+		return int8(m.KittySupported())
+	}
+	legacybridge.ModelCellPixelSize = func(v any) (int, int) {
+		m := v.(legacyModel)
+		return m.CellPixelSize()
+	}
+	legacybridge.ModelSetCellPixelSize = func(v any, w, h int) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetCellPixelSize(w, h)
+		return m, cmd
+	}
+	legacybridge.ModelKittyResolutionFactor = func(v any) float64 {
+		m := v.(legacyModel)
+		return m.KittyResolutionFactor()
+	}
+	legacybridge.ModelSetKittyResolutionFactor = func(v any, f float64) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetKittyResolutionFactor(f)
+		return m, cmd
+	}
+	legacybridge.ModelKittyFormat = func(v any) int8 {
+		m := v.(legacyModel)
+		return int8(m.KittyFormat())
+	}
+	legacybridge.ModelSetKittyFormat = func(v any, f int8) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetKittyFormat(KittyFormat(f))
+		return m, cmd
+	}
+	legacybridge.ModelKittyMedium = func(v any) int8 {
+		m := v.(legacyModel)
+		return int8(m.KittyMedium())
+	}
+	legacybridge.ModelSetKittyMedium = func(v any, medium int8) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.SetKittyMedium(KittyMedium(medium))
+		return m, cmd
+	}
+	legacybridge.ModelString = func(v any) string {
+		m := v.(legacyModel)
+		return m.String()
+	}
+	legacybridge.ModelUpdate = func(v any, msg tea.Msg) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.Update(msg)
+		return m, cmd
+	}
+	legacybridge.ModelView = func(v any) tea.View {
+		m := v.(legacyModel)
+		return m.View()
+	}
+	legacybridge.ModelRenderCmdContext = func(v any, ctx context.Context) (any, tea.Cmd) {
+		m := v.(legacyModel)
+		cmd := m.renderCmdContext(ctx)
+		return m, cmd
 	}
 }

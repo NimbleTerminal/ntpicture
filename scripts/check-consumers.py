@@ -43,22 +43,59 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="ntpicture-consumers-") as temporary:
         base = Path(temporary)
-        env = os.environ | {"GOWORK": "off", "CGO_ENABLED": "0"}
+        env = os.environ | {
+            "GOWORK": "off",
+            "CGO_ENABLED": "0",
+            "NTQRCODE_TEST_NTPICTURE": str(ROOT),
+        }
         env.setdefault("GOCACHE", str(base / "go-cache"))
         for name in ("ntcharts", "ntcharts3d", "ntqrcode", "gloss"):
             copy_checkout(args.projects / name, base / name)
-        if (args.projects / "ntcanvas").is_dir():
-            copy_checkout(args.projects / "ntcanvas", base / "ntcanvas")
+        for optional in ("ntcanvas", "nt3d", "ntcharts-svg", "ntcharts-pdf"):
+            if (args.projects / optional).is_dir():
+                copy_checkout(args.projects / optional, base / optional)
         picture = base / "ntcharts" / "picture"
         for path in picture.glob("*.go"):
             path.unlink()
         shutil.copy2(ROOT / "testdata/compat/picture.go", picture / "picture.go")
+        legacy_calls = (
+            "KittySupported(",
+            "ForceKittyCapability(",
+            "SetTmuxPassthrough(",
+            "DefaultTerminalSession(",
+            "DetectKittyCapability(",
+            "QueryKittyCapability(",
+            "TmuxPassthrough(",
+            "NewModel(",
+            "NewModelWithConfig(",
+        )
+        for go_file in base.rglob("*.go"):
+            if go_file == picture / "picture.go":
+                continue
+            text = go_file.read_text()
+            if '\tpicture "nimbleterminal.dev/ntpicture"\n' not in text:
+                continue
+            if not any(f"picture.{call}" in text for call in legacy_calls):
+                continue
+            text = text.replace(
+                '\tpicture "nimbleterminal.dev/ntpicture"\n',
+                '\tpicture "nimbleterminal.dev/ntpicture"\n\t"nimbleterminal.dev/ntpicture/legacy"\n',
+            )
+            for call in legacy_calls:
+                text = text.replace(f"picture.{call}", f"legacy.{call}")
+            go_file.write_text(text)
         modules = [base / name for name in ("ntcharts", "ntcharts3d", "ntqrcode", "gloss")]
         modules.append(picture / "chartpicture")
         for module in modules:
-            run(["go", "mod", "edit", "-require=nimbleterminal.dev/ntpicture@v0.0.0",
-                 f"-replace=nimbleterminal.dev/ntpicture={ROOT}",
-                 f"-replace=github.com/NimbleMarkets/ntcharts/v2={base / 'ntcharts'}"], module, env)
+            edits = [
+                "go", "mod", "edit",
+                "-require=nimbleterminal.dev/ntpicture@v0.0.0",
+                f"-replace=nimbleterminal.dev/ntpicture={ROOT}",
+                f"-replace=github.com/NimbleMarkets/ntcharts/v2={base / 'ntcharts'}",
+            ]
+            if (base / "nt3d").is_dir():
+                edits.append(f"-replace=nimbleterminal.dev/nt3d={base / 'nt3d'}")
+            run(edits, module, env)
         checks = [
             (base / "ntcharts", ["./picture/heatpicture"]),
             (picture / "chartpicture", ["./..."]),

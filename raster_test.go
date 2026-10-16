@@ -137,7 +137,7 @@ func TestResolutionKeepRestoresRaster(t *testing.T) {
 
 func TestGlyphRasterLimitUsesEffectiveDimensions(t *testing.T) {
 	p := New(Options{Render: Config{CellPixelWidth: 1, CellPixelHeight: 1}})
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 	cmd := p.SetSize(8192, 4096)
 	if cmd == nil || p.Status().Err == nil {
 		t.Fatal("accepted a glyph raster larger than MaxImagePixels")

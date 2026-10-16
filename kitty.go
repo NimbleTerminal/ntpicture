@@ -7,38 +7,44 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"nimbleterminal.dev/ntpicture/internal/imageview"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 )
 
-var tmuxPassthroughEnabled atomic.Bool
+var (
+	tmuxPassthroughEnabled atomic.Bool
+	legacyEnvOnce          sync.Once
+)
 
-func init() {
-	parseEnvOverrides()
+func ensureLegacyEnv() {
+	legacyEnvOnce.Do(applyEnvOverrides)
 }
 
 func parseEnvOverrides() {
+	ensureLegacyEnv()
+	applyEnvOverrides()
+}
+
+func applyEnvOverrides() {
 	tmux, kitty, kittyForced := envTerminalConfig()
 	tmuxPassthroughEnabled.Store(tmux)
 	if kittyForced {
-		ForceKittyCapability(kitty)
+		forceKittyCapability(kitty)
 	}
 }
 
-// SetTmuxPassthrough enables or disables tmux passthrough wrapping. When enabled,
-// Kitty graphics protocol sequences are wrapped in tmux's DCS passthrough sequence
-// to allow them to render correctly when running inside tmux (with `allow-passthrough on` enabled).
-//
-// This is auto-enabled by default if the TMUX environment variable is set.
-func SetTmuxPassthrough(enabled bool) {
+func setTmuxPassthrough(enabled bool) {
+	ensureLegacyEnv()
 	tmuxPassthroughEnabled.Store(enabled)
 }
 
 func tmuxWrap(seq string) string {
+	ensureLegacyEnv()
 	if tmuxPassthroughEnabled.Load() {
 		return ansi.TmuxPassthrough(seq)
 	}
@@ -79,10 +85,6 @@ func (transport kittyTransport) buildKittyAPC(img image.Image, id, cols, rows in
 // for an opaque image, straight-alpha RGBA (f=32) otherwise. PNG's encoder
 // tries every filter on every row even at BestSpeed; zlib alone is about
 // three times faster for a comparable payload.
-func buildKittyZlibAPC(img image.Image, id, cols, rows int, z ...int) string {
-	return legacyTransport().buildKittyZlibAPC(img, id, cols, rows, z...)
-}
-
 func (transport kittyTransport) buildKittyZlibAPC(img image.Image, id, cols, rows int, z ...int) string {
 	b := img.Bounds()
 	if b.Empty() {
@@ -173,20 +175,12 @@ func normalizeKittyFormat(f KittyFormat) KittyFormat {
 	return KittyFormatPNG
 }
 
-func kittyRGBAOptions(width, height, id, cols, rows int, z ...int) *kitty.Options {
-	return legacyTransport().kittyRGBAOptions(width, height, id, cols, rows, z...)
-}
-
 func (transport kittyTransport) kittyRGBAOptions(width, height, id, cols, rows int, z ...int) *kitty.Options {
 	o := transport.kittyPNGOptions(id, cols, rows, z...)
 	o.Format = kitty.RGBA
 	o.ImageWidth = width
 	o.ImageHeight = height
 	return o
-}
-
-func buildKittyRGBAAPC(data []byte, width, height, id, cols, rows int, z ...int) string {
-	return legacyTransport().buildKittyRGBAAPC(data, width, height, id, cols, rows, z...)
 }
 
 func (transport kittyTransport) buildKittyRGBAAPC(data []byte, width, height, id, cols, rows int, z ...int) string {

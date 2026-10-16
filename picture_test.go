@@ -511,3 +511,134 @@ func FuzzPictureActions(f *testing.F) {
 		}
 	})
 }
+
+func TestKeepAndFailureAfterDrainedStableIDBorrowerRetransmitsFront(t *testing.T) {
+	imgA := testPixels(color.RGBA{R: 250, G: 10, B: 20, A: 255})
+	imgB := testPixels(color.RGBA{R: 10, G: 250, B: 30, A: 255})
+
+	// Helper that commits imgA on a StableID Kitty picture, then prepares imgB
+	// and runs step 0 of its sequence (emitting B's APC under the shared ID),
+	// returning step 1 so the caller can supersede B before step 1 closes outputDone.
+	setupOverwrittenBorrower := func(t *testing.T) (*Picture, string, tea.Cmd) {
+		t.Helper()
+		p := New(Options{
+			StableID:    true,
+			RetireDelay: -1,
+			Render:      Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyFormat: KittyFormatRGBA},
+		})
+		p.SetSize(2, 2)
+		p.SetTerminal(true, 1, 1)
+		frontAPC := output(drivePicture(t, p, p.SetImage(imgA)))
+		if frontAPC == "" {
+			t.Fatal("expected non-empty front APC for image A")
+		}
+
+		prepCmd := p.SetImage(imgB)
+		prepMsg := prepCmd()
+		seqCmd := p.Update(prepMsg)
+		seqSteps := reflect.ValueOf(seqCmd())
+		if seqSteps.Kind() != reflect.Slice || seqSteps.Len() != 2 {
+			t.Fatalf("expected 2-step sequence from prepared Kitty frame, got %T", seqCmd())
+		}
+		// Run step 0 (emits B's APC under shared Kitty ID).
+		rawMsg := seqSteps.Index(0).Interface().(tea.Cmd)()
+		rawStr, _ := rawMsg.(tea.RawMsg).Msg.(string)
+		if rawStr == "" || rawStr == frontAPC {
+			t.Fatalf("expected borrower B to emit distinct APC, got %q", rawStr)
+		}
+		if !p.front.lease.overwritten.Load() {
+			t.Fatal("expected front lease to record overwritten=true after borrower emitted APC")
+		}
+		step1 := seqSteps.Index(1).Interface().(tea.Cmd)
+		return p, frontAPC, step1
+	}
+
+	t.Run("KeepRetransmitsOverwrittenFront", func(t *testing.T) {
+		p, frontAPC, step1 := setupOverwrittenBorrower(t)
+		// Supersede borrower B after step0 emitted its APC, then drain step1 through Update
+		// so B is disposed and p.job.outputDone is nil before Keep() is called.
+		_ = p.SetImage(imgB)
+		seqMsg := step1() // closes B's outputDone once and returns sequence(delete, pictureReady)
+		v := reflect.ValueOf(seqMsg)
+		for i := 0; i < v.Len(); i++ {
+			if msg := v.Index(i).Interface().(tea.Cmd)(); msg != nil {
+				if _, ok := msg.(pictureReady); ok {
+					_ = p.Update(msg)
+				}
+			}
+		}
+		if p.job == nil || p.job.outputDone != nil {
+			t.Fatalf("expected new un-drained job with outputDone == nil after draining borrower B, got job=%+v", p.job)
+		}
+		keepOut := output(drivePicture(t, p, p.Keep()))
+		if !strings.Contains(keepOut, frontAPC) {
+			t.Fatalf("Keep() did not retransmit front APC after drained borrower overwrote shared ID; got %q", keepOut)
+		}
+	})
+
+	t.Run("FailSubmissionRepreparesOverwrittenFront", func(t *testing.T) {
+		p, frontAPC, step1 := setupOverwrittenBorrower(t)
+		defer func() { drivePicture(t, p, p.Close()) }()
+		// A rejected submission triggers failSubmission (cancelling B) while front.lease.overwritten is true.
+		errCmd := p.SetImage(image.NewRGBA(image.Rectangle{}))
+		msgs := drivePicture(t, p, tea.Batch(errCmd, step1))
+		if !strings.Contains(output(msgs), frontAPC) {
+			t.Fatalf("rejected submission after overwritten borrower did not re-prepare and retransmit front APC; got %q", output(msgs))
+		}
+		if p.front.lease.overwritten.Load() {
+			t.Fatal("expected re-committed front to clear overwritten flag")
+		}
+	})
+}
+
+func TestFailedSubmissionDoesNotAbandonPendingGeometryChange(t *testing.T) {
+	p := testPicture(false)
+	defer func() { drivePicture(t, p, p.Close()) }()
+	imgA := testPixels(color.RGBA{R: 200, G: 100, B: 50, A: 255})
+	drivePicture(t, p, p.SetImage(imgA))
+	if p.front.cols != 2 || p.front.rows != 2 {
+		t.Fatalf("initial front size = %dx%d, want 2x2", p.front.cols, p.front.rows)
+	}
+
+	// Start a resize to 4x3, then submit an invalid image before the resize job finishes.
+	sizeCmd := p.SetSize(4, 3)
+	errCmd := p.SetImage(image.NewRGBA(image.Rectangle{}))
+	drivePicture(t, p, tea.Batch(sizeCmd, errCmd))
+
+	if p.Status().Busy {
+		t.Fatalf("expected Busy=false after recovery, got %+v", p.Status())
+	}
+	if p.front == nil || p.front.cols != 4 || p.front.rows != 3 {
+		t.Fatalf("front size after rejected SetImage during pending SetSize = %+v, want 4x3", p.front)
+	}
+}
+
+func TestRejectedSetImageWhileHiddenPreservesRetainedSource(t *testing.T) {
+	p := testPicture(false)
+	defer func() { drivePicture(t, p, p.Close()) }()
+	imgA := testPixels(color.RGBA{R: 40, G: 180, B: 90, A: 255})
+	drivePicture(t, p, p.SetImage(imgA))
+	wantView := p.View()
+	if wantView == "" {
+		t.Fatal("expected non-empty initial view")
+	}
+
+	drivePicture(t, p, p.SetVisible(false))
+	// Rejecting an invalid image while hidden must not discard the retained source.
+	drivePicture(t, p, p.SetImage(image.NewRGBA(image.Rectangle{})))
+	drivePicture(t, p, p.SetVisible(true))
+
+	if got := p.View(); got != wantView {
+		t.Fatalf("View() after SetVisible(true) = %q, want retained %q", got, wantView)
+	}
+}
+
+func TestNormalizeConfigRejectsOver24BitKittyID(t *testing.T) {
+	maxValid := (1 << 24) - 1
+	if got := normalizeConfig(Config{KittyID: maxValid}).KittyID; got != maxValid {
+		t.Fatalf("normalizeConfig(max 24-bit ID) = %d, want %d", got, maxValid)
+	}
+	if got := normalizeConfig(Config{KittyID: 1 << 24}).KittyID; got != DefaultKittyID {
+		t.Fatalf("normalizeConfig(1<<24) = %d, want DefaultKittyID (%d)", got, DefaultKittyID)
+	}
+}

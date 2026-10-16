@@ -20,11 +20,11 @@ import (
 // Run in a separate process to exercise the same open/map/unlink ownership
 // boundary as a terminal, rather than reading the producer's own mapping.
 func TestNativeReaderProcess(t *testing.T) {
-	name := os.Getenv("NTCHARTS_SHM_TEST_NAME")
+	name := os.Getenv("NTPICTURE_SHM_TEST_NAME")
 	if name == "" {
 		return
 	}
-	want, err := hex.DecodeString(os.Getenv("NTCHARTS_SHM_TEST_BYTES"))
+	want, err := hex.DecodeString(os.Getenv("NTPICTURE_SHM_TEST_BYTES"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestNativeReaderProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	stat, err := f.Stat()
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestNativeReaderProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer unix.Munmap(mem)
+	defer func() { _ = unix.Munmap(mem) }()
 	if !bytes.Equal(mem, want) {
 		t.Fatal("pixel mismatch")
 	}
@@ -60,7 +60,7 @@ func TestNativeReaderProcess(t *testing.T) {
 func readInTerminalProcess(t *testing.T, obj *Object, want []byte) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestNativeReaderProcess$")
-	cmd.Env = append(os.Environ(), "NTCHARTS_SHM_TEST_NAME="+obj.Name, "NTCHARTS_SHM_TEST_BYTES="+hex.EncodeToString(want))
+	cmd.Env = append(os.Environ(), "NTPICTURE_SHM_TEST_NAME="+obj.Name, "NTPICTURE_SHM_TEST_BYTES="+hex.EncodeToString(want))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("reader: %v\n%s", err, out)
 	}
@@ -79,7 +79,7 @@ func TestNativeObjectRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer obj.Unlink()
+	defer func() { _ = obj.Unlink() }()
 	if !regexp.MustCompile(`^/ntc-[0-9a-f]{20}$`).MatchString(obj.Name) || obj.Size != len(want) {
 		t.Fatalf("bad object: %s / %d", obj.Name, obj.Size)
 	}
@@ -138,7 +138,7 @@ func TestNativeRetirementAllowsDelayedReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer obj.Unlink()
+	defer func() { _ = obj.Unlink() }()
 	obj.Retire()
 	// Simulate a terminal reading after the producer has moved to a new frame.
 	time.Sleep(20 * time.Millisecond)
@@ -154,12 +154,12 @@ func TestNativeRetirementReapsAbandonedFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer obj.Unlink()
+	defer func() { _ = obj.Unlink() }()
 	retireNative(obj, time.Millisecond, 20*time.Millisecond)
 	waitDone(t, obj)
 	f, err := openSHM(obj.Name, false)
 	if err == nil {
-		f.Close()
+		_ = f.Close()
 		t.Fatal("abandoned object remains openable")
 	}
 	if !os.IsNotExist(err) {
@@ -173,14 +173,14 @@ func TestNativeRetirementReapsAbandonedFrame(t *testing.T) {
 // Opt-in integration check: run this test binary inside a real local Kitty
 // terminal. Observing terminal-side unlink proves the terminal read the object.
 func TestNativeTerminalConsumesObject(t *testing.T) {
-	if os.Getenv("NTCHARTS_SHM_TERMINAL_TEST") != "1" {
+	if os.Getenv("NTPICTURE_SHM_TERMINAL_TEST") != "1" {
 		t.Skip("requires a real local Kitty terminal")
 	}
 	obj, err := Create(4, func(dst []byte) error { copy(dst, []byte{20, 40, 60, 255}); return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer obj.Unlink()
+	defer func() { _ = obj.Unlink() }()
 	_, err = fmt.Fprintf(os.Stdout, "\x1b_Ga=q,t=s,f=32,s=1,v=1,S=4,i=2147483000,q=2;%s\x1b\\", base64.StdEncoding.EncodeToString([]byte(obj.Name)))
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestCreateIgnoresUmask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer obj.Unlink()
+	defer func() { _ = obj.Unlink() }()
 	f, err := openSHM(obj.Name, false)
 	if err != nil {
 		t.Fatalf("reader cannot open object created under umask 0777: %v", err)

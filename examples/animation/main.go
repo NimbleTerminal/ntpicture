@@ -136,7 +136,7 @@ func main() {
 		m, err := initialCompositeModel()
 		if err == nil {
 			defer m.session.Close()
-			defer m.layers.Close()
+			defer func() { _ = m.layers.Close() }()
 			err = demohelp.Run(m, "Composite animation")
 		}
 		if err != nil {
@@ -151,8 +151,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer m.session.Close()
-	defer m.tracks[0].Close()
-	defer m.tracks[1].Close()
+	defer func() { _ = m.tracks[0].Close() }()
+	defer func() { _ = m.tracks[1].Close() }()
 	if err := demohelp.Run(m, "Animation"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

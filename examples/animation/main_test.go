@@ -71,7 +71,7 @@ func TestCompositeLayersAndKeepScreen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.session.Close()
-	defer m.layers.Close()
+	defer func() { _ = m.layers.Close() }()
 
 	// Pause playback and configure Kitty geometry so driving Init + resize prepares
 	// and presents the base composite and both overlays deterministically.

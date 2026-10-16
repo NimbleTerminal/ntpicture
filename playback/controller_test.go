@@ -1,14 +1,16 @@
 package playback
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"context"
+	"errors"
 	"image"
-	picture "nimbleterminal.dev/ntpicture"
-	"nimbleterminal.dev/ntpicture/animation"
 	"reflect"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
+	picture "nimbleterminal.dev/ntpicture"
+	"nimbleterminal.dev/ntpicture/animation"
 )
 
 func testPlayer(t *testing.T) *animation.Player {
@@ -261,7 +263,7 @@ func TestPlaybackPresentationOverrunRebasesTimeline(t *testing.T) {
 
 func TestPlaybackControlsResetDeadline(t *testing.T) {
 	c := New(testPlayer(t), Options{})
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	for _, change := range []func(){func() { c.Pause(true) }, func() { c.SetVisible(false) }, func() { c.SetRate(2) }, func() { c.Seek(1) }, func() { c.SetPlayer(testPlayer(t)) }} {
 		c.nextDue = time.Unix(123, 0)
 		change()
@@ -350,7 +352,7 @@ func TestResolutionCorrectionRecoversPresentationError(t *testing.T) {
 
 func TestResolutionCorrectionPreservesSourceError(t *testing.T) {
 	c := New(testPlayer(t), Options{})
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	c.err = ErrNotSeekable
 	drive(t, c, c.SetResolution(0))
 	drive(t, c, c.SetResolution(.5))
@@ -361,7 +363,7 @@ func TestResolutionCorrectionPreservesSourceError(t *testing.T) {
 
 func TestPauseAndSetRatePreserveInFlightSeekAndRestart(t *testing.T) {
 	c := New(testPlayer(t), Options{Wait: func(context.Context, time.Duration) bool { return true }})
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	c.SetSize(2, 2)
 	drive(t, c, c.Init())
 
@@ -381,6 +383,117 @@ func TestPauseAndSetRatePreserveInFlightSeekAndRestart(t *testing.T) {
 	if c.Status().Player.Frame() != 1 || !c.Status().Paused {
 		t.Fatalf("in-flight restart was dropped by SetRate: frame=%d paused=%v", c.Status().Player.Frame(), c.Status().Paused)
 	}
+}
+
+func TestControllerPresentedStaysInSyncAfterRejectionAndAsyncFailure(t *testing.T) {
+	distinctPlayer := func(t *testing.T) *animation.Player {
+		t.Helper()
+		f1 := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		f2 := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		f2.Pix[0] = 255
+		p, err := animation.NewPlayer(&animation.Clip{
+			Bounds:    f1.Bounds(),
+			LoopCount: -1,
+			Frames: []animation.ClipFrame{
+				{Image: f1, Delay: time.Millisecond},
+				{Image: f2, Delay: time.Millisecond},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("ScheduleRejectionRetainsSubmissionForLaterRecovery", func(t *testing.T) {
+		var calls int
+		c := New(distinctPlayer(t), Options{
+			Wait:     func(context.Context, time.Duration) bool { return true },
+			FreshIDs: true,
+			Picture: picture.Options{
+				RetireDelay: -1,
+				NextID: func() (int, error) {
+					calls++
+					if calls == 2 {
+						return 0, errors.New("id exhausted on frame 2")
+					}
+					return 100 + calls, nil
+				},
+			},
+		})
+		defer func() { _ = c.Close() }()
+		c.Pause(true)
+		c.SetSize(2, 2)
+		c.SetTerminal(true, 8, 16)
+		drive(t, c, c.Init())
+		if c.Status().PresentedPlayer == nil || c.Status().PresentedPlayer.Frame() != 1 {
+			t.Fatalf("expected initial PresentedPlayer at frame 1, got %+v", c.Status())
+		}
+
+		// Seek to frame 2: NextID fails synchronously in Picture.schedule(), leaving Picture's
+		// p.img set to frame 2 while reporting an error.
+		drive(t, c, c.Seek(2))
+		if c.Status().Err == nil {
+			t.Fatal("expected error from failed NextID on frame 2")
+		}
+
+		// A subsequent resize succeeds and commits Picture's retained p.img (frame 2);
+		// Controller.Status().PresentedPlayer must promote to frame 2 rather than staying on frame 1.
+		drive(t, c, c.SetSize(3, 2))
+		if c.Status().PresentedPlayer == nil || c.Status().PresentedPlayer.Frame() != 2 {
+			t.Fatalf("PresentedPlayer after recovery following NextID failure = %+v, want frame 2", c.Status().PresentedPlayer)
+		}
+	})
+
+	t.Run("FailedFrameSubmissionRevertsPictureAndPreservesPresented", func(t *testing.T) {
+		f1 := &imageSource{img: image.NewRGBA(image.Rect(0, 0, 2, 2))}
+		badFrame2 := &badAdvanceSource{first: f1.img}
+		c := NewSource(badFrame2, Options{
+			Wait:    func(context.Context, time.Duration) bool { return true },
+			Picture: picture.Options{RetireDelay: -1},
+		})
+		defer func() { _ = c.Close() }()
+		c.Pause(true)
+		c.SetSize(2, 2)
+		c.SetTerminal(true, 8, 16)
+		drive(t, c, c.Init())
+		if c.Status().Presented != badFrame2 {
+			t.Fatalf("expected initial Presented == badFrame2, got %+v", c.Status().Presented)
+		}
+
+		// Advancing produces a source whose Image() has empty bounds; SetImageImmutable
+		// triggers failSubmission on Picture, which reverts p.img back to frame 1's front.
+		drive(t, c, c.Pause(false))
+		if c.Status().Err == nil {
+			t.Fatal("expected error from invalid frame 2 image")
+		}
+
+		// A subsequent resize re-prepares Picture's reverted p.img (frame 1).
+		// Controller.Status().Presented must remain frame 1 (badFrame2), not promote the failed frame 2.
+		drive(t, c, c.SetSize(3, 2))
+		if c.Status().Presented != badFrame2 {
+			t.Fatalf("Presented after resize following failed frame 2 = %#v, want %#v", c.Status().Presented, badFrame2)
+		}
+	})
+}
+
+type badAdvanceSource struct {
+	first image.Image
+	step  int
+}
+
+func (s *badAdvanceSource) Image() image.Image {
+	if s.step > 0 {
+		return image.NewRGBA(image.Rectangle{})
+	}
+	return s.first
+}
+func (s *badAdvanceSource) Delay() time.Duration { return time.Millisecond }
+func (s *badAdvanceSource) Advance(context.Context) (animation.Source, bool, error) {
+	return &badAdvanceSource{first: s.first, step: s.step + 1}, false, nil
+}
+func (s *badAdvanceSource) Reset(context.Context) (animation.Source, error) {
+	return &badAdvanceSource{first: s.first, step: 0}, nil
 }
 
 func FuzzControllerActions(f *testing.F) {

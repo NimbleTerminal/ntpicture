@@ -70,7 +70,7 @@ cmd := pic.Submit(ntpicture.Frame{
 `Options.HostGeometry` makes `Update` handle only the picture's own messages.
 Cell-size reports, Kitty replies, probe ticks and `TerminalSessionMsg` are
 ignored, so a resize never re-prepares the old raster. The host forwards those
-events to its `TerminalSession` (or `DefaultTerminalSession()`), reads
+events to its `TerminalSession` (or `legacy.DefaultTerminalSession()`), reads
 `Snapshot`, and applies geometry through `Submit` or `SetTerminal`.
 
 Standalone `Picture` uses fresh IDs by default. For continuously supplied
@@ -173,7 +173,7 @@ pixel rounding, and retains the front until the new placement is ready. Factors
 that round to the same dimensions do not trigger preparation. Glyph output stays
 at `cols × (2 * rows)`; the factor is saved for a later switch to Kitty. Invalid
 factors report `ErrorMsg` without cancelling pending work. Playback controllers
-forward both methods. Legacy `Model` retains its existing per-cell rounding.
+forward both methods. `legacy.Model` retains its existing per-cell rounding.
 
 `Picture` bounds source and prepared images to 32 Mi pixels and validates Kitty
 placeholder dimensions. This is a pixel bound, not a total RAM budget: source,
@@ -227,17 +227,19 @@ if event, ok := msg.(ntpicture.TerminalSessionMsg); ok &&
 
 `TerminalOptions` accepts known Kitty/shared-memory capabilities, initial cell
 pixel dimensions, and an optional tmux override. Explicit values take precedence
-over environment hints. Unknown capabilities are discovered independently;
+over `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` environment hints.
+Unknown capabilities are discovered independently;
 allocation failures still fall back to direct transport. `Snapshot` reports
 capabilities and geometry; each picture's `Status` reports its actual transport.
 Forward raw terminal events only to the session for that connection. Close each
 picture and execute its cleanup command, then call `session.Close()` to release
 pending probe resources. Keep-screen also requires closing the session on exit.
 
-Omitting `Options.Session` preserves legacy behavior. Package-level capability
-helpers and `Model` use the process-wide compatibility session exposed by
-`DefaultTerminalSession`; they do not change explicit sessions. The default
-session has process lifetime and cannot be closed.
+Omitting `Options.Session` preserves legacy behavior. Compatibility helpers and
+`Model` in `nimbleterminal.dev/ntpicture/legacy` use the process-wide
+compatibility session exposed by `legacy.DefaultTerminalSession`; they do not
+change explicit sessions. The default session has process lifetime and cannot be
+closed.
 
 A viewport selects cells from the full prepared image, independently of layout:
 
@@ -261,11 +263,15 @@ layout and the mapping from document regions into these cell rectangles.
 
 ## Compatibility and migration
 
-`Model`, `Config`, message types, geometry helpers and capability functions
-preserve the low-level NTCharts surface. Its constructors are `NewModel` and
-`NewModelWithConfig`; `New` constructs the lifecycle-owning `Picture`.
-`Model.SetImage` retains pixels without copying, as before, and legacy callers
-remain responsible for geometry/resource limits.
+`nimbleterminal.dev/ntpicture/legacy` provides `Model`, `NewModel`,
+`NewModelWithConfig`, and the process-wide capability/tmux functions
+(`DefaultTerminalSession`, `DetectKittyCapability`, `QueryKittyCapability`,
+`ForceKittyCapability`, `SetTmuxPassthrough`, `TmuxPassthrough`) that preserve
+the low-level NTCharts surface, while keeping the root `ntpicture` package
+focused on `Picture`, `TerminalSession`, and `GridImage` with no `init()`
+environment side effects. `legacy.Model.SetImage` retains pixels without
+copying, as before, and legacy callers remain responsible for geometry/resource
+limits.
 
 `testdata/compat/picture.go` is a proposed NTCharts alias adapter, exercised by
 `scripts/check-consumers.py` in temporary checkouts. It preserves type/message
@@ -457,13 +463,13 @@ site, and [NOTICE.md](./NOTICE.md) for the embedded artwork's separate license.
 ## Open Collaboration
 
 Run `task ci` before submitting changes. It checks formatting and module
-metadata, race tests, direct-transport fallback, vet, native/Windows/WASM
-builds, browser registry tests, and known vulnerabilities. You need Go 1.27.2
-(the module minimum is Go 1.26.8), [Go Task](https://taskfile.dev), Node, a C
-compiler, and network access for the vulnerability scans. `task test` runs
-native tests without querying the vulnerability database. See
-[DEVELOP.md](./DEVELOP.md) for consumer checks, manual acceptance checks, and
-release preparation.
+metadata, race tests, direct-transport fallback, `go vet`, `golangci-lint`,
+native/Windows/WASM builds, browser registry tests, and known vulnerabilities.
+You need Go 1.27.2 (the module minimum is Go 1.26),
+[Go Task](https://taskfile.dev), Node, a C compiler, and network access for the
+vulnerability scans. `task test` runs native tests without querying the
+vulnerability database. See [DEVELOP.md](./DEVELOP.md) for consumer checks,
+manual acceptance checks, and release preparation.
 
 Contributions and feedback are welcome. Please follow our [Code of
 Conduct](./CODE_OF_CONDUCT.md).

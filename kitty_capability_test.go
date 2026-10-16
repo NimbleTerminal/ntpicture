@@ -424,8 +424,7 @@ func TestModel_ToggleBlocked(t *testing.T) {
 func TestCapabilityResolutionNotifications(t *testing.T) {
 	resetKittyCapability(t)
 	p, q := New(Options{}), New(Options{})
-	defer p.Close()
-	defer q.Close()
+	defer func() { _ = p.Close(); _ = q.Close() }()
 	timeout := p.Update(kittyProbeTickMsg{})
 	if timeout == nil || timeout().(KittyCapabilityMsg).Capability != KittyCapabilityUnsupported {
 		t.Fatal("missing timeout notification")
@@ -463,5 +462,29 @@ func TestLegacyModelReturnsCapabilityCommand(t *testing.T) {
 	cmd := m.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}})
 	if cmd == nil || cmd().(KittyCapabilityMsg).Capability != KittyCapabilitySupported {
 		t.Fatal("legacy model dropped resolution command")
+	}
+}
+
+func TestLegacySharedCapResolvesWhenEnvPreflightFails(t *testing.T) {
+	resetKittyCapability(t)
+	resetKittySharedCap(t)
+	resetKittyProbeState()
+	t.Cleanup(resetKittyProbeState)
+	clearKittyEnv(t)
+	SetTmuxPassthrough(false)
+
+	cmd := QueryKittySupport()
+	if cmd == nil || cmd().(KittyCapabilityMsg).Capability != KittyCapabilityUnsupported {
+		t.Fatal("expected unsupported capability when env preflight fails")
+	}
+	snap := DefaultTerminalSession().Snapshot()
+	if snap.Kitty != KittyCapabilityUnsupported || snap.SharedMemory != KittyCapabilityUnsupported {
+		t.Fatalf("expected both Kitty and SharedMemory to resolve to Unsupported when env preflight fails, got %+v", snap)
+	}
+
+	// Forcing KittyCapabilitySupported afterwards resets auto-unsupported shared memory back to Unknown so it can probe.
+	ForceKittyCapability(KittyCapabilitySupported)
+	if got := KittyCapability(kittySharedCap.Load()); got != KittyCapabilityUnknown {
+		t.Fatalf("after ForceKittyCapability(Supported), kittySharedCap = %v, want Unknown", got)
 	}
 }

@@ -114,7 +114,7 @@ func TestLayersPlayKittyRegionWithoutRetransmittingBase(t *testing.T) {
 			RetireDelay: -1,
 		},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	l.Pause(true)
 	l.SetSize(cols, rows)
@@ -291,7 +291,7 @@ func TestReducedResolutionOverlayRetainsPlacement(t *testing.T) {
 	}
 
 	l := NewLayers(comp, Options{Picture: picture.Options{RetireDelay: -1}})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.Pause(true)
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
@@ -354,7 +354,7 @@ func TestOverlaysWaitForActivationAndPreservePositionsAcrossReplacement(t *testi
 			RetireDelay: -1,
 		},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	l.Pause(true)
 	l.SetSize(cols, rows)
@@ -508,7 +508,7 @@ func TestPendingReplacementAndStaleResultsDoNotOverwritePresentedState(t *testin
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.Pause(true)
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
@@ -590,7 +590,7 @@ func TestClippedRegionsAndNonzeroOrigin(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
 	driveLayers(t, l, l.Init())
@@ -635,7 +635,7 @@ func TestGlyphFallbackAndModeSwitching(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.SetSize(4, 2)
 	driveLayers(t, l, l.Init())
 
@@ -797,7 +797,7 @@ func TestUnpresentedOverlayRetainsBasePixelsAndPlaceholders(t *testing.T) {
 			RetireDelay: -1,
 		},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.Pause(true)
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
@@ -875,7 +875,7 @@ func TestOffscreenReturnReloadAndRestart(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
 	driveLayers(t, l, l.Init())
@@ -935,7 +935,7 @@ func TestOffscreenReturnReloadAndRestart(t *testing.T) {
 
 func TestStillImageAndControlsOnLayers(t *testing.T) {
 	l := NewLayers(nil, Options{Picture: picture.Options{RetireDelay: -1}})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.SetSize(4, 2)
 	l.SetTerminal(true, 8, 16)
 	driveLayers(t, l, l.Init())
@@ -1092,7 +1092,7 @@ func TestCellSizeEventPreservesSnapshotAndScalesRegions(t *testing.T) {
 			RetireDelay: -1,
 		},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	// Session already reports KittyCapabilitySupported, so NewLayers starts in Kitty mode.
 	if l.Mode() != picture.PictureKitty {
@@ -1148,7 +1148,7 @@ func TestRejectedGeometryDoesNotLatchSizeOrTerminal(t *testing.T) {
 			RetireDelay: -1,
 		},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	// Rejected SetTerminal (cellWidth=0) must not set explicitTerminal or suppress Init probe.
 	rejTermCmd := l.SetTerminal(true, 0, 16)
@@ -1208,7 +1208,7 @@ func TestRepeatedRegionKeysShareClockAcrossDisjointOverlays(t *testing.T) {
 		Wait:    func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	l.Pause(true)
 	l.SetSize(cols, rows)
@@ -1314,7 +1314,7 @@ func TestFailedRestartPausesBaseAndOverlays(t *testing.T) {
 		},
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.Pause(true)
 	l.SetSize(4, 2)
 	l.SetTerminal(true, 8, 16)
@@ -1358,7 +1358,7 @@ func TestRejectedSetImagePreservesCompositeAndPositions(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
 	driveLayers(t, l, l.Init())
@@ -1415,7 +1415,7 @@ func TestDefaultFitFillAndFitAnchorReplanOverlays(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	if l.Fit() != picture.FitFill {
 		t.Fatalf("NewLayers default Fit = %v, want FitFill", l.Fit())
@@ -1493,7 +1493,7 @@ func TestSetCompositeRunsOffLoopAndPreservesPositionsOnLayoutFailure(t *testing.
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
 	driveLayers(t, l, l.Init())
@@ -1569,7 +1569,7 @@ func TestFitContainLetterboxedOverlayDoesNotStretchAcrossBars(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	l.Pause(true)
 	l.SetFit(picture.FitContain)
@@ -1666,7 +1666,7 @@ func TestStatusPresentedPixelsAndClockAgree(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	l.Pause(true)
 	l.SetSize(cols, rows)
@@ -1806,7 +1806,7 @@ func TestSharedKeyFiniteClipFinishesPresentedClock(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return true },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	l.SetSize(cols, rows)
 	l.SetTerminal(true, cw, ch)
@@ -1863,7 +1863,7 @@ func TestSetBackgroundPreservesPaddedOverlayTimer(t *testing.T) {
 		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
 		Picture: picture.Options{RetireDelay: -1},
 	})
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	l.Pause(true)
 	l.SetFit(picture.FitContain)
@@ -1913,5 +1913,183 @@ func TestSetBackgroundPreservesPaddedOverlayTimer(t *testing.T) {
 	ovFollow := l.Layers()[1].Status.Presented.Image()
 	if got := color.RGBAModel.Convert(ovFollow.At(ovFollow.Bounds().Dx()-1, 0)); got != navy {
 		t.Fatalf("follower frame 2 pillarbox bar = %v, want navy", got)
+	}
+}
+
+func TestLayersPromoteBaseAndRetireRespectUncommittedBase(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	blue := color.RGBA{B: 255, A: 255}
+	yellow := color.RGBA{R: 255, G: 255, A: 255}
+	const cols, rows, cw, ch = 4, 2, 8, 16
+
+	baseA := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	baseB := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{B: 10, A: 255})
+	playerA := colorPlayer(t, image.Pt(8, 16), red, green)
+	playerB := colorPlayer(t, image.Pt(8, 16), blue, yellow)
+
+	compA, err := animation.NewComposite(context.Background(), baseA, []animation.Region{
+		{Key: "a", Rect: image.Rect(0, 0, 8, 16), Player: playerA},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compB, err := animation.NewComposite(context.Background(), baseB, []animation.Region{
+		{Key: "b", Rect: image.Rect(16, 0, 24, 16), Player: playerB},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLayers(compA, Options{
+		Wait:    func(context.Context, time.Duration) bool { return false },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer func() { _ = l.Close() }()
+	l.Pause(true)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	committedViewA := l.View()
+	committedSnapA := l.Snapshot()
+	if committedViewA == "" || committedSnapA == nil {
+		t.Fatal("expected committed layout A view and snapshot")
+	}
+
+	// Start replacing with compB and run only the layout result + overlay B's presentation,
+	// holding base B's picturePrepared uncommitted.
+	_ = l.SetComposite(compB)
+	if len(l.overlays) != 1 {
+		t.Fatalf("expected 1 overlay in layout B, got %d", len(l.overlays))
+	}
+	// Drive overlay B directly with its window source while leaving l.basePending / base B uncommitted.
+	winB, err := compB.Window(context.Background(), l.overlays[0].window, l.overlays[0].content.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	drive(t, l.overlays[0].ctrl, l.overlays[0].ctrl.SetSource(winB))
+	l.basePending = false // simulate layout result arrived and submitted base B (baseTargetGen > presented)
+	l.baseTargetGen = l.base.Status().Picture.Generation + 1
+	_ = l.promoteBase()
+
+	if !l.overlays[0].presented() {
+		t.Fatal("expected overlay B to be presented before base B commits")
+	}
+	if l.presentedLayout == l.layoutGen {
+		t.Fatal("expected base B to still be uncommitted (presentedLayout != layoutGen)")
+	}
+	// Bug 4 check: promoteBase must NOT have closed retainedOverlays (overlay A) while base B is uncommitted.
+	if len(l.retainedOverlays) != 1 {
+		t.Fatalf("expected retainedOverlays from layout A to remain open until base B commits, got %d", len(l.retainedOverlays))
+	}
+	if got := l.View(); got != committedViewA {
+		t.Fatalf("View() while base B uncommitted = %q, want layout A view %q", got, committedViewA)
+	}
+	if got := color.RGBAModel.Convert(l.Snapshot().At(4, 4)); got != red {
+		t.Fatalf("Snapshot() overlay A pixel while base B uncommitted = %v, want red", got)
+	}
+
+	// Bug 3 check: retiring overlays while layout B's base is still uncommitted (e.g. SetActive(false))
+	// must NOT overwrite layout A's retainedOverlays with overlay B tagged as layout A.
+	driveLayers(t, l, l.SetActive(false))
+	if got := l.View(); got != committedViewA {
+		t.Fatalf("View() after SetActive(false) with uncommitted base B spliced overlay B into base A: got %q, want %q", got, committedViewA)
+	}
+	driveLayers(t, l, l.Keep())
+	if got := l.View(); got != committedViewA {
+		t.Fatalf("Keep() View() = %q, want layout A view %q", got, committedViewA)
+	}
+}
+
+func TestLayersStatusPresentedIsComparable(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 4, 2, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	player := colorPlayer(t, image.Pt(8, 16), red, green)
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a", Rect: image.Rect(0, 0, 8, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var allowSteps atomic.Int32
+	l := NewLayers(comp, Options{
+		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer func() { _ = l.Close() }()
+	l.Pause(true)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	st1 := l.Status()
+	st2 := l.Status()
+	if st1.Presented == nil {
+		t.Fatal("expected non-nil Status().Presented")
+	}
+	// Comparing Status().Presented with == must not panic and must be equal when unchanged.
+	if st1.Presented != st2.Presented {
+		t.Fatal("expected repeated Status().Presented calls without frame change to be == equal")
+	}
+
+	allowSteps.Store(1)
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+	st3 := l.Status()
+	if st3.Presented == nil || st3.Presented == st1.Presented {
+		t.Fatal("expected Status().Presented to change after frame advance without panicking on ==")
+	}
+
+	// Still image mode must also produce comparable Presented sources.
+	driveLayers(t, l, l.SetImage(base))
+	stStill1 := l.Status()
+	stStill2 := l.Status()
+	if stStill1.Presented == nil || stStill1.Presented != stStill2.Presented {
+		t.Fatal("expected comparable, stable Status().Presented for still image")
+	}
+}
+
+func TestLayersRestartWhileHiddenRunsOnShow(t *testing.T) {
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	const cols, rows, cw, ch = 4, 2, 8, 16
+	base := solidImage(image.Rect(0, 0, cols*cw, rows*ch), color.RGBA{R: 10, A: 255})
+	player := colorPlayer(t, image.Pt(8, 16), red, green)
+	comp, err := animation.NewComposite(context.Background(), base, []animation.Region{
+		{Key: "a", Rect: image.Rect(0, 0, 8, 16), Player: player},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var allowSteps atomic.Int32
+	l := NewLayers(comp, Options{
+		Wait:    func(context.Context, time.Duration) bool { return allowSteps.Add(-1) >= 0 },
+		Picture: picture.Options{RetireDelay: -1},
+	})
+	defer func() { _ = l.Close() }()
+	l.Pause(true)
+	l.SetSize(cols, rows)
+	l.SetTerminal(true, cw, ch)
+	driveLayers(t, l, l.Init())
+
+	// Advance to frame 2 (green).
+	allowSteps.Store(1)
+	driveLayers(t, l, l.Pause(false))
+	l.Pause(true)
+	if got := color.RGBAModel.Convert(l.Snapshot().At(4, 4)); got != green {
+		t.Fatalf("expected green on frame 2 before hiding, got %v", got)
+	}
+
+	// Hide, issue Restart while hidden, then show again: must reset to frame 1 (red).
+	driveLayers(t, l, l.SetVisible(false))
+	driveLayers(t, l, l.Restart())
+	driveLayers(t, l, l.SetVisible(true))
+	if got := color.RGBAModel.Convert(l.Snapshot().At(4, 4)); got != red {
+		t.Fatalf("Snapshot pixel after Restart while hidden + SetVisible(true) = %v, want red (frame 1)", got)
 	}
 }

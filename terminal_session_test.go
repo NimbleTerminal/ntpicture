@@ -44,7 +44,7 @@ func TestTerminalSessionIndependentTransport(t *testing.T) {
 }
 
 func TestTerminalSessionProbeRouting(t *testing.T) {
-	t.Setenv("NTCHARTS_KITTY", "")
+	t.Setenv("NTPICTURE_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 	opts := sessionOptions(false)
 	opts.Kitty = KittyCapabilityUnknown
@@ -130,7 +130,7 @@ func TestTerminalSessionSharedPicturesGeometry(t *testing.T) {
 }
 
 func TestTerminalSessionCloseSuppressesQueuedProbe(t *testing.T) {
-	t.Setenv("NTCHARTS_KITTY", "")
+	t.Setenv("NTPICTURE_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 	opts := sessionOptions(false)
 	opts.Kitty = KittyCapabilityUnknown
@@ -173,8 +173,8 @@ func TestTerminalSessionSharedCapabilityIsScoped(t *testing.T) {
 }
 
 func TestTerminalSessionOverridesEnvironment(t *testing.T) {
-	t.Setenv("NTCHARTS_KITTY", "unsupported")
-	t.Setenv("NTCHARTS_TMUX_PASSTHROUGH", "true")
+	t.Setenv("NTPICTURE_KITTY", "unsupported")
+	t.Setenv("NTPICTURE_TMUX_PASSTHROUGH", "true")
 	s := NewTerminalSession(sessionOptions(false))
 	defer s.Close()
 	state := s.Snapshot()

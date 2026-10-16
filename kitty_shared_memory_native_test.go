@@ -8,7 +8,6 @@ import (
 	"image/color"
 	"image/draw"
 	"strings"
-	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -24,7 +23,7 @@ func TestSharedMemoryTmuxWrapsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer obj.Unlink()
+	defer func() { _ = obj.Unlink() }()
 	if strings.Count(apc, "tmux;") != 1 || !strings.HasPrefix(apc, "\x1bPtmux;\x1b\x1b_G") {
 		t.Fatalf("shared-memory APC must have exactly one tmux wrapper: %q", apc)
 	}
@@ -38,7 +37,7 @@ func TestNativeSharedMemoryFrameLifecycle(t *testing.T) {
 	m.mode = PictureKitty
 	m.cols, m.rows = 2, 2
 	m.img = randomNRGBA(2, 2)
-	defer m.SetImage(nil)
+	defer func() { _ = m.SetImage(nil) }()
 	first := m.renderCmd()().(KittyFrameMsg)
 	if first.Medium != KittyMediumSharedMemory || first.Format != KittyFormatRGBA {
 		t.Fatalf("native shared memory unavailable: %+v", first)
@@ -89,7 +88,7 @@ func TestNativeSharedMemoryWaitsForProbe(t *testing.T) {
 	m.mode = PictureKitty
 	m.cols, m.rows = 2, 2
 	m.img = randomNRGBA(2, 2)
-	defer m.SetImage(nil)
+	defer func() { _ = m.SetImage(nil) }()
 	for _, c := range []KittyCapability{KittyCapabilityUnknown, KittyCapabilityUnsupported} {
 		kittySharedCap.Store(int32(c))
 		f := m.SetImage(randomNRGBA(2, 2))().(KittyFrameMsg)
@@ -113,7 +112,7 @@ func TestNativeSharedMemoryQuery(t *testing.T) {
 	if probe == nil {
 		t.Fatal("no probe object")
 	}
-	defer probe.Unlink()
+	defer func() { _ = probe.Unlink() }()
 	name := string(decodeKittyRaw(t, apc, "a=q", "t=s", "f=32", "s=1,v=1", "S=4", fmt.Sprintf("i=%d", kittySharedProbeID)))
 	if name != probe.Name {
 		t.Fatalf("query names %q, want %q", name, probe.Name)
@@ -134,7 +133,7 @@ func queryKittySupportRaw(t *testing.T) string {
 	original := tmuxPassthroughEnabled.Load()
 	SetTmuxPassthrough(false)
 	t.Cleanup(func() { SetTmuxPassthrough(original) })
-	kittyQueryOnce = sync.Once{}
+	resetKittyProbeState()
 	cmds := collectBatchCmds(QueryKittySupport())
 	if len(cmds) == 0 {
 		t.Fatal("no probe sent")
@@ -169,8 +168,8 @@ func TestQueryKittySupportProbesSharedMemoryWhenForced(t *testing.T) {
 func TestQueryKittySupportForcedFlatBatch(t *testing.T) {
 	resetKittyCapability(t)
 	ForceKittyCapability(KittyCapabilitySupported)
-	kittyQueryOnce = sync.Once{}
-	t.Cleanup(func() { kittyQueryOnce = sync.Once{}; _ = kittySharedProbe.Swap(nil).Unlink() })
+	resetKittyProbeState()
+	t.Cleanup(func() { resetKittyProbeState(); _ = kittySharedProbe.Swap(nil).Unlink() })
 	cmds := collectBatchCmds(QueryKittySupport())
 	if len(cmds) != 3 {
 		t.Fatalf("want raw query, timeout, capability commands in one batch; got %d", len(cmds))
@@ -225,11 +224,50 @@ func TestSharedStateReleaseRejectsLateReplace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer obj.Unlink()
+	defer func() { _ = obj.Unlink() }()
 	if s.replace(1, obj) {
 		t.Fatal("released state accepted a late object")
 	}
 	if !obj.Done() {
 		t.Fatal("late object not unlinked")
+	}
+}
+
+func TestSupersededStableIDBorrowerRetiresSharedMemory(t *testing.T) {
+	original := tmuxPassthroughEnabled.Load()
+	SetTmuxPassthrough(false)
+	defer SetTmuxPassthrough(original)
+	resetKittySharedCap(t)
+	kittySharedCap.Store(int32(KittyCapabilitySupported))
+
+	p := New(Options{
+		StableID:    true,
+		RetireDelay: -1,
+		Render:      Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyMedium: KittyMediumSharedMemory},
+	})
+	p.SetSize(2, 2)
+	p.SetTerminal(true, 1, 1)
+	drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
+
+	// Prepare borrower B and deliver picturePrepared to Update without committing its sequence.
+	prepCmd := p.SetImage(randomNRGBA(2, 2))
+	prepMsg := prepCmd()
+	seqCmd := p.Update(prepMsg)
+	borrowerObj := p.job.placement.kittyShared.object
+	if borrowerObj == nil || borrowerObj.Done() {
+		t.Fatal("expected active shared-memory object on borrower frame")
+	}
+
+	// Superseding borrower B before commit must retire (not immediately unlink) its SHM object,
+	// because its t=s APC may already be in flight to the terminal.
+	nextCmd := p.SetImage(randomNRGBA(2, 2))
+	drivePicture(t, p, tea.Batch(seqCmd, nextCmd))
+	if borrowerObj.Done() {
+		t.Fatal("superseded StableID borrower unlinked SHM object immediately instead of retiring it")
+	}
+
+	drivePicture(t, p, p.Close())
+	if !borrowerObj.Done() {
+		t.Fatal("Close did not unlink retired borrower SHM object")
 	}
 }

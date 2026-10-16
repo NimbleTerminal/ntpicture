@@ -122,7 +122,7 @@ func TestKittyFramingMatchesCharm(t *testing.T) {
 	if err := png.Encode(&data, src); err != nil {
 		t.Fatal(err)
 	}
-	opts := &kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, ID: 45, Columns: 2, Rows: 3, VirtualPlacement: true, Quite: 2, Chunk: true}
+	opts := &kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, ID: 45, Columns: 2, Rows: 3, VirtualPlacement: true, Quiet: 2, Chunk: true}
 	if err := kitty.EncodeGraphics(&legacy, src, opts); err != nil {
 		t.Fatal(err)
 	}

@@ -68,14 +68,10 @@ type TerminalSession struct {
 var defaultTerminalSession = &TerminalSession{legacy: true}
 var terminalProbeIDs atomic.Uint32
 
-// DefaultTerminalSession returns the compatibility session. Package-level
-// capability/tmux helpers and legacy Model use its process-wide discovery state.
-// Calling Update on the default session (directly or via Options{Session: DefaultTerminalSession()})
-// emits TerminalSessionMsg alongside KittyCapabilityMsg; implicit callers (Model and
-// Picture with nil Session) report only KittyCapabilityMsg.
-// Prefer an explicit session for independent programs/connections. Do not Close
-// the default session; its lifetime is the process lifetime.
-func DefaultTerminalSession() *TerminalSession { return defaultTerminalSession }
+func defaultSession() *TerminalSession {
+	ensureLegacyEnv()
+	return defaultTerminalSession
+}
 
 func (s *TerminalSession) setCellSize(w, h int) {
 	if s.legacy {
@@ -103,13 +99,13 @@ func (s *TerminalSession) isKittyForced() bool {
 
 func envTerminalConfig() (tmux bool, kitty KittyCapability, kittyForced bool) {
 	tmux = os.Getenv("TMUX") != ""
-	switch os.Getenv("NTCHARTS_TMUX_PASSTHROUGH") {
+	switch os.Getenv("NTPICTURE_TMUX_PASSTHROUGH") {
 	case "1", "true", "on", "yes":
 		tmux = true
 	case "0", "false", "off", "no":
 		tmux = false
 	}
-	switch os.Getenv("NTCHARTS_KITTY") {
+	switch os.Getenv("NTPICTURE_KITTY") {
 	case "supported", "true", "1", "on", "yes":
 		kitty, kittyForced = KittyCapabilitySupported, true
 	case "unsupported", "false", "0", "off", "no":
@@ -149,13 +145,14 @@ func NewTerminalSession(opts TerminalOptions) *TerminalSession {
 func (s *TerminalSession) Snapshot() TerminalState {
 	var state TerminalState
 	if s.legacy {
+		ensureLegacyEnv()
 		s.mu.Lock()
 		state = s.state
 		s.mu.Unlock()
-		state.Kitty = KittySupported()
+		state.Kitty = kittySupported()
 		state.SharedMemory = KittyCapability(kittySharedCap.Load())
 		state.TmuxPassthrough = tmuxPassthroughEnabled.Load()
-		state.EnvSignalled = KittyEnvSignalled()
+		state.EnvSignalled = kittyEnvSignalledFn()
 	} else {
 		state = s.state
 	}
@@ -188,7 +185,7 @@ func (s *TerminalSession) notification() tea.Cmd {
 // stdin; the host delivers terminal replies through Update. Run its command.
 func (s *TerminalSession) Init() tea.Cmd {
 	if s.legacy {
-		return tea.Batch(RequestCellSize(), QueryKittySupport())
+		return tea.Batch(requestCellSize(), queryKittySupport())
 	}
 	if s.started || s.closed.Load() {
 		return nil
@@ -218,7 +215,7 @@ func (s *TerminalSession) Init() tea.Cmd {
 		if s.closed.Load() {
 			return nil
 		}
-		return RequestCellSize()()
+		return requestCellSize()()
 	}}
 	if query != "" {
 		cmds = append(cmds, func() tea.Msg {
@@ -317,6 +314,7 @@ func (s *TerminalSession) unavailable() error {
 type kittyTransport struct{ tmux, shared bool }
 
 func legacyTransport() kittyTransport {
+	ensureLegacyEnv()
 	return kittyTransport{tmuxPassthroughEnabled.Load(), kittySharedUsable()}
 }
 func (s *TerminalSession) transport() kittyTransport {

@@ -21,7 +21,7 @@ viewport position changes.
 without changing the cell footprint or the camera aspect; the status line shows
 the resulting target pixel dimensions. In glyph mode those controls are hidden
 because the raster stays at `cols × (2 * rows)`. `g` switches between glyph and
-Kitty once Kitty support is confirmed (`NTCHARTS_KITTY=unsupported` forces the
+Kitty once Kitty support is confirmed (`NTPICTURE_KITTY=unsupported` forces the
 glyph path). Space pauses and resumes, `Q` keeps the last frame on the main
 screen and quits, and `q` clears and quits.
 

@@ -20,10 +20,10 @@ import (
 // games, boards, and tile maps usually need crisp pixel edges; pass
 // draw.CatmullRom or another scaler when smoother image scaling is desired.
 //
-// When the resulting image is rendered by Model, configure the Model with:
+// When the resulting image is rendered by Picture, configure it with:
 //
-//	picture.Config{Fit: picture.FitFill}
-//	model.SetSize(
+//	ntpicture.Config{Fit: ntpicture.FitFill}
+//	pic.SetSize(
 //		cfg.LogicalCols*cfg.TerminalColsPerCell,
 //		cfg.LogicalRows*cfg.TerminalRowsPerCell,
 //	)
@@ -51,7 +51,7 @@ type GridImageConfig struct {
 
 // GridImage composes sprites into a bitmap whose pixel geometry maps directly
 // to a terminal-cell placement. It is intended for games, boards, tile maps,
-// and other coordinate-aligned UIs rendered through picture.Model.
+// and other coordinate-aligned UIs rendered through ntpicture.Picture.
 type GridImage struct {
 	img *image.RGBA
 

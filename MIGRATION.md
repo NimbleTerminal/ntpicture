@@ -4,7 +4,11 @@
 
 - NTCharts renderer, fit/cell/grid geometry, glyph output, Kitty encodings,
   shared-memory transport, platform yields and corresponding tests extracted.
-- Low-level Model API preserved for aliases, with explicit constructor names.
+- Low-level `Model` API and process-wide capability/tmux helpers isolated in
+  `nimbleterminal.dev/ntpicture/legacy` for aliases, keeping the root
+  `ntpicture` package focused on `Picture`, `TerminalSession`, and `GridImage`
+  with no `init()` environment side effects. Environment overrides use
+  `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH`.
 - Picture owns immutable/copying submissions, retained fronts, one active job,
   latest-request coalescing, transmission ordering, retirement, visibility and
   late cleanup. Presentation state is private.
@@ -18,7 +22,7 @@
   retained-replacement default; continuously supplied framebuffers opt in.
 - Picture and playback expose `RasterGeometry` and runtime `SetResolution` so
   producers can render at the encoded target without changing cell layout.
-  Kitty rounds the full scaled raster; legacy Model keeps per-cell rounding.
+  Kitty rounds the full scaled raster; `legacy.Model` keeps per-cell rounding.
   ntcharts3d can keep its adaptive policy and camera logic while using these
   dimensions. Its consumer migration and presentation-cost metrics remain open.
 - Fresh single-ID allocation, failure reporting and bounded Picture geometry.
@@ -58,14 +62,15 @@ No sibling repository has been modified or released.
 ## Implemented: discovery bridge and cell-size handling
 
 KittyCapabilityMsg reports probe resolution through the Bubble Tea loop.
-Model.Update and Picture.Update return notification commands on transitions;
-Init/query also reports already-known results. Late positive replies may follow
-a timeout; hosts must tolerate duplicates. Examples select Kitty from this
-message instead of polling on every update. Capability state remains global;
-ForceKittyCapability does not itself enqueue a message. Legacy Model.Update now
-returns a command for capability transitions where it previously returned nil;
-the NTCharts adapter migration must preserve and execute these commands and
-update any tests that assumed nil.
+`legacy.Model.Update` and `Picture.Update` return notification commands on
+transitions; Init/query also reports already-known results. Late positive
+replies may follow a timeout; hosts must tolerate duplicates. Examples select
+Kitty from this message instead of polling on every update. Legacy capability
+state lives in the default session (`legacy.DefaultTerminalSession`);
+`legacy.ForceKittyCapability` does not itself enqueue a message.
+`legacy.Model.Update` now returns a command for capability transitions where it
+previously returned nil; the NTCharts adapter migration must preserve and
+execute these commands and update any tests that assumed nil.
 
 Picture ignores zero/negative terminal cell-size reports without cancelling or
 dropping a pending source. Explicit SetTerminal calls still reject bad geometry.
@@ -161,10 +166,11 @@ visibility policy in Gloss. Build new composites off the UI loop with
 clip identity.
 
 Explicit TerminalSession now isolates discovery, cell geometry, tmux wrapping,
-and shared-memory capability for pictures that opt in. Legacy Model and package
-helpers retain their compatibility state through DefaultTerminalSession. Migrate
-hosts to one explicit session per terminal; process-wide resource budgets remain
-intentional. The animation example shares one session across both controllers.
+and shared-memory capability for pictures that opt in. `legacy.Model` and
+package helpers in `ntpicture/legacy` retain their compatibility state through
+`legacy.DefaultTerminalSession`. Migrate hosts to one explicit session per
+terminal; process-wide resource budgets remain intentional. The animation
+example shares one session across both controllers.
 
 Viewport now clips prepared Kitty/glyph content without bitmap retransmission.
 It supports source-cell offsets in both axes, with clipping at layout bounds.

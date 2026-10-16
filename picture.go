@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math/rand/v2"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,8 +19,7 @@ import (
 	"nimbleterminal.dev/ntpicture/internal/kittyshm"
 )
 
-// MaxImagePixels bounds snapshots and prepared images in Picture. Model retains
-// its legacy API; callers using it directly are responsible for resource limits.
+// MaxImagePixels bounds snapshots and prepared images in Picture.
 const MaxImagePixels = 32 << 20
 
 var ErrImageIDExhausted = errors.New("ntpicture: positive 24-bit image IDs exhausted")
@@ -70,8 +70,8 @@ type Options struct {
 	RetireDelay time.Duration
 	// HostGeometry makes Update ignore terminal events: cell-size reports, Kitty
 	// replies, probe ticks and session notifications. The host forwards them to
-	// its TerminalSession (or DefaultTerminalSession) and applies geometry with
-	// SetTerminal or Submit, so a stale raster is never re-prepared first.
+	// its TerminalSession (or legacy.DefaultTerminalSession) and applies geometry
+	// with SetTerminal or Submit, so a stale raster is never re-prepared first.
 	HostGeometry bool
 }
 
@@ -146,7 +146,28 @@ type picturePlacement struct {
 // A streaming replacement borrows its front's ID until commit. Cleanup of a
 // cancelled borrower must never delete the still-displayed image.
 type pictureImageID struct {
-	active atomic.Bool
+	active      atomic.Bool
+	overwritten atomic.Bool
+	outputMu    sync.Mutex
+	outputDone  <-chan struct{}
+}
+
+func (id *pictureImageID) setOutputDone(ch <-chan struct{}) {
+	if id == nil {
+		return
+	}
+	id.outputMu.Lock()
+	id.outputDone = ch
+	id.outputMu.Unlock()
+}
+
+func (id *pictureImageID) loadOutputDone() <-chan struct{} {
+	if id == nil {
+		return nil
+	}
+	id.outputMu.Lock()
+	defer id.outputMu.Unlock()
+	return id.outputDone
 }
 
 type pictureJob struct {
@@ -253,13 +274,41 @@ func (p *Picture) reportError(err error) tea.Cmd {
 	generation := p.generation
 	return func() tea.Msg { return ErrorMsg{p, generation, err} }
 }
+func (p *Picture) frontNeedsPrepare() bool {
+	if p.front == nil || p.opts.ClearOnReplace || !p.visible || p.img == nil || p.cols <= 0 || p.rows <= 0 {
+		return false
+	}
+	if p.front.lease != nil && (p.front.lease.overwritten.Load() || p.front.lease.loadOutputDone() != nil) {
+		return true
+	}
+	cfg := p.opts.Render
+	if p.front.mode != p.mode || p.front.cols != p.cols || p.front.rows != p.rows ||
+		p.front.cfg.Fit != cfg.Fit || p.front.cfg.Anchor != cfg.Anchor ||
+		p.front.cfg.Background != cfg.Background {
+		return true
+	}
+	if p.mode == PictureKitty {
+		if p.front.cfg.CellPixelWidth != cfg.CellPixelWidth ||
+			p.front.cfg.CellPixelHeight != cfg.CellPixelHeight ||
+			p.front.rasterSize != p.RasterGeometry().Pixels ||
+			p.front.cfg.KittyFormat != cfg.KittyFormat ||
+			p.front.cfg.KittyMedium != cfg.KittyMedium ||
+			p.front.cfg.KittyZ != cfg.KittyZ {
+			return true
+		}
+	}
+	return false
+}
 func (p *Picture) failSubmission(err error) tea.Cmd {
 	p.generation++
 	p.err = err
 	p.dirty = false
-	p.img = nil
-	if p.front != nil && !p.opts.ClearOnReplace {
+	if p.opts.ClearOnReplace && p.visible {
+		p.img = nil
+	} else if p.front != nil {
 		p.img = p.front.image
+	} else if p.visible && p.cols > 0 && p.rows > 0 {
+		p.img = nil
 	}
 	if p.job != nil {
 		p.job.cancel()
@@ -268,8 +317,32 @@ func (p *Picture) failSubmission(err error) tea.Cmd {
 	var clear tea.Cmd
 	if p.opts.ClearOnReplace {
 		clear = p.clearFront()
+	} else if p.frontNeedsPrepare() {
+		p.dirty = true
 	}
-	return tea.Batch(clear, p.reportError(err))
+	return tea.Batch(clear, p.reportError(err), p.schedule())
+}
+func (p *Picture) failPreparedJob(j *pictureJob, err error) tea.Cmd {
+	p.generation++
+	p.err = err
+	p.dirty = false
+	j.cancel()
+	p.job = nil
+	cleanup := p.dispose(j.placement)
+	if p.opts.ClearOnReplace && p.visible {
+		p.img = nil
+		return tea.Batch(cleanup, p.clearFront(), p.reportError(err))
+	}
+	if p.front != nil {
+		failedImg := j.placement.image
+		p.img = p.front.image
+		if failedImg != p.front.image && p.frontNeedsPrepare() {
+			p.dirty = true
+		}
+	} else if p.visible && p.cols > 0 && p.rows > 0 {
+		p.img = nil
+	}
+	return tea.Batch(cleanup, p.reportError(err), p.schedule())
 }
 
 func (p *Picture) SetSize(cols, rows int) tea.Cmd {
@@ -523,29 +596,33 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			cleanup := p.dispose(j.placement)
 			j.cancel()
 			p.job = nil
+			if !p.closed && !p.dirty && p.frontNeedsPrepare() {
+				p.dirty = true
+			}
 			return tea.Batch(cleanup, p.schedule())
 		}
 		if text, ok := v.frame.(string); ok {
 			j.placement.grid = text
 			return p.commit(j, p.opts.Render.KittyFormat, KittyMediumDirect)
 		}
-		f, ok := v.frame.(KittyFrameMsg)
+		f, ok := v.frame.(kittyFrameMsg)
 		if !ok || f.APC == "" {
-			j.cancel()
-			p.job = nil
-			cleanup := p.dispose(j.placement)
-			return tea.Batch(cleanup, p.reportError(errors.New("ntpicture: image preparation failed")))
+			return p.failPreparedJob(j, errors.New("ntpicture: image preparation failed"))
 		}
 		if f.sharedMemory != nil && !j.placement.kittyShared.submit(f.Seq, f.sharedMemory) {
-			j.cancel()
-			p.job = nil
-			return tea.Batch(p.dispose(j.placement), p.failSubmission(errors.New("ntpicture: shared image was retired before transmission")))
+			return p.failPreparedJob(j, errors.New("ntpicture: shared image was retired before transmission"))
 		}
 		j.outputDone = make(chan struct{})
+		if !j.placement.ownsID && j.placement.lease != nil {
+			j.placement.lease.setOutputDone(j.outputDone)
+		}
 		ready := func() tea.Msg { return pictureReady{p, j, f.Grid, f.Format, f.Medium} }
 		return tea.Sequence(func() tea.Msg {
 			if !j.placement.active.Load() {
 				return nil
+			}
+			if !j.placement.ownsID && j.placement.lease != nil {
+				j.placement.lease.overwritten.Store(true)
 			}
 			return tea.RawMsg{Msg: f.APC}
 		}, func() tea.Msg {
@@ -565,6 +642,9 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			cleanup := p.dispose(v.job.placement)
 			v.job.cancel()
 			p.job = nil
+			if !p.closed && !p.dirty && p.frontNeedsPrepare() {
+				p.dirty = true
+			}
 			return tea.Batch(cleanup, p.schedule())
 		}
 		v.job.placement.grid = v.grid
@@ -621,6 +701,10 @@ func (p *Picture) commit(j *pictureJob, format KittyFormat, medium KittyMedium) 
 				p.retired = p.retired[1:]
 			}
 		}
+	}
+	if j.placement.lease != nil {
+		j.placement.lease.overwritten.Store(false)
+		j.placement.lease.setOutputDone(nil)
 	}
 	p.front = j.placement
 	p.presented = j.placement.generation
@@ -689,7 +773,11 @@ func (p *Picture) dispose(f *picturePlacement) tea.Cmd {
 		f.lease.active.Store(false)
 	}
 	if f.mode == PictureKitty {
-		f.kittyShared.release()
+		if !f.ownsID && f.lease != nil && f.lease.active.Load() {
+			p.trackRetiredSHM(f.kittyShared.retire())
+		} else {
+			f.kittyShared.release()
+		}
 	}
 	return f.delete
 }
@@ -741,7 +829,12 @@ func (p *Picture) Keep() tea.Cmd {
 		return nil
 	}
 	var outputDone <-chan struct{}
-	if p.job != nil && p.front != nil && p.job.placement.lease != nil && p.job.placement.lease == p.front.lease {
+	var overwritten bool
+	if p.front != nil && p.front.lease != nil {
+		outputDone = p.front.lease.loadOutputDone()
+		overwritten = p.front.lease.overwritten.Load()
+	}
+	if outputDone == nil && p.job != nil && p.front != nil && p.job.placement.lease != nil && p.job.placement.lease == p.front.lease {
 		outputDone = p.job.outputDone
 	}
 	p.keptView = p.View()
@@ -751,7 +844,7 @@ func (p *Picture) Keep() tea.Cmd {
 	if front == nil || front.mode != PictureKitty {
 		return cleanup
 	}
-	if p.medium == KittyMediumDirect && outputDone == nil {
+	if p.medium == KittyMediumDirect && outputDone == nil && !overwritten {
 		// The terminal already owns these pixels. Only shared-memory fronts or
 		// an accepted borrower of this ID need an exit-time retransmission.
 		front.kittyShared.release()
@@ -823,5 +916,5 @@ func (p *Picture) session() *TerminalSession {
 	if p.opts.Session != nil {
 		return p.opts.Session
 	}
-	return DefaultTerminalSession()
+	return defaultSession()
 }

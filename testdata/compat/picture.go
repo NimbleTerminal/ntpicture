@@ -5,18 +5,19 @@ package picture
 import (
 	tea "charm.land/bubbletea/v2"
 	nt "nimbleterminal.dev/ntpicture"
+	"nimbleterminal.dev/ntpicture/legacy"
 )
 
-type Model = nt.Model
+type Model = legacy.Model
 type Config = nt.Config
 type PictureMode = nt.PictureMode
 type FitMode = nt.FitMode
 type FitAnchor = nt.FitAnchor
 type KittyCapability = nt.KittyCapability
-type KittyCapabilityMsg = nt.KittyCapabilityMsg
+type KittyCapabilityMsg = legacy.KittyCapabilityMsg
 type KittyFormat = nt.KittyFormat
 type KittyMedium = nt.KittyMedium
-type KittyFrameMsg = nt.KittyFrameMsg
+type KittyFrameMsg = legacy.KittyFrameMsg
 type GridImage = nt.GridImage
 type GridImageConfig = nt.GridImageConfig
 
@@ -48,15 +49,15 @@ var (
 	ErrKittyProbeTimeout = nt.ErrKittyProbeTimeout
 )
 
-func New() Model                                  { return nt.NewModel() }
-func NewWithConfig(cfg Config) Model              { return nt.NewModelWithConfig(cfg) }
+func New() Model                                  { return legacy.NewModel() }
+func NewWithConfig(cfg Config) Model              { return legacy.NewModelWithConfig(cfg) }
 func NewGridImage(cfg GridImageConfig) *GridImage { return nt.NewGridImage(cfg) }
-func IsPictureMsg(msg tea.Msg) bool               { return nt.IsPictureMsg(msg) }
-func RequestCellSize() tea.Cmd                    { return nt.RequestCellSize() }
-func QueryKittySupport() tea.Cmd                  { return nt.QueryKittySupport() }
-func KittyEnvSignalled() bool                     { return nt.KittyEnvSignalled() }
-func KittySupported() KittyCapability             { return nt.KittySupported() }
-func KittyUnavailable() error                     { return nt.KittyUnavailable() }
-func ForceKittyCapability(c KittyCapability)      { nt.ForceKittyCapability(c) }
-func SetTmuxPassthrough(enabled bool)             { nt.SetTmuxPassthrough(enabled) }
+func IsPictureMsg(msg tea.Msg) bool               { return legacy.IsPictureMsg(msg) }
+func RequestCellSize() tea.Cmd                    { return legacy.RequestCellSize() }
+func QueryKittySupport() tea.Cmd                  { return legacy.QueryKittySupport() }
+func KittyEnvSignalled() bool                     { return legacy.KittyEnvSignalled() }
+func KittySupported() KittyCapability             { return legacy.KittySupported() }
+func KittyUnavailable() error                     { return legacy.KittyUnavailable() }
+func ForceKittyCapability(c KittyCapability)      { legacy.ForceKittyCapability(c) }
+func SetTmuxPassthrough(enabled bool)             { legacy.SetTmuxPassthrough(enabled) }
 func KittySharedMemorySupported() bool            { return nt.KittySharedMemorySupported() }

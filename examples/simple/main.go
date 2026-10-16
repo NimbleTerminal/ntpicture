@@ -20,19 +20,25 @@ import (
 var fujiPNG []byte
 
 type model struct {
+	session       *picture.TerminalSession
 	pic           *picture.Picture
 	initCmd       tea.Cmd
 	width, height int
 }
 
 func initialModel() (model, error) {
-	pic := picture.New(picture.Options{Render: picture.Config{KittyMedium: picture.KittyMediumSharedMemory}})
+	session := picture.NewTerminalSession(picture.TerminalOptions{})
+	pic := picture.New(picture.Options{
+		Session: session,
+		Render:  picture.Config{KittyMedium: picture.KittyMediumSharedMemory},
+	})
 
 	img, _, err := image.Decode(bytes.NewReader(fujiPNG))
 	if err != nil {
+		session.Close()
 		return model{}, fmt.Errorf("decode embedded image: %w", err)
 	}
-	return model{pic: pic, initCmd: pic.SetImage(img)}, nil
+	return model{session: session, pic: pic, initCmd: pic.SetImage(img)}, nil
 }
 
 func (m model) Init() tea.Cmd {
@@ -46,6 +52,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.HelpKeys().Quit):
+			m.session.Close()
 			return m, tea.Sequence(m.pic.Close(), tea.Quit)
 		}
 
@@ -62,7 +69,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, c)
 	}
 
-	if cap, ok := msg.(picture.KittyCapabilityMsg); ok && cap.Capability == picture.KittyCapabilitySupported && m.pic.Mode() != picture.PictureKitty {
+	if event, ok := msg.(picture.TerminalSessionMsg); ok && event.Session == m.session && m.session.Snapshot().Kitty == picture.KittyCapabilitySupported && m.pic.Mode() != picture.PictureKitty {
 		cmds = append(cmds, m.pic.SetMode(picture.PictureKitty))
 	}
 	return m, tea.Batch(cmds...)
@@ -83,7 +90,7 @@ func (m model) View() tea.View {
 }
 
 func (m model) HelpKeys() demohelp.Keys {
-	return demohelp.New(false, picture.KittySupported() == picture.KittyCapabilitySupported)
+	return demohelp.New(false, m.session.Snapshot().Kitty == picture.KittyCapabilitySupported)
 }
 
 func main() {
@@ -92,7 +99,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	defer m.pic.Close()
+	defer m.session.Close()
+	defer func() { _ = m.pic.Close() }()
 	if err := demohelp.Run(m, "Embedded image"); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)

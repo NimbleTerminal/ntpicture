@@ -2,72 +2,40 @@
 
 ## Unreleased
 
-- Add `Composite.Positions` to export playback positions (clip identity,
-  frame, remaining delay, finished state) without the base or composed image.
-  `NewComposite`, `NewCompositeImmutable` and `WithPositions` accept a saved
-  `Positions` or a `*Composite` through the new `PositionSource` interface.
-- Add `animation.Seekable` (`Frame`, `Frames`, `SeekFrame`), implemented by
-  `*Player`. `Controller.Seek` now seeks any seekable source, so host
-  transforms that wrap a player keep frame seeking.
-- Report the last committed playback position in `Status.Presented` and
-  `Status.PresentedPlayer`, with the underlying `Picture` status, so hosts can
-  export the displayed frame and match controls to it. Superseded or rejected
-  submissions never become presented.
-- Add `Picture.SetBackground`, `Fit`, `SetFit`, `Anchor`, and `SetAnchor` (plus
-  matching `playback.Controller` methods) to query and update background color,
-  fit mode, and crop anchor at runtime while retaining the current front until
-  the re-prepared frame is ready.
+Initial extraction of NTCharts and Gloss terminal image rendering into
+`nimbleterminal.dev/ntpicture`.
 
-- Add `Picture.Submit` to validate and apply an image with its cell layout,
-  mode and cell pixel geometry as one generation, with an `Exact` option that
-  rejects mis-sized rasters instead of resampling them. Add
-  `Options.HostGeometry` so hosts that manage terminal geometry can keep
-  `Update` from reacting to terminal events.
+- `Picture`, a Bubble Tea v2 component that keeps the displayed image on screen
+  while preparing a replacement, coalesces rapid updates, rejects stale results,
+  and cleans up placements. `Submit` validates and applies an image, cell
+  layout, mode, and cell pixel geometry together; `SetViewport` and
+  `ResetViewport` clip prepared Kitty or glyph cells without re-encoding;
+  `RasterGeometry` and `SetResolution` let producers target scaled Kitty pixel
+  rasters while preserving cell footprint and camera aspect; `Keep` freezes the
+  last presented frame on exit.
+- `TerminalSession` (`NewTerminalSession`, `TerminalOptions`,
+  `TerminalSessionMsg`) for per-connection Kitty and shared-memory capability
+  discovery, cell-pixel geometry tracking, and `NTPICTURE_KITTY` /
+  `NTPICTURE_TMUX_PASSTHROUGH` environment overrides without import-time side
+  effects.
+- Kitty graphics transport with `StableID` streaming, PNG/RGBA/zlib direct
+  encodings, native POSIX and browser `ghosttyKittySharedMemory` shared memory,
+  and half-block ANSI glyph fallback (`GridImage` and `PictureGlyph`).
+- Static image decoders (`ntpicture/decoders`), bounded GIF and lazy
+  animated-WebP decoding (`ntpicture/animation`), and immutable `Composite` /
+  `Window` / `Positions` composition for multi-region animations.
+- Playback controllers (`playback.Controller` and `playback.Layers`):
+  deadline-paced playback, cell-aligned Kitty overlay planning and splicing over
+  a static composite base, shared clocks across repeated region keys, off-loop
+  `SetComposite` window cropping and position carry, `SetActive` suspension, and
+  `Snapshot` export of the committed frame.
+- `ntpicture/legacy` compatibility subpackage (`Model`, `NewModel`,
+  `NewModelWithConfig`, `DefaultTerminalSession`, `DetectKittyCapability`,
+  `QueryKittyCapability`, `ForceKittyCapability`, `SetTmuxPassthrough`,
+  `TmuxPassthrough`) isolating the low-level NTCharts surface and process-wide
+  capability helpers from the root package.
+- Examples (still, simple, grid, animation, and live framebuffer) built for
+  native terminals and the browser via booba, plus task-based QA
+  (`golangci-lint`, race tests, fuzz targets, and `govulncheck`).
 
-- Restore ordinary `FitCover` preparation speed by using the separable scaler
-  while the circumscribed rectangle is at most four times the visible target,
-  keeping bounded allocation for extreme aspect mismatches.
-
-- Add a live framebuffer demo that streams a procedurally rendered scene with
-  stable Kitty IDs, an explicit terminal session, paced off-loop rendering with
-  stale-result rejection, viewport panning, resolution steps, pause, keep-screen
-  exit, and matching booba browser controls.
-
-- Default playback to stable Kitty IDs with a fresh-ID opt-out; carry frame
-  deadlines across rendering to avoid cumulative playback slowdown.
-- Report Kitty capability resolution as a Bubble Tea message and ignore invalid
-  terminal cell-size reports without dropping pending images.
-- Avoid resending direct Kitty fronts on keep-screen exit unless a pending
-  stable-ID transmission requires restoring the retained frame.
-
-- Add opt-in stable-ID Kitty streaming to avoid placeholder redraws each frame;
-  preserve cancellation, resize cleanup, and keep-screen restoration.
-
-- Add Gloss-style keep-screen exit for pictures and playback, with a Q control
-  and browser help button in the animation demo.
-
-- Add bounded GIF and lazy animated-WebP decoding from Gloss, immutable players,
-  frame seeking, loop/disposal handling, and indexed lazy errors.
-- Add cancellable Bubble Tea playback through Picture and a GIF/WebP demo with
-  booba play/pause and frame controls.
-
-- Update native Bubble Tea to 2.1.0, example Bubbles to 2.2.1, and rendering
-  dependencies; retain the tested WASM fork for browser compatibility.
-
-- Publish demo help bindings as booba action buttons for browser controls.
-
-- Port the NTCharts embedded-image and interactive grid examples to `Picture`.
-- Add an isolated examples module, a booba browser demo site, Pages deployment,
-  native/WASM demo builds, runtime smoke checks, and generated dependency notices.
-
-- Extract NTCharts image rendering, Kitty transport, glyph fallback, static
-  decoders, and native/browser shared-memory support into `nimbleterminal.dev/ntpicture`.
-- Add `Picture` to retain displayed content while preparing replacements,
-  reject stale results, and manage placement cleanup.
-- Add a still-image example and compatibility checks for local consumers and
-  the bundled booba browser registry.
-- Establish Task-based QA, Linux/macOS CI, native/WASM vulnerability scans,
-  and weekly dependency updates.
-
-Compositor/session extraction and consumer migration remain planned; see
-[MIGRATION.md](./MIGRATION.md).
+Consumer migration is tracked in [MIGRATION.md](./MIGRATION.md).

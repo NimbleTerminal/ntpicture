@@ -167,14 +167,18 @@ func (c *Controller) submit(source animation.Source) tea.Cmd {
 		c.presented, c.submitted = nil, nil
 		return c.pic.SetImage(nil)
 	}
-	cmd := c.pic.SetImageImmutable(source.Image())
-	if s := c.pic.Status(); s.Err != nil {
-		// A rejected submission reverts Picture to its front (or clears it).
+	img := source.Image()
+	cmd := c.pic.SetImageImmutable(img)
+	s := c.pic.Status()
+	if !validImage(img) {
+		// A rejected image reverts Picture to its front (or clears it).
 		c.submitted = nil
 		if c.clearOnReplace {
 			c.presented = nil
 		}
 	} else {
+		// Even if schedule() reported a transient geometry or ID error,
+		// Picture retained img as its current source for later recovery.
 		c.submitted = &submission{s.Generation, source}
 	}
 	return cmd
@@ -238,12 +242,16 @@ func (c *Controller) SetTerminal(kitty bool, width, height int) tea.Cmd {
 func (c *Controller) SetMode(mode picture.PictureMode) tea.Cmd {
 	return c.presentation(c.pic.SetMode(mode))
 }
+
+// SetVisible hides or shows the picture. Hiding cancels pending work (including
+// any in-flight or queued Seek or Restart) and clears terminal placements while
+// retaining the current source position. Seeking or restarting while already
+// hidden queues the operation to run when SetVisible(true) is called.
 func (c *Controller) SetVisible(visible bool) tea.Cmd {
 	c.visible = visible
 	if !visible {
-		c.pending = nil
-		c.restart = false
 		c.cancel()
+		c.pending, c.restart = nil, false
 	}
 	return tea.Batch(c.pic.SetVisible(visible), c.schedule())
 }
@@ -330,9 +338,18 @@ func (c *Controller) schedule() tea.Cmd {
 	}
 }
 func (c *Controller) Update(msg tea.Msg) tea.Cmd {
+	prev := c.pic.Status()
 	cmds := []tea.Cmd{c.pic.Update(msg)}
 	c.promote()
-	if c.pic.Status().Err == nil {
+	now := c.pic.Status()
+	if prev.Busy && now.Generation > prev.Generation && now.Err != nil {
+		// An async preparation failure reverted Picture to its front (or cleared it).
+		c.submitted = nil
+		if c.clearOnReplace {
+			c.presented = nil
+		}
+	}
+	if now.Err == nil {
 		c.presentationErr = nil
 	}
 	switch m := msg.(type) {
