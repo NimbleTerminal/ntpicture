@@ -1,11 +1,16 @@
 package playback
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
+	"io"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -668,5 +673,370 @@ func TestControllerHiddenRepeatSetVisiblePreservesQueuedSeekAndPostCloseGuards(t
 	drive(t, cSess, cSess.Keep())
 	if !cSess.Closed() {
 		t.Fatal("expected Closed() to report true after Keep()")
+	}
+}
+
+func distinctFramePlayer(t *testing.T) *animation.Player {
+	t.Helper()
+	f1 := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	f1.SetRGBA(0, 0, color.RGBA{G: 255, A: 255})
+	f2 := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	f2.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	f3 := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	f3.SetRGBA(0, 0, color.RGBA{B: 255, A: 255})
+	p, err := animation.NewPlayer(&animation.Clip{
+		Bounds:    f1.Bounds(),
+		LoopCount: -1,
+		Frames: []animation.ClipFrame{
+			{Image: f1, Delay: 5 * time.Millisecond},
+			{Image: f2, Delay: 5 * time.Millisecond},
+			{Image: f3, Delay: 5 * time.Millisecond},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func collectRawOutput(t *testing.T, c *Controller, cmd tea.Cmd) string {
+	t.Helper()
+	var buf strings.Builder
+	var run func(tea.Cmd)
+	run = func(cur tea.Cmd) {
+		if cur == nil {
+			return
+		}
+		msg := cur()
+		if msg == nil {
+			return
+		}
+		if raw, ok := msg.(tea.RawMsg); ok {
+			fmt.Fprint(&buf, raw.Msg)
+		}
+		v := reflect.ValueOf(msg)
+		if v.Kind() == reflect.Slice {
+			for i := 0; i < v.Len(); i++ {
+				run(v.Index(i).Interface().(tea.Cmd))
+			}
+			return
+		}
+		run(c.Update(msg))
+	}
+	run(cmd)
+	return buf.String()
+}
+
+func TestControllerStopPreservesCommittedFrameAndCancelsAllPendingWork(t *testing.T) {
+	t.Run("CancelsWaitingTimerAndQueuedSeekOrRestart", func(t *testing.T) {
+		c := New(distinctFramePlayer(t), Options{})
+		c.Pause(true)
+		c.SetSize(2, 2)
+		c.SetTerminal(true, 8, 16)
+		drive(t, c, c.Init())
+		committedView := c.View()
+		committedPlayer := c.Status().PresentedPlayer
+		if committedPlayer == nil || committedPlayer.Frame() != 1 || committedView == "" {
+			t.Fatalf("unexpected initial status: %+v", c.Status())
+		}
+
+		// Start a long timer, then Stop.
+		c.wait = func(ctx context.Context, _ time.Duration) bool { return wait(ctx, time.Hour) }
+		timerCmd := c.Pause(false)
+		done := make(chan tea.Msg, 1)
+		go func() { done <- timerCmd() }()
+		drive(t, c, c.Stop())
+		select {
+		case msg := <-done:
+			drive(t, c, c.Update(msg))
+		case <-time.After(time.Second):
+			t.Fatal("Stop did not cancel waiting timer")
+		}
+
+		// Queue a seek and a coalesced second seek, then Stop before the seek worker delivers.
+		c.wait = func(context.Context, time.Duration) bool { return true }
+		seek1 := c.Seek(2)
+		_ = c.Seek(3) // Queues c.pending = &3 while seek1 is in flight.
+		drive(t, c, c.Stop())
+		// Delivering the cancelled seek1 result must NOT schedule the queued seek to frame 3.
+		drive(t, c, c.Update(seek1()))
+		st := c.Status()
+		if st.Busy || st.Picture.Busy || !st.Paused || st.PresentedPlayer != committedPlayer || st.Player != committedPlayer || c.View() != committedView {
+			t.Fatalf("Stop did not clear queued seek or preserve frame 1: %+v", st)
+		}
+
+		// Queue a Restart while a seek is in flight, then Stop.
+		seek2 := c.Seek(2)
+		_ = c.Restart()
+		drive(t, c, c.Stop())
+		drive(t, c, c.Update(seek2()))
+		st = c.Status()
+		if st.Busy || st.Picture.Busy || st.PresentedPlayer != committedPlayer || st.Player != committedPlayer {
+			t.Fatalf("Stop did not clear queued restart: %+v", st)
+		}
+		drive(t, c, c.Close())
+	})
+
+	for _, fresh := range []bool{false, true} {
+		for _, medium := range []picture.KittyMedium{picture.KittyMediumDirect, picture.KittyMediumSharedMemory} {
+			t.Run(fmt.Sprintf("PictureBoundaries/fresh=%v/medium=%v", fresh, medium), func(t *testing.T) {
+				// Boundary A: Stop while Picture preparation is in flight after composition completed.
+				c := New(distinctFramePlayer(t), Options{
+					FreshIDs: fresh,
+					Wait:     func(context.Context, time.Duration) bool { return true },
+					Picture: picture.Options{
+						RetireDelay: -1,
+						Render:      picture.Config{KittyMedium: medium},
+					},
+				})
+				c.Pause(true)
+				c.SetSize(2, 2)
+				c.SetTerminal(true, 8, 16)
+				drive(t, c, c.Init())
+				view1 := c.View()
+				player1 := c.Status().PresentedPlayer
+
+				seekCmd := c.Seek(2)
+				seekResult := seekCmd()
+				// Update(seekResult) advances c.player to frame 2 and returns Picture's prepare cmd.
+				picPrepareCmd := c.Update(seekResult)
+				if c.Status().Player.Frame() != 2 || c.Status().PresentedPlayer.Frame() != 1 {
+					t.Fatalf("expected Player=2 and PresentedPlayer=1 before commit, got %+v", c.Status())
+				}
+				// Stop before picPrepareCmd runs: must rewind Player/Source to PresentedPlayer (frame 1).
+				drive(t, c, c.Stop())
+				drive(t, c, picPrepareCmd)
+				st := c.Status()
+				if st.Busy || st.Picture.Busy || st.PresentedPlayer != player1 || st.Player != player1 || st.Source != player1 || c.View() != view1 {
+					t.Fatalf("Stop during Picture prepare did not preserve frame 1: %+v", st)
+				}
+
+				// Boundary B: Stop after Picture transmission was accepted (post-step0).
+				seekCmd2 := c.Seek(2)
+				picPrepareCmd2 := c.Update(seekCmd2())
+				// Execute Picture prepare worker to get picturePrepared, then pass to Update to get transmission sequence.
+				var seqCmd tea.Cmd
+				var stepOnce func(tea.Cmd)
+				stepOnce = func(cur tea.Cmd) {
+					if cur == nil {
+						return
+					}
+					msg := cur()
+					if msg == nil {
+						return
+					}
+					v := reflect.ValueOf(msg)
+					if v.Kind() == reflect.Slice {
+						for i := 0; i < v.Len(); i++ {
+							stepOnce(v.Index(i).Interface().(tea.Cmd))
+						}
+						return
+					}
+					if next := c.Update(msg); next != nil {
+						seqCmd = next
+					}
+				}
+				stepOnce(picPrepareCmd2)
+				var txSeq reflect.Value
+				findSequence := func(cur tea.Cmd) {
+					if cur == nil {
+						return
+					}
+					msg := cur()
+					if msg == nil {
+						return
+					}
+					v := reflect.ValueOf(msg)
+					if v.Kind() == reflect.Slice {
+						txSeq = v
+					}
+				}
+				findSequence(seqCmd)
+				// Step 0 accepts the raw output for frame 2.
+				if got := txSeq.Index(0).Interface().(tea.Cmd)(); got == nil {
+					t.Fatal("expected step 0 to accept frame 2 transmission")
+				}
+				stopCmd := c.Stop()
+				// Complete step 1 and Stop's command.
+				raw := collectRawOutput(t, c, txSeq.Index(1).Interface().(tea.Cmd))
+				raw += collectRawOutput(t, c, stopCmd)
+				if !fresh && (!strings.Contains(raw, "a=T") || strings.Contains(raw, "a=d")) {
+					t.Fatalf("expected stable-ID Stop after accepted output to restore frame 1 without deleting ID: %q", raw)
+				}
+				if fresh && !strings.Contains(raw, "a=d") {
+					t.Fatalf("expected fresh-ID Stop after accepted output to delete cancelled ID: %q", raw)
+				}
+				st = c.Status()
+				if st.PresentedPlayer != player1 || st.Player != player1 || c.View() != view1 {
+					t.Fatalf("post-step0 Stop did not preserve frame 1: %+v", st)
+				}
+
+				// Playback can resume after Stop via Pause(false), Seek, Restart, or SetPlayer.
+				drive(t, c, c.Seek(2))
+				if c.Status().PresentedPlayer.Frame() != 2 {
+					t.Fatalf("Seek after Stop failed: %+v", c.Status())
+				}
+				drive(t, c, c.Stop())
+				drive(t, c, c.Pause(false))
+				if !c.Status().Finished || c.Status().PresentedPlayer.Frame() != 3 {
+					t.Fatalf("Pause(false) after Stop did not finish at frame 3: %+v", c.Status())
+				}
+
+				// Stop before replacing source keeps frame 3 visible until replacement commits,
+				// and Close still deletes the retained image.
+				drive(t, c, c.Stop())
+				closeRaw := collectRawOutput(t, c, c.Close())
+				if !strings.Contains(closeRaw, "a=d") || c.View() != "" {
+					t.Fatalf("Close after Stop did not delete retained image: %q", closeRaw)
+				}
+			})
+		}
+	}
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+type quitScreenSwitchMsg struct{}
+
+type altScreenKeepModel struct {
+	ctrl       *Controller
+	altScreen  bool
+	switchKeep bool
+}
+
+func (m *altScreenKeepModel) Init() tea.Cmd {
+	return m.ctrl.Init()
+}
+
+func (m *altScreenKeepModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := m.ctrl.Update(msg)
+	switch msg.(type) {
+	case picture.PresentedMsg:
+		return m, tea.Batch(cmd, func() tea.Msg {
+			time.Sleep(25 * time.Millisecond)
+			return quitScreenSwitchMsg{}
+		})
+	case quitScreenSwitchMsg:
+		if m.switchKeep {
+			m.altScreen = false
+			return m, tea.Sequence(m.ctrl.KeepOnMainScreen(), tea.Quit)
+		}
+		return m, tea.Sequence(m.ctrl.Keep(), tea.Quit)
+	}
+	return m, cmd
+}
+
+func (m *altScreenKeepModel) View() tea.View {
+	v := tea.NewView(m.ctrl.View() + "\nstatus line\n")
+	v.AltScreen = m.altScreen
+	return v
+}
+
+func TestControllerKeepOnMainScreenBubbleTeaAltScreenSwitch(t *testing.T) {
+	// 1. Switching from AltScreen=true to AltScreen=false on exit with KeepOnMainScreen:
+	// the raw Kitty transfer (a=T, U=1) must appear AFTER ESC[?1049l on the wire,
+	// both with nil input and with a blocking input reader where shutdown's
+	// waitForReadLoop allows renderer ticker ticks to fire before stopRenderer.
+	for _, blockingInput := range []bool{false, true} {
+		t.Run(fmt.Sprintf("blockingInput=%v", blockingInput), func(t *testing.T) {
+			c := New(distinctFramePlayer(t), Options{
+				Picture: picture.Options{
+					HostGeometry: true,
+					RetireDelay:  -1,
+				},
+			})
+			c.Pause(true)
+			c.SetSize(4, 2)
+			c.SetTerminal(true, 8, 16)
+
+			var out syncBuffer
+			m := &altScreenKeepModel{
+				ctrl:       c,
+				altScreen:  true,
+				switchKeep: true,
+			}
+			opts := []tea.ProgramOption{
+				tea.WithOutput(&out),
+				tea.WithWindowSize(40, 12),
+			}
+			var pr *io.PipeReader
+			var pw *io.PipeWriter
+			if blockingInput {
+				pr, pw = io.Pipe()
+				defer func() {
+					_ = pw.Close()
+					_ = pr.Close()
+				}()
+				opts = append(opts, tea.WithInput(pr))
+			} else {
+				opts = append(opts, tea.WithInput(nil))
+			}
+			prog := tea.NewProgram(m, opts...)
+			if _, err := prog.Run(); err != nil {
+				t.Fatalf("Program.Run failed: %v", err)
+			}
+
+			wire := out.String()
+			enterAlt := strings.Index(wire, "\x1b[?1049h")
+			exitAlt := strings.LastIndex(wire, "\x1b[?1049l")
+			if enterAlt < 0 || exitAlt < 0 || exitAlt <= enterAlt {
+				t.Fatalf("expected enter and exit alt screen sequences in wire output; enter=%d exit=%d", enterAlt, exitAlt)
+			}
+			afterExit := wire[exitAlt+len("\x1b[?1049l"):]
+			if !strings.Contains(afterExit, "\U0010eeee") {
+				t.Fatalf("expected Kitty Unicode placeholders on main screen after ESC[?1049l, got %q", afterExit)
+			}
+			if !strings.Contains(afterExit, "\x1b_G") || !strings.Contains(afterExit, "a=T") || !strings.Contains(afterExit, "U=1") {
+				t.Fatalf("expected direct Kitty virtual placement transfer after ESC[?1049l, got %q", afterExit)
+			}
+			if strings.Contains(afterExit, "a=d") {
+				t.Fatalf("unexpected image deletion after ESC[?1049l: %q", afterExit)
+			}
+		})
+	}
+
+	// 2. Staying on the main screen (AltScreen=false) with Keep preserves the zero-retransmit path.
+	cMain := New(distinctFramePlayer(t), Options{
+		Picture: picture.Options{
+			HostGeometry: true,
+			RetireDelay:  -1,
+		},
+	})
+	cMain.Pause(true)
+	cMain.SetSize(4, 2)
+	cMain.SetTerminal(true, 8, 16)
+
+	var outMain syncBuffer
+	mMain := &altScreenKeepModel{
+		ctrl:       cMain,
+		altScreen:  false,
+		switchKeep: false,
+	}
+	progMain := tea.NewProgram(
+		mMain,
+		tea.WithInput(nil),
+		tea.WithOutput(&outMain),
+		tea.WithWindowSize(40, 12),
+	)
+	if _, err := progMain.Run(); err != nil {
+		t.Fatalf("Program.Run (main screen) failed: %v", err)
+	}
+	if got := strings.Count(outMain.String(), "a=T"); got != 1 {
+		t.Fatalf("expected exactly 1 Kitty transmission on main screen with Keep(), got %d", got)
 	}
 }

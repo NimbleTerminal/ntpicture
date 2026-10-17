@@ -2365,4 +2365,49 @@ func TestLayersUnchangedSetTerminalDoesNotResetPlayback(t *testing.T) {
 			t.Fatal("expected Layers.Closed() to report true after Keep()")
 		}
 	})
+
+	t.Run("StopAndKeepOnMainScreen", func(t *testing.T) {
+		l := NewLayers(comp, Options{
+			Wait:    func(context.Context, time.Duration) bool { return true },
+			Picture: picture.Options{RetireDelay: -1},
+		})
+		l.Pause(true)
+		l.SetSize(cols, rows)
+		l.SetTerminal(true, cw, ch)
+		driveLayers(t, l, l.Init())
+		view1 := l.View()
+		snap1 := l.Snapshot()
+		pres1 := l.Status().Presented
+		if view1 == "" || snap1 == nil || pres1 == nil {
+			t.Fatal("expected initial presented Layers state")
+		}
+
+		// Start a Restart, then Stop before the restart worker delivers.
+		restartCmd := l.Restart()
+		driveLayers(t, l, l.Stop())
+		driveLayers(t, l, l.Update(restartCmd()))
+		st := l.Status()
+		if st.Busy || !st.Paused || l.View() != view1 || !sameImage(l.Snapshot(), snap1) {
+			t.Fatalf("Layers.Stop did not cancel restart and preserve committed frame: %+v", st)
+		}
+
+		// KeepOnMainScreen retransmits base and presented overlays directly without deleting kept IDs.
+		var msgs []tea.Msg
+		driveLayersCollect(t, l, l.KeepOnMainScreen(), &msgs)
+		var raw strings.Builder
+		for _, m := range msgs {
+			if r, ok := m.(tea.RawMsg); ok {
+				fmt.Fprint(&raw, r.Msg)
+			}
+		}
+		if !strings.Contains(raw.String(), "a=T") || strings.Contains(raw.String(), "a=d") {
+			t.Fatalf("Layers.KeepOnMainScreen did not retransmit placements cleanly: %q", raw.String())
+		}
+		if l.View() != view1 || !sameImage(l.Snapshot(), snap1) || !l.Closed() {
+			t.Fatal("Layers.KeepOnMainScreen did not retain View and Snapshot")
+		}
+		if l.KeepOnMainScreen() != nil || l.Keep() != nil || l.Close() != nil || l.Stop() != nil {
+			t.Fatal("Layers.KeepOnMainScreen not final")
+		}
+	})
 }

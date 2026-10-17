@@ -135,6 +135,7 @@ type Picture struct {
 	retirementPending     bool
 	lifetime              context.Context
 	closeCancel           context.CancelFunc
+	restoreCancel         context.CancelFunc
 }
 
 type picturePlacement struct {
@@ -921,6 +922,7 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		if f.sharedMemory != nil && !j.placement.kittyShared.submit(f.Seq, f.sharedMemory) {
 			return p.failPreparedJob(j, errors.New("ntpicture: shared image was retired before transmission"))
 		}
+		p.cancelRestore()
 		j.outputDone = make(chan struct{})
 		if !j.placement.ownsID && j.placement.lease != nil {
 			j.placement.lease.setOutputDone(j.outputDone)
@@ -993,7 +995,15 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+func (p *Picture) cancelRestore() {
+	if p.restoreCancel != nil {
+		p.restoreCancel()
+		p.restoreCancel = nil
+	}
+}
+
 func (p *Picture) commit(j *pictureJob, format KittyFormat, medium KittyMedium) tea.Cmd {
+	p.cancelRestore()
 	var cleanup tea.Cmd
 	if old := p.front; old != nil {
 		if old.lease != nil && old.lease == j.placement.lease {
@@ -1092,6 +1102,7 @@ func (p *Picture) dispose(f *picturePlacement) tea.Cmd {
 	return f.delete
 }
 func (p *Picture) clearFront() tea.Cmd {
+	p.cancelRestore()
 	p.clearRetiredSHM()
 	cmd := p.dispose(p.front)
 	p.front = nil
@@ -1125,19 +1136,131 @@ func (p *Picture) View() string {
 	return p.renderViewport(Viewport{Width: p.cols, Height: p.rows})
 }
 
-// Keep permanently stops work while preserving the last presented View and
-// terminal image. Pending replacements and retired placements are discarded.
-// Run the returned command before quitting. Shared-memory fronts are sent
-// directly to survive buffer release; direct fronts need no retransmission
-// unless an accepted stable-ID replacement may have overwritten their pixels.
-// The host owns final layout and main-screen selection; an alternate screen
-// normally disappears on exit. Subsequent Keep, Close and setters are no-ops.
-// Keep cancels pending preparation. In StableID mode its command drains any
-// already-accepted transmission before restoring the last committed frame.
-func (p *Picture) Keep() tea.Cmd {
-	if p.closed {
+// Stop cancels pending preparation or transmission while preserving the last
+// committed View and terminal placement. Late results from cancelled work are
+// ignored. In StableID mode, if a cancelled replacement already began raw
+// terminal output, Stop's returned command drains that transmission and
+// restores the committed front's pixels. Unlike Keep or Close, Stop is not
+// final: Close still deletes the retained terminal placement, Keep or
+// KeepOnMainScreen still preserves it on exit, and subsequent setters can
+// submit new images or configuration changes.
+func (p *Picture) Stop() tea.Cmd {
+	if p == nil || p.closed {
 		return nil
 	}
+	p.cancelRestore()
+	p.generation++
+	p.dirty = false
+	p.err = nil
+	if p.front != nil {
+		p.img, p.imgID = p.front.image, p.front.imgID
+		p.front.generation = p.generation
+		p.presented = p.generation
+	} else {
+		p.img, p.imgID = nil, 0
+	}
+	var pending tea.Cmd
+	if p.job != nil {
+		p.job.cancel()
+		pending = p.dispose(p.job.placement)
+		p.job = nil
+	}
+	front := p.front
+	if front == nil || front.mode != PictureKitty || front.lease == nil {
+		return pending
+	}
+	outputDone := front.lease.loadOutputDone()
+	overwritten := front.lease.overwritten.Load()
+	if outputDone == nil && !overwritten {
+		return pending
+	}
+	cfg := front.cfg
+	cpw := max(1, int(float64(cfg.CellPixelWidth)*cfg.KittyResolutionFactor))
+	cph := max(1, int(float64(cfg.CellPixelHeight)*cfg.KittyResolutionFactor))
+	params := kittyPrepareParams{
+		seq:        1,
+		img:        front.image,
+		kittyZ:     cfg.KittyZ,
+		kittyID:    cfg.KittyID,
+		background: cfg.Background,
+		fit:        cfg.Fit,
+		anchor:     cfg.Anchor,
+		crop:       cfg.Crop,
+		format:     cfg.KittyFormat,
+		medium:     KittyMediumDirect,
+		cols:       front.cols,
+		rows:       front.rows,
+		cpw:        cpw,
+		cph:        cph,
+		rasterSize: front.rasterSize,
+		transport:  front.transport,
+		shared:     &kittySharedState{},
+	}
+	params.shared.begin(params.seq)
+	restoreCtx, restoreCancel := context.WithCancel(p.lifetime)
+	p.restoreCancel = restoreCancel
+	restore := func() tea.Msg {
+		defer restoreCancel()
+		if outputDone != nil {
+			select {
+			case <-outputDone:
+			case <-restoreCtx.Done():
+				return nil
+			}
+		}
+		if restoreCtx.Err() != nil || !front.active.Load() {
+			return nil
+		}
+		frame, ok := prepareKittyFrame(restoreCtx, params)
+		if !ok || frame.APC == "" || restoreCtx.Err() != nil || !front.active.Load() {
+			return nil
+		}
+		front.lease.outputMu.Lock()
+		if restoreCtx.Err() != nil || !front.active.Load() {
+			front.lease.outputMu.Unlock()
+			return nil
+		}
+		if front.lease.outputDone == nil {
+			front.lease.overwritten.Store(false)
+		}
+		front.lease.outputMu.Unlock()
+		return tea.RawMsg{Msg: frame.APC}
+	}
+	return tea.Sequence(pending, restore)
+}
+
+const keepScreenSwitchDelay = 35 * time.Millisecond
+
+// Keep permanently stops work while preserving the last presented View and
+// terminal image on the current screen. Pending replacements and retired
+// placements are discarded. Run the returned command before quitting.
+// Shared-memory fronts are sent directly to survive buffer release; direct
+// fronts need no retransmission unless an accepted stable-ID replacement may
+// have overwritten their pixels. When switching Bubble Tea's View().AltScreen
+// from true to false on exit, use KeepOnMainScreen instead so the retained
+// Kitty placement is recreated after leaving the alternate screen. Subsequent
+// Keep, KeepOnMainScreen, Close and setters are no-ops.
+func (p *Picture) Keep() tea.Cmd {
+	return p.keep(false)
+}
+
+// KeepOnMainScreen permanently stops work like Keep, but always retransmits and
+// recreates the retained Kitty placement directly so it survives a terminal
+// screen switch from the alternate screen (ESC[?1049l) to the main screen.
+//
+// In Bubble Tea v2, update model state so View().AltScreen is false and
+// View().Content includes p.View(), then return tea.Sequence(p.KeepOnMainScreen(), tea.Quit).
+// KeepOnMainScreen paces its raw Kitty transfer behind the renderer's screen
+// switch flush so the placement is registered on the main screen after ESC[?1049l.
+func (p *Picture) KeepOnMainScreen() tea.Cmd {
+	return p.keep(true)
+}
+
+func (p *Picture) keep(retransmit bool) tea.Cmd {
+	if p == nil || p.closed {
+		return nil
+	}
+	p.cancelRestore()
 	p.keptView = p.View()
 	front := p.front
 	p.front = nil // Close must never delete the kept terminal ID.
@@ -1151,9 +1274,10 @@ func (p *Picture) Keep() tea.Cmd {
 		outputDone = front.lease.loadOutputDone()
 		overwritten = front.lease.overwritten.Load()
 	}
-	if p.medium == KittyMediumDirect && outputDone == nil && !overwritten {
-		// The terminal already owns these pixels. Only shared-memory fronts or
-		// an accepted borrower of this ID need an exit-time retransmission.
+	if !retransmit && p.medium == KittyMediumDirect && outputDone == nil && !overwritten {
+		// The terminal already owns these pixels on the current screen. Only
+		// shared-memory fronts, an accepted borrower of this ID, or a screen
+		// switch need an exit-time retransmission.
 		front.kittyShared.release()
 		return cleanup
 	}
@@ -1183,6 +1307,7 @@ func (p *Picture) Keep() tea.Cmd {
 	}
 	params.shared.begin(params.seq)
 	generation := p.presented
+	startedAt := time.Now()
 	keep := func() tea.Msg {
 		// Drain accepted output before restoring the committed frame under an
 		// ID that a cancelled streaming replacement may already have updated.
@@ -1194,19 +1319,25 @@ func (p *Picture) Keep() tea.Cmd {
 		if !ok || frame.APC == "" {
 			return ErrorMsg{p, generation, errors.New("ntpicture: keep-screen preparation failed")}
 		}
+		if retransmit {
+			if rem := keepScreenSwitchDelay - time.Since(startedAt); rem > 0 {
+				time.Sleep(rem)
+			}
+		}
 		return tea.RawMsg{Msg: frame.APC}
 	}
 	return tea.Sequence(cleanup, keep)
 }
 
-// Close cancels work and releases producer resources immediately. After Keep
-// it is a no-op, including for the retained View. Run the
+// Close cancels work and releases producer resources immediately. After Keep or
+// KeepOnMainScreen it is a no-op, including for the retained View. Run the
 // returned command before removing the component or quitting to delete its
 // terminal placements. Already-accepted transmissions also carry late cleanup.
 func (p *Picture) Close() tea.Cmd {
-	if p.closed {
+	if p == nil || p.closed {
 		return nil
 	}
+	p.cancelRestore()
 	p.closed = true
 	p.dirty = false
 	p.img = nil

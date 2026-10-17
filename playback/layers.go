@@ -1083,11 +1083,64 @@ func (l *Layers) Snapshot() image.Image {
 	return snap
 }
 
+// Stop pauses playback and cancels pending layout, restart, composition, and
+// Picture preparation or transmission across the base picture and all overlays
+// while preserving the last committed View, Snapshot, and Status.Presented.
+// Unlike Keep or Close, Stop is not final: Close still deletes retained
+// terminal placements, Keep or KeepOnMainScreen still preserves them on exit,
+// and playback can resume or replace the source via Pause(false), Restart,
+// SetComposite, or SetImage.
+func (l *Layers) Stop() tea.Cmd {
+	if l == nil || l.closed {
+		return nil
+	}
+	l.paused = true
+	l.restartPending = false
+	l.cancelRestart()
+	if l.layoutJob != nil {
+		l.comp = l.layoutJob.prevComp
+		l.positions = l.layoutJob.prevPositions
+		l.cancelLayout()
+	}
+	l.err = nil
+	cmds := []tea.Cmd{l.base.Stop()}
+	if l.presentedLayout != l.layoutGen || l.basePending || l.layoutGen == 0 {
+		cmds = append(cmds, l.closeActiveOverlays())
+		for _, o := range l.retainedOverlays {
+			cmds = append(cmds, o.ctrl.Stop())
+		}
+		l.basePending = false
+		l.layoutGen = l.presentedLayout
+		l.baseTargetGen = l.base.Status().Picture.Presented
+		if l.presentedComp != nil {
+			l.comp = l.presentedComp
+			l.positions = l.presentedPositions()
+		} else if l.presentedLayout == 0 {
+			l.comp = nil
+			l.still = nil
+			l.positions = animation.Positions{}
+		}
+		l.invalidateSnapshot()
+	} else {
+		for _, o := range l.overlays {
+			cmds = append(cmds, o.ctrl.Stop())
+		}
+		for _, o := range l.retainedOverlays {
+			cmds = append(cmds, o.ctrl.Stop())
+		}
+		if l.presentedComp != nil {
+			l.comp = l.presentedComp
+			l.positions = l.presentedPositions()
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
 // Close cancels all pending work across the base picture and all overlays,
 // releases retained images, and returns terminal placement cleanup commands.
 // The host-owned TerminalSession is never closed.
 func (l *Layers) Close() tea.Cmd {
-	if l.closed {
+	if l == nil || l.closed {
 		return nil
 	}
 	l.closed = true
@@ -1104,11 +1157,25 @@ func (l *Layers) Close() tea.Cmd {
 
 // Keep permanently stops playback and pending preparation while preserving the
 // last presented View, Snapshot, and terminal placements across the base picture
-// and all presented overlays. Unpresented overlays are closed. Like Picture.Keep,
-// Keep is final and a subsequent Close is a no-op. The host-owned TerminalSession
-// is not closed.
+// and all presented overlays on the current screen. Unpresented overlays are
+// closed. When switching Bubble Tea's View().AltScreen from true to false on
+// exit, use KeepOnMainScreen instead so retained Kitty placements are recreated
+// after leaving the alternate screen. Like Picture.Keep, Keep is final and a
+// subsequent Close is a no-op. The host-owned TerminalSession is not closed.
 func (l *Layers) Keep() tea.Cmd {
-	if l.closed {
+	return l.keep(false)
+}
+
+// KeepOnMainScreen permanently stops playback like Keep, but always retransmits
+// and recreates the retained Kitty placements across the base picture and all
+// presented overlays so they survive a terminal screen switch from the
+// alternate screen (ESC[?1049l) to the main screen.
+func (l *Layers) KeepOnMainScreen() tea.Cmd {
+	return l.keep(true)
+}
+
+func (l *Layers) keep(retransmit bool) tea.Cmd {
+	if l == nil || l.closed {
 		return nil
 	}
 	l.restartPending = false
@@ -1118,11 +1185,17 @@ func (l *Layers) Keep() tea.Cmd {
 	l.retainedSnapshot = l.Snapshot()
 	l.retainedPresented = l.presentedSource()
 	l.closed = true
-	cmds := []tea.Cmd{l.base.Keep()}
+	keepCtrl := func(c *Controller) tea.Cmd {
+		if retransmit {
+			return c.KeepOnMainScreen()
+		}
+		return c.Keep()
+	}
+	cmds := []tea.Cmd{keepCtrl(l.base)}
 	if l.presentedLayout == l.layoutGen && !l.basePending && l.layoutGen > 0 {
 		for _, o := range l.retainedOverlays {
 			if l.retainedLayout == l.presentedLayout && o.presented() {
-				cmds = append(cmds, o.ctrl.Keep())
+				cmds = append(cmds, keepCtrl(o.ctrl))
 			} else {
 				cmds = append(cmds, o.ctrl.Close())
 			}
@@ -1130,7 +1203,7 @@ func (l *Layers) Keep() tea.Cmd {
 		l.retainedOverlays = nil
 		for _, o := range l.overlays {
 			if o.presented() {
-				cmds = append(cmds, o.ctrl.Keep())
+				cmds = append(cmds, keepCtrl(o.ctrl))
 			} else {
 				cmds = append(cmds, o.ctrl.Close())
 			}
@@ -1139,7 +1212,7 @@ func (l *Layers) Keep() tea.Cmd {
 	} else {
 		for _, o := range l.retainedOverlays {
 			if l.retainedLayout == l.presentedLayout && o.presented() {
-				cmds = append(cmds, o.ctrl.Keep())
+				cmds = append(cmds, keepCtrl(o.ctrl))
 			} else {
 				cmds = append(cmds, o.ctrl.Close())
 			}

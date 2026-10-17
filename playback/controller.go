@@ -481,20 +481,68 @@ func (c *Controller) Update(msg tea.Msg) tea.Cmd {
 	return tea.Batch(append(cmds, c.schedule())...)
 }
 
+// Stop pauses playback and cancels timers, composition, queued seeks/restarts,
+// and pending Picture preparation or transmission while preserving the last
+// committed View, Status.Presented, and PresentedPlayer. Late results from
+// cancelled composition or Picture jobs are ignored, and an already-accepted
+// stable-ID transmission is drained before restoring the committed frame's
+// pixels. Unlike Keep or Close, Stop is not final: Close still deletes the
+// retained terminal placement, Keep or KeepOnMainScreen still preserves it on
+// exit, and playback can resume or replace the retained source via Pause(false),
+// Restart, Seek, SetSource, or SetPlayer.
+func (c *Controller) Stop() tea.Cmd {
+	if c == nil || c.closed {
+		return nil
+	}
+	c.paused = true
+	c.cancel()
+	c.job = nil
+	c.pending = nil
+	c.restart = false
+	c.submitted = nil
+	c.err = nil
+	c.presentationErr = nil
+	c.setSource(c.presented)
+	return c.pic.Stop()
+}
+
 // Close cancels work, releases the clip, and returns Picture cleanup commands.
 func (c *Controller) Close() tea.Cmd {
+	if c == nil {
+		return nil
+	}
 	c.stop()
 	c.presented = nil
 	return c.pic.Close()
 }
 
 // Keep cancels playback and pending composition, releases the clip, and keeps
-// the last presented frame. Run its command before quitting; the host must
-// retain View in its final layout and choose the main screen to leave it there.
-// Like Close, Keep is final. A later Close does not delete the kept frame.
+// the last presented frame on the current screen. Run its command before
+// quitting; when switching Bubble Tea's View().AltScreen from true to false on
+// exit, use KeepOnMainScreen instead so the retained Kitty placement is
+// recreated after leaving the alternate screen. Like Close, Keep is final. A
+// later Close does not delete the kept frame.
 func (c *Controller) Keep() tea.Cmd {
+	if c == nil {
+		return nil
+	}
 	c.stop()
 	return c.pic.Keep()
+}
+
+// KeepOnMainScreen cancels playback and pending composition like Keep, but
+// always retransmits and recreates the retained Kitty placement directly so it
+// survives a terminal screen switch from the alternate screen (ESC[?1049l) to
+// the main screen.
+//
+// In Bubble Tea v2, update model state so View().AltScreen is false and
+// View().Content includes c.View(), then return tea.Sequence(c.KeepOnMainScreen(), tea.Quit).
+func (c *Controller) KeepOnMainScreen() tea.Cmd {
+	if c == nil {
+		return nil
+	}
+	c.stop()
+	return c.pic.KeepOnMainScreen()
 }
 
 func (c *Controller) stop() {
