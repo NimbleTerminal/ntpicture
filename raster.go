@@ -89,17 +89,33 @@ func (p *Picture) SetMaxRasterPixels(maxPixels int) tea.Cmd {
 	return p.changedConfig()
 }
 
+// StaleFrameMsg reports a frame SetImageFor dropped because the picture's
+// raster geometry changed while it was rendered. Geometry is the current
+// geometry to render for.
+type StaleFrameMsg struct {
+	Owner    *Picture
+	Geometry RasterGeometry
+}
+
+func (p *Picture) staleFrameCmd(current RasterGeometry) tea.Cmd {
+	return func() tea.Msg {
+		return StaleFrameMsg{Owner: p, Geometry: current}
+	}
+}
+
 // SetImageFor submits img only if g still matches p.RasterGeometry() (with
 // positive pixel dimensions when img is non-nil). If the picture's size, mode,
 // cell pixel dimensions, or resolution changed while img was being rendered,
-// the stale frame is dropped and SetImageFor returns nil without reporting an
-// error or cancelling in-flight work.
+// the stale frame is dropped without reporting an error or cancelling in-flight
+// work, and SetImageFor returns a command delivering StaleFrameMsg with the
+// current RasterGeometry.
 func (p *Picture) SetImageFor(img image.Image, g RasterGeometry) tea.Cmd {
-	if p.closed || g != p.RasterGeometry() {
+	if p == nil || p.closed {
 		return nil
 	}
-	if img != nil && (g.Pixels.X <= 0 || g.Pixels.Y <= 0) {
-		return nil
+	current := p.RasterGeometry()
+	if g != current || (img != nil && (g.Pixels.X <= 0 || g.Pixels.Y <= 0)) {
+		return p.staleFrameCmd(current)
 	}
 	return p.SetImage(img)
 }
@@ -107,11 +123,12 @@ func (p *Picture) SetImageFor(img image.Image, g RasterGeometry) tea.Cmd {
 // SetImageImmutableFor is like SetImageFor, but avoids a pixel copy with the
 // same immutability promise as SetImageImmutable.
 func (p *Picture) SetImageImmutableFor(img image.Image, g RasterGeometry) tea.Cmd {
-	if p.closed || g != p.RasterGeometry() {
+	if p == nil || p.closed {
 		return nil
 	}
-	if img != nil && (g.Pixels.X <= 0 || g.Pixels.Y <= 0) {
-		return nil
+	current := p.RasterGeometry()
+	if g != current || (img != nil && (g.Pixels.X <= 0 || g.Pixels.Y <= 0)) {
+		return p.staleFrameCmd(current)
 	}
 	return p.SetImageImmutable(img)
 }

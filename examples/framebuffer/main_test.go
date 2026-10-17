@@ -102,7 +102,19 @@ func TestStaleFrameRejectedAfterResize(t *testing.T) {
 	if second.geometry != d.m.pic.RasterGeometry() || second.geometry == first.geometry {
 		t.Fatalf("replacement render used stale geometry %+v", second.geometry)
 	}
-	d.deliver(second)
+	// If a frame with the current request ID carries stale geometry,
+	// SetImageImmutableFor drops it and emits StaleFrameMsg, scheduling a fresh render.
+	staleSameRequest := first
+	staleSameRequest.request = second.request
+	d.deliver(staleSameRequest)
+	if d.m.frames != 0 || d.m.pic.Status().Generation != generation {
+		t.Fatal("stale-geometry frame with current request was accepted")
+	}
+	third := d.takeFrame()
+	if third.geometry != d.m.pic.RasterGeometry() {
+		t.Fatalf("StaleFrameMsg recovery used wrong geometry %+v", third.geometry)
+	}
+	d.deliver(third)
 	// The driver presents synchronously, so the next render is already queued.
 	if d.m.frames != 1 || d.m.pic.Status().Generation == generation || d.m.pic.Status().Presented == 0 || len(d.frames) != 1 {
 		t.Fatal("fresh frame was not submitted and presented")

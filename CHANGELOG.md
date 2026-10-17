@@ -1,5 +1,12 @@
 # `ntpicture` CHANGELOG
 
+## Unreleased
+
+* `SetImageFor` and `SetImageImmutableFor` return a command delivering
+  `StaleFrameMsg` (with `Owner` and the current `RasterGeometry`) when a frame
+  is dropped because the picture's raster geometry changed while it was
+  rendered.
+
 ## v0.1.0 (2026-10-17)
 
 **First release of `ntpicture`!** [NimbleTerminal](https://nimbleterminal.com) is proud to share this terminal image rendering library, focusing on the [Kitty terminal graphics procotol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).

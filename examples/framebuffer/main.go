@@ -125,6 +125,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.awaiting = false
 			cmds = append(cmds, m.start())
 		}
+	case picture.StaleFrameMsg:
+		if v.Owner == m.pic {
+			m.awaiting = false
+			cmds = append(cmds, m.start())
+		}
 	case picture.ErrorMsg:
 		if v.Owner == m.pic && v.Generation >= m.submitted {
 			// Stop producing until a geometry, resolution, or playback change.
@@ -277,9 +282,10 @@ func (m *model) handleFrame(f frameMsg) tea.Cmd {
 	if f.err != nil {
 		return m.start()
 	}
+	before := m.pic.Status().Generation
 	cmd := m.pic.SetImageImmutableFor(f.img, f.geometry)
-	if cmd == nil {
-		return m.start()
+	if m.pic.Status().Generation == before {
+		return cmd
 	}
 	m.frames++
 	m.took = f.took

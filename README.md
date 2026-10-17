@@ -71,8 +71,10 @@ remembers only the latest request. `Options.ClearOnReplace` removes the old
 image immediately instead.
 
 `Status()` reports the current and last presented generation, busy state,
-errors, and the transport in use. `PresentedMsg` marks a committed frame, and
-`ErrorMsg` reports a failed preparation.
+errors, and the transport in use. `PresentedMsg` marks a committed frame,
+`StaleFrameMsg` reports a frame dropped by `SetImageFor` or
+`SetImageImmutableFor` after a geometry change, and `ErrorMsg` reports a failed
+preparation.
 
 ### Fit, crop, and viewport
 
@@ -101,7 +103,8 @@ scaling at all.
 - `SetResolution` (0–1] and `SetMaxRasterPixels` shrink the Kitty raster
   without changing its cell footprint or aspect.
 - `SetImageFor` and `SetImageImmutableFor` drop a frame that was rendered for a
-  geometry that has since changed.
+  geometry that has since changed and return a command delivering
+  `StaleFrameMsg` with the current `RasterGeometry`.
 - `Submit` applies an image and its geometry together, atomically. With
   `Exact: true`, it rejects any image that doesn't match the target pixel size
   instead of resampling it. QR codes use this.

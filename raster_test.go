@@ -218,6 +218,11 @@ func TestMaxRasterPixelsClampsKittyTargetAndPreservesAspect(t *testing.T) {
 }
 
 func TestSetImageForAndSetImageImmutableForDropStaleGeometry(t *testing.T) {
+	var nilPic *Picture
+	if nilPic.SetImageFor(nil, RasterGeometry{}) != nil || nilPic.SetImageImmutableFor(nil, RasterGeometry{}) != nil {
+		t.Fatal("expected nil Picture SetImageFor / SetImageImmutableFor to return nil")
+	}
+
 	p := rasterPicture(t)
 	g1 := p.RasterGeometry()
 	frame1 := image.NewRGBA(image.Rectangle{Max: g1.Pixels})
@@ -240,14 +245,29 @@ func TestSetImageForAndSetImageImmutableForDropStaleGeometry(t *testing.T) {
 	if inFlightJob == nil {
 		t.Fatal("expected resize to schedule re-preparation of retained front")
 	}
+	g2 := p.RasterGeometry()
 
 	staleFrame := image.NewRGBA(image.Rectangle{Max: g1.Pixels})
-	if got := p.SetImageImmutableFor(staleFrame, g1); got != nil {
-		t.Fatal("expected SetImageImmutableFor with stale geometry to return nil")
+	assertStale := func(t *testing.T, cmd tea.Cmd, wantGeom RasterGeometry) {
+		t.Helper()
+		if cmd == nil {
+			t.Fatal("expected non-nil StaleFrameMsg command when dropping stale frame")
+		}
+		msg := cmd()
+		stale, ok := msg.(StaleFrameMsg)
+		if !ok {
+			t.Fatalf("expected StaleFrameMsg, got %T (%+v)", msg, msg)
+		}
+		if stale.Owner != p || stale.Geometry != wantGeom {
+			t.Fatalf("StaleFrameMsg = %+v, want Owner=%p Geometry=%+v", stale, p, wantGeom)
+		}
+		if p.Update(msg) != nil {
+			t.Fatal("Picture.Update(StaleFrameMsg) must be a no-op")
+		}
 	}
-	if got := p.SetImageFor(staleFrame, g1); got != nil {
-		t.Fatal("expected SetImageFor with stale geometry to return nil")
-	}
+
+	assertStale(t, p.SetImageImmutableFor(staleFrame, g1), g2)
+	assertStale(t, p.SetImageFor(staleFrame, g1), g2)
 	if p.Status().Generation != genAfterResize || p.Status().Err != nil || p.job != inFlightJob {
 		t.Fatalf("stale SetImageFor disturbed picture state: status=%+v job=%v", p.Status(), p.job)
 	}
@@ -261,9 +281,29 @@ func TestSetImageForAndSetImageImmutableForDropStaleGeometry(t *testing.T) {
 			frame: kittyFrameMsg{ID: inFlightJob.placement.cfg.KittyID, Seq: 1, APC: "a", Grid: "g"},
 		}
 	})
-	g2 := p.RasterGeometry()
 	freshFrame := image.NewRGBA(image.Rectangle{Max: g2.Pixels})
-	if got := p.SetImageFor(freshFrame, g2); got == nil {
+	freshCmd := p.SetImageFor(freshFrame, g2)
+	if freshCmd == nil {
 		t.Fatal("expected SetImageFor with current geometry to succeed")
+	}
+	drivePicture(t, p, freshCmd)
+
+	// Mode, resolution, and zero-area changes also report the updated current geometry.
+	p.SetResolution(0.5)
+	gRes := p.RasterGeometry()
+	assertStale(t, p.SetImageImmutableFor(freshFrame, g2), gRes)
+
+	p.SetMode(PictureGlyph)
+	gGlyph := p.RasterGeometry()
+	assertStale(t, p.SetImageFor(freshFrame, gRes), gGlyph)
+
+	p.SetSize(0, 0)
+	gZero := p.RasterGeometry()
+	assertStale(t, p.SetImageImmutableFor(freshFrame, gZero), gZero)
+
+	// Closed picture returns nil rather than emitting StaleFrameMsg.
+	drivePicture(t, p, p.Close())
+	if p.SetImageFor(freshFrame, g2) != nil || p.SetImageImmutableFor(freshFrame, g2) != nil {
+		t.Fatal("expected closed Picture SetImageFor / SetImageImmutableFor to return nil")
 	}
 }

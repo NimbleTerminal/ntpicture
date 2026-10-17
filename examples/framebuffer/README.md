@@ -5,7 +5,7 @@ select **Live framebuffer** on the booba demo site (`?demo=framebuffer`).
 
 A rotating wireframe cube above a perspective floor is rendered off the Bubble
 Tea event loop into a fresh framebuffer for every frame. Each frame is submitted
-with `SetImageImmutable` and `FitFill` at exactly `RasterGeometry().Pixels`, so
+with `SetImageImmutableFor` and `FitFill` at `RasterGeometry().Pixels`, so
 no scaling or compositing happens during preparation. One explicit
 `TerminalSession` owns discovery; the picture uses `StableID`, so Kitty frames
 reuse the displayed image ID and Bubble Tea redraws nothing for the placeholder
@@ -33,7 +33,9 @@ picture's `RasterGeometry` and a request ID. Resize, resolution changes, mode
 changes, pause and shutdown increment the request and cancel the running
 render; its result is dropped when it returns, and a replacement render starts
 only then, so concurrency stays bounded. A result whose geometry no longer
-matches the picture is also dropped. Viewport changes never touch the producer.
+matches the picture is dropped by `SetImageImmutableFor`, which delivers
+`StaleFrameMsg` to schedule a fresh render. Viewport changes never touch the
+producer.
 A presentation error stops the producer until the next geometry, resolution or
 playback change; the status line shows the error meanwhile.
 
