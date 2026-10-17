@@ -105,6 +105,7 @@ func forceKittyCapability(c KittyCapability) {
 		if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
 			kittySharedAutoUnsupported.Store(true)
 		}
+		_ = kittySharedProbe.Swap(nil).Unlink()
 	case KittyCapabilitySupported:
 		if kittySharedAutoUnsupported.CompareAndSwap(true, false) {
 			kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnsupported), int32(KittyCapabilityUnknown))
@@ -117,6 +118,7 @@ func resetKittyProbeState() {
 	kittyProbed.Store(false)
 	kittySharedProbed.Store(false)
 	kittySharedAutoUnsupported.Store(false)
+	_ = kittySharedProbe.Swap(nil).Unlink()
 	kittyProbeMu.Unlock()
 }
 
@@ -261,7 +263,7 @@ func recordKittyResponse(ev uv.KittyGraphicsEvent) tea.Cmd {
 // was already resolved (by an earlier response or by ForceKittyCapability).
 func recordKittyTimeout() tea.Cmd {
 	changed := kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
-	recordKittySharedResponse(false)
+	kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
 	if changed {
 		return kittyCapabilityCommand(KittyCapabilityUnsupported)
 	}

@@ -26,14 +26,14 @@ func Create(size int, fill func([]byte) error) (obj *Object, err error) {
 	if !validRegistry(r) {
 		return nil, ErrUnsupported
 	}
-	release, err := reservePending(size, fill)
+	item, err := reservePending(size, fill)
 	if err != nil {
 		return nil, err
 	}
 	success := false
 	defer func() {
 		if !success {
-			release()
+			item.release()
 		}
 	}()
 	name := newName()
@@ -65,9 +65,22 @@ func Create(size int, fill func([]byte) error) (obj *Object, err error) {
 			}
 		}()
 		r.Call("delete", name)
-		release()
+		item.release()
 		return nil
 	}}
+	if r.Get("has").Type() == js.TypeFunction {
+		item.bind(obj, func() (consumed bool) {
+			if obj.Done() {
+				return true
+			}
+			defer func() {
+				if recover() != nil {
+					consumed = false
+				}
+			}()
+			return !r.Call("has", name).Bool()
+		})
+	}
 	success = true
 	return obj, nil
 }

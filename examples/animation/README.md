@@ -32,8 +32,8 @@ browser buttons.
 
 `Composite.Window` creates cropped/rescaled pixels and remapped regions for a
 smaller source. `Picture.SetViewport` only clips prepared cells; moving it does
-not retransmit a bitmap. See README's "Layered composite playback" and "Window
-versus Viewport" sections.
+not retransmit a bitmap. See the root README's "Composites and layers" and
+"Fit, crop, and viewport" sections.
 
 ## Scrolling mixed-image document
 

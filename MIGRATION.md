@@ -155,8 +155,8 @@ position carry and window cropping, committed-frame export (`Snapshot`), and
 multi-layer `Close`/`Keep` over a host-owned `TerminalSession`. Window
 crops/resamples a pixel source to reduce future composition/transmission;
 Viewport clips its prepared cell presentation without retransmitting pixels just
-for scrolling. See README's "Window versus Viewport" and "Layered composite
-playback" sections.
+for scrolling. See README's "Fit, crop, and viewport" and "Composites and
+layers" sections.
 
 Gloss still needs to migrate its typeset/composite consumers to `playback.Layers`
 and remove `internal/animate` and `internal/app/typeset_overlay.go`. Keep

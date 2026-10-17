@@ -1,27 +1,21 @@
 # `ntpicture` CHANGELOG
 
-## Unreleased
-
-* `SetImageFor` and `SetImageImmutableFor` return a command delivering
-  `StaleFrameMsg` (with `Owner` and the current `RasterGeometry`) when a frame
-  is dropped because the picture's raster geometry changed while it was
-  rendered.
-
 ## v0.1.0 (2026-10-17)
 
-**First release of `ntpicture`!** [NimbleTerminal](https://nimbleterminal.com) is proud to share this terminal image rendering library, focusing on the [Kitty terminal graphics procotol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
+**First release of `ntpicture`!** [NimbleTerminal](https://nimbleterminal.dev) is proud to share this terminal image rendering library, focusing on the [Kitty terminal graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
 
-We gained tremendous experience and quality code from the devlopment of [`ntcharts.Picture`](https://github.com/NimbleMarkets/ntcharts/blob/v2/examples/README.md#picture),
-especially the performance engineering of our [GPU Shader example](https://nimblemarkets.github.io/ntcharts/demos/shaders/).  It started at 4 frames-per-second native and is now >100 fps!    We also gained experience from our NTCharts media widgets, `ntcharts-svg` and `ncharts-pdf`, which layer over it.  Our [`gloss` tool](https://nimbleterminal.github.io/gloss/) surfaced animation, GIF/WebP decoding, and more advanced compositing features.   Finally, our [3D engine `nt3d`](https://nimbleterminal.github.io/nt3d/) and [`ntcharts3d` widget](https://nimblemarkets.github.io/ntcharts3d/) further pushed optimization and usability.
+We gained tremendous experience and quality code from the development of [`ntcharts.Picture`](https://github.com/NimbleMarkets/ntcharts/blob/v2/examples/README.md#picture),
+especially the performance engineering of our [GPU Shader example](https://nimblemarkets.github.io/ntcharts/demos/shaders/). It started at 4 frames-per-second native and is now >100 fps! We also gained experience from our NTCharts media widgets, `ntcharts-svg` and `ntcharts-pdf`, which layer over it. Our [`gloss` tool](https://nimbleterminal.github.io/gloss/) surfaced animation, GIF/WebP decoding, and more advanced compositing features. Finally, our [3D engine `nt3d`](https://nimbleterminal.github.io/nt3d/) and [`ntcharts3d` widget](https://nimblemarkets.github.io/ntcharts3d/) further pushed optimization and usability.
 
-The whole time we also focused on WASM compatibiilty and browser embedding with our [`booba` tooling](https://github.com/NimbleMarkets/booba) and contributions to [TinyGo](https://tinygo.org).   Our [`ntpicture` browser demo](https://nimbleterminal.github.io/ntpicture/) and all the NimbleTerminal and NimbleMarkets demos leverage this to help users understand the capabilities.
+The whole time we also focused on WASM compatibility and browser embedding with our [`go-booba` tooling](https://github.com/NimbleMarkets/go-booba) and contributions to [TinyGo](https://tinygo.org). Our [`ntpicture` browser demo](https://nimbleterminal.github.io/ntpicture/) and all the NimbleTerminal and NimbleMarkets demos leverage this to help users understand the capabilities.
 
 Here's what to expect:
 * `Picture`: a Bubble Tea v2 image component with Kitty graphics and
   half-block glyph fallback. It keeps the old image on screen while preparing
-  a new one, coalesces updates, rejects stale results, and cleans up
-  placements. Supports fit modes, crop, viewports, stable-ID streaming,
-  resolution control, atomic `Submit`, and `Stop` / `Keep` / `Close`.
+  a new one, coalesces updates, rejects stale results (`StaleFrameMsg`), and
+  cleans up placements. Supports fit modes, crop, viewports, stable-ID
+  streaming, resolution control, atomic `Submit`, and `Stop` / `Keep` /
+  `KeepOnMainScreen` / `Close`.
 * `TerminalSession`: per-connection discovery of Kitty, shared-memory, and
   cell-size support, with `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH`
   overrides. No import-time side effects.

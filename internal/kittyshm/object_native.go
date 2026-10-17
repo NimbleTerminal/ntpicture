@@ -16,14 +16,14 @@ func Supported() bool { return true }
 // Create fills an exclusive, owner-only POSIX shared-memory object. The mapping
 // and descriptor are closed before returning; the name stays valid for readers.
 func Create(size int, fill func([]byte) error) (*Object, error) {
-	release, err := reservePending(size, fill)
+	item, err := reservePending(size, fill)
 	if err != nil {
 		return nil, err
 	}
 	name := newName()
 	f, err := openSHM(name, true)
 	if err != nil {
-		release()
+		item.release()
 		return nil, err
 	}
 	success := false
@@ -31,7 +31,7 @@ func Create(size int, fill func([]byte) error) (*Object, error) {
 		_ = f.Close()
 		if !success {
 			_ = unlinkSHM(name)
-			release()
+			item.release()
 		}
 	}()
 	if err := f.Truncate(int64(size)); err != nil {
@@ -63,11 +63,24 @@ func Create(size int, fill func([]byte) error) (*Object, error) {
 	obj.unlink = func() error {
 		err := unlinkSHM(name)
 		if err == nil || os.IsNotExist(err) {
-			release()
+			item.release()
 			return nil
 		}
 		return err
 	}
+	item.bind(obj, func() bool {
+		if obj.Done() {
+			return true
+		}
+		rf, err := openSHM(name, false)
+		if os.IsNotExist(err) {
+			return true
+		}
+		if err == nil {
+			_ = rf.Close()
+		}
+		return false
+	})
 	var retireOnce sync.Once
 	obj.retire = func() { retireOnce.Do(func() { retireNative(obj, 10*time.Millisecond, 5*time.Second) }) }
 	success = true

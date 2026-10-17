@@ -170,6 +170,21 @@ func TestTerminalSessionSharedCapabilityIsScoped(t *testing.T) {
 	if b.Snapshot() != before {
 		t.Fatal("shared response crossed sessions")
 	}
+
+	// Timeout resolves Unknown -> Unsupported so direct fallback proceeds immediately,
+	// but keeps b.probe linked so a slow terminal can still read it and reply OK.
+	bHasProbe := b.probe != nil
+	b.Update(terminalSessionTick{b})
+	if b.Snapshot().SharedMemory != KittyCapabilityUnsupported {
+		t.Fatal("timeout did not resolve unknown shared memory to unsupported")
+	}
+	if bHasProbe && (b.probe == nil || b.probe.Done()) {
+		t.Fatal("timeout unlinked shared-memory probe before late terminal reply")
+	}
+	b.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: b.probeID + 1}, Payload: []byte("OK")})
+	if b.Snapshot().SharedMemory != KittyCapabilitySupported || b.probe != nil {
+		t.Fatalf("late OK after timeout did not upgrade SharedMemory or unlink probe: state=%+v probe=%v", b.Snapshot(), b.probe)
+	}
 }
 
 func TestTerminalSessionOverridesEnvironment(t *testing.T) {

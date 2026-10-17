@@ -301,8 +301,6 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 		if s.state.SharedMemory == KittyCapabilityUnknown {
 			s.state.SharedMemory = KittyCapabilityUnsupported
 		}
-		_ = s.probe.Unlink()
-		s.probe = nil
 	case kittyProbeTickMsg:
 		if s.legacy {
 			legacy = recordKittyTimeout()

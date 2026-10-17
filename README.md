@@ -153,11 +153,15 @@ ntpicture with other Kitty image producers, give all of them the same allocator.
 
 ## Transport
 
-Kitty output supports PNG, raw RGBA, and zlib encodings. It uses shared memory
-where available: POSIX shared memory natively (CGO is required on macOS) and
-the `globalThis.ghosttyKittySharedMemory` registry in the browser. If shared
-memory fails, output falls back to direct transmission. tmux passthrough is
-supported. Glyph output uses colored half blocks, two pixel rows per cell.
+Kitty output defaults to direct transmission (`KittyMediumDirect`) and supports
+PNG (`KittyFormatPNG`, default), raw RGBA (`KittyFormatRGBA`), and
+zlib-compressed (`KittyFormatZlib`) encodings. Setting
+`Config{KittyMedium: KittyMediumSharedMemory}` sends raw RGBA through shared
+memory where available: POSIX shared memory natively (CGO is required on macOS)
+and the `globalThis.ghosttyKittySharedMemory` registry in the browser. If
+shared memory is unavailable or fails, output falls back to direct transmission
+in the configured `KittyFormat`. tmux passthrough is supported. Glyph output
+uses colored half blocks, two pixel rows per cell.
 
 Source and prepared images are capped at 32 Mi pixels. Pending shared memory is
 capped at 64 MiB per process. These caps are safety bounds, not a memory
@@ -184,7 +188,9 @@ frames stay paletted, and WebP frames decode lazily. Default limits are
 128 MiB input, 32 Mi canvas pixels, 1,000 frames, and 64 MiB of GIF frame
 storage; `animation.Options.Limits` can lower them. Playback is
 deadline-paced, so a slow terminal slows playback instead of queuing a
-backlog. Errors appear in `ctrl.Status().Err`.
+backlog. `playback.New` and `playback.NewSource` stream with stable Kitty image
+IDs by default (`playback.Options.FreshIDs` opts out; `Options.Picture.StableID`
+is ignored). Errors appear in `ctrl.Status().Err`.
 
 ### Composites and layers
 
@@ -192,8 +198,11 @@ backlog. Errors appear in `ctrl.Status().Err`.
 image. Each region keeps its own timing. `Composite.Window` crops and rescales
 a composite into a new, smaller source; it's the pixel-level counterpart to a
 viewport. `playback.Layers` presents a composite under Kitty by sending the
-base once and updating only the cell-aligned animated windows. Under glyphs, it
-animates the flattened image.
+base once (forcing `FitFill` and a fresh Kitty ID on the base picture so a
+composite rendered at `RasterGeometry().Pixels` maps 1:1 onto the cell grid)
+and updating only the cell-aligned animated windows (which use stable IDs
+unless `Options.FreshIDs` is set). Under glyphs, it animates the flattened
+image.
 
 ```go
 source, err := animation.NewComposite(ctx, base, []animation.Region{

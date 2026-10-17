@@ -17,36 +17,91 @@ var ErrUnsupported = errors.New("kitty shared memory is unsupported")
 // store returns an error so picture can fall back to direct transmission.
 const maxPendingBytes = 64 << 20
 
+type pendingItem struct {
+	size     int
+	released atomic.Bool
+	consumed atomic.Pointer[func() bool]
+	obj      atomic.Pointer[Object]
+}
+
 var pending struct {
 	sync.Mutex
 	bytes int
+	items []*pendingItem
+}
+
+func reapConsumedPending() {
+	pending.Lock()
+	if len(pending.items) == 0 {
+		pending.Unlock()
+		return
+	}
+	snapshot := append([]*pendingItem(nil), pending.items...)
+	pending.Unlock()
+
+	for _, item := range snapshot {
+		if item.released.Load() {
+			continue
+		}
+		if fn := item.consumed.Load(); fn != nil && (*fn)() {
+			item.release()
+			if o := item.obj.Load(); o != nil {
+				o.done.Store(true)
+			}
+		}
+	}
+}
+
+func (item *pendingItem) release() {
+	if item == nil || !item.released.CompareAndSwap(false, true) {
+		return
+	}
+	pending.Lock()
+	pending.bytes -= item.size
+	for i, it := range pending.items {
+		if it == item {
+			last := len(pending.items) - 1
+			pending.items[i] = pending.items[last]
+			pending.items[last] = nil
+			pending.items = pending.items[:last]
+			break
+		}
+	}
+	pending.Unlock()
+}
+
+func (item *pendingItem) bind(obj *Object, consumed func() bool) {
+	if item == nil {
+		return
+	}
+	item.obj.Store(obj)
+	if consumed != nil {
+		item.consumed.Store(&consumed)
+	}
 }
 
 func pendingBytes() int {
+	reapConsumedPending()
 	pending.Lock()
 	defer pending.Unlock()
 	return pending.bytes
 }
 
-func reservePending(size int, fill func([]byte) error) (func(), error) {
+func reservePending(size int, fill func([]byte) error) (*pendingItem, error) {
 	if size <= 0 || size > maxPendingBytes || fill == nil {
 		return nil, fmt.Errorf("invalid shared-memory buffer size or fill")
 	}
+	reapConsumedPending()
 	pending.Lock()
 	if size > maxPendingBytes-pending.bytes {
 		pending.Unlock()
 		return nil, fmt.Errorf("shared-memory pending-byte limit reached")
 	}
+	item := &pendingItem{size: size}
 	pending.bytes += size
+	pending.items = append(pending.items, item)
 	pending.Unlock()
-	var releaseOnce sync.Once
-	return func() {
-		releaseOnce.Do(func() {
-			pending.Lock()
-			pending.bytes -= size
-			pending.Unlock()
-		})
-	}, nil
+	return item, nil
 }
 
 // Object is a named buffer. The terminal consumes it when it reads the APC;

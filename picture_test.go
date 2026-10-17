@@ -1166,3 +1166,149 @@ func TestSetTerminalSyncsOwnedSessionKittyCapabilityAndUpdateHandlesKittyCapabil
 		t.Fatalf("after SetTerminal(false, 10, 20): Mode=%v KittySupported=%v", p2.Mode(), p2.KittySupported())
 	}
 }
+
+func TestSubImageCropMatchesBetweenCopyingAndImmutableSubmissions(t *testing.T) {
+	// 4x4 subimage at (10,10)-(14,14): top-left 2x2 is red, rest is blue.
+	full := image.NewRGBA(image.Rect(0, 0, 20, 20))
+	red := color.RGBA{R: 255, A: 255}
+	blue := color.RGBA{B: 255, A: 255}
+	for y := 10; y < 14; y++ {
+		for x := 10; x < 14; x++ {
+			if x < 12 && y < 12 {
+				full.SetRGBA(x, y, red)
+			} else {
+				full.SetRGBA(x, y, blue)
+			}
+		}
+	}
+	sub := full.SubImage(image.Rect(10, 10, 14, 14))
+	crop := image.Rect(10, 10, 12, 12)
+
+	pImm := testPicture(false)
+	defer func() { drivePicture(t, pImm, pImm.Close()) }()
+	drivePicture(t, pImm, pImm.SetImageImmutableCropped(sub, crop))
+	wantView := pImm.View()
+	if wantView == "" {
+		t.Fatal("expected non-empty view from SetImageImmutableCropped")
+	}
+
+	pCopy := testPicture(false)
+	defer func() { drivePicture(t, pCopy, pCopy.Close()) }()
+	drivePicture(t, pCopy, pCopy.SetImageCropped(sub, crop))
+	if got := pCopy.View(); got != wantView {
+		t.Fatalf("SetImageCropped view = %q, want %q", got, wantView)
+	}
+
+	// SetImage followed by SetCrop in subimage coordinates must also match.
+	drivePicture(t, pCopy, pCopy.ResetCrop())
+	drivePicture(t, pCopy, pCopy.SetImage(sub))
+	drivePicture(t, pCopy, pCopy.SetCrop(crop))
+	if got := pCopy.View(); got != wantView {
+		t.Fatalf("SetImage + SetCrop view = %q, want %q", got, wantView)
+	}
+
+	// Non-immutable Submit with Exact: true and Crop in subimage coordinates must match.
+	pSub := New(Options{Render: Config{Fit: FitFill}, RetireDelay: -1})
+	defer func() { drivePicture(t, pSub, pSub.Close()) }()
+	drivePicture(t, pSub, pSub.Submit(Frame{
+		Image:      sub,
+		Cols:       2,
+		Rows:       1,
+		Mode:       PictureGlyph,
+		CellWidth:  1,
+		CellHeight: 1,
+		Crop:       crop,
+		Exact:      true,
+		Immutable:  false,
+	}))
+	if pSub.Status().Err != nil {
+		t.Fatalf("Submit(Exact: true, Immutable: false) failed: %v", pSub.Status().Err)
+	}
+	pSubImm := New(Options{Render: Config{Fit: FitFill}, RetireDelay: -1})
+	defer func() { drivePicture(t, pSubImm, pSubImm.Close()) }()
+	drivePicture(t, pSubImm, pSubImm.Submit(Frame{
+		Image:      sub,
+		Cols:       2,
+		Rows:       1,
+		Mode:       PictureGlyph,
+		CellWidth:  1,
+		CellHeight: 1,
+		Crop:       crop,
+		Exact:      true,
+		Immutable:  true,
+	}))
+	if got, want := pSub.View(), pSubImm.View(); got != want || got == "" {
+		t.Fatalf("Submit(Immutable:false) view = %q, want %q", got, want)
+	}
+}
+
+func TestLatchedErrorDoesNotUndoNoOpSetTerminalOrSetModeAuto(t *testing.T) {
+	p := New(Options{
+		AutoMode: true,
+		Render:   Config{CellPixelWidth: 10, CellPixelHeight: 20},
+	})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	p.SetSize(2, 2)
+	drivePicture(t, p, p.SetKittyCapability(KittyCapabilitySupported))
+	if p.Mode() != PictureKitty || !p.AutoMode() {
+		t.Fatalf("initial state: Mode=%v AutoMode=%v", p.Mode(), p.AutoMode())
+	}
+
+	// Latch an error via an invalid resolution without changing mode or cell size.
+	if cmd := p.SetResolution(2); cmd == nil || p.Status().Err == nil {
+		t.Fatal("expected SetResolution(2) to latch an error")
+	}
+
+	// No-op SetTerminal(true, 10, 20) must still clear AutoMode and pin session Kitty capability.
+	p.Session().setKitty(KittyCapabilityUnknown)
+	if cmd := p.SetTerminal(true, 10, 20); cmd != nil {
+		t.Fatalf("expected nil cmd from no-op SetTerminal, got %v", cmd)
+	}
+	if p.AutoMode() {
+		t.Fatal("latched error rolled AutoMode back to true on no-op SetTerminal")
+	}
+	if p.KittySupported() != KittyCapabilitySupported {
+		t.Fatalf("no-op SetTerminal after latched error skipped setTerminalKitty: got %v", p.KittySupported())
+	}
+
+	// No-op SetMode(PictureAuto) while p.err is still latched must re-enable AutoMode.
+	if cmd := p.SetMode(PictureAuto); cmd != nil {
+		t.Fatalf("expected nil cmd from no-op SetMode(PictureAuto), got %v", cmd)
+	}
+	if !p.AutoMode() {
+		t.Fatal("latched error rolled AutoMode back to false on no-op SetMode(PictureAuto)")
+	}
+}
+
+func TestStopRestoreCancelledImmediatelyWhenNewSubmissionStarts(t *testing.T) {
+	p := New(Options{
+		StableID:    true,
+		RetireDelay: -1,
+		Render:      Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyFormat: KittyFormatRGBA},
+	})
+	defer func() { drivePicture(t, p, p.Close()) }()
+	p.SetSize(2, 2)
+	p.SetTerminal(true, 1, 1)
+
+	imgA := testPixels(color.RGBA{R: 250, A: 255})
+	imgB := testPixels(color.RGBA{G: 250, A: 255})
+	imgC := testPixels(color.RGBA{B: 250, A: 255})
+	drivePicture(t, p, p.SetImage(imgA))
+
+	// Borrower B overwrites shared ID at step 0, then Stop() is called before step 1 finishes.
+	prepB := p.SetImage(imgB)()
+	seqB := reflect.ValueOf(p.Update(prepB)())
+	seqB.Index(0).Interface().(tea.Cmd)()
+	stopCmd := p.Stop()
+	seqB.Index(1).Interface().(tea.Cmd)()
+
+	// Before stopCmd's restore runs, submit C: changedWith must cancel the restore immediately.
+	cmdC := p.SetImage(imgC)
+	if got := output(drivePicture(t, p, stopCmd)); got != "" {
+		t.Fatalf("expected Stop restore to be cancelled by SetImage(C), but emitted %q", got)
+	}
+	msgsC := drivePicture(t, p, cmdC)
+	if output(msgsC) == "" || p.front.image == imgA {
+		t.Fatal("expected C to commit cleanly after cancelled Stop restore")
+	}
+}

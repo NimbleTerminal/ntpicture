@@ -367,8 +367,8 @@ func (p *Picture) SetImage(img image.Image) tea.Cmd {
 }
 func snapshotImage(img image.Image) *image.RGBA {
 	b := img.Bounds()
-	snapshot := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	draw.Draw(snapshot, snapshot.Bounds(), imageview.Unwrap(img), b.Min, draw.Src)
+	snapshot := image.NewRGBA(b)
+	draw.Draw(snapshot, b, imageview.Unwrap(img), b.Min, draw.Src)
 	return snapshot
 }
 
@@ -536,8 +536,8 @@ func (p *Picture) SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 	}
 	oldAuto := p.autoMode
 	p.autoMode = false
-	cmd := p.applyTerminal(kitty, cellWidth, cellHeight)
-	if p.err != nil {
+	cmd, ok := p.applyTerminalStatus(kitty, cellWidth, cellHeight)
+	if !ok {
 		p.autoMode = oldAuto
 		return cmd
 	}
@@ -581,11 +581,16 @@ func (p *Picture) SetKittyCapability(c KittyCapability) tea.Cmd {
 }
 
 func (p *Picture) applyTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
+	cmd, _ := p.applyTerminalStatus(kitty, cellWidth, cellHeight)
+	return cmd
+}
+
+func (p *Picture) applyTerminalStatus(kitty bool, cellWidth, cellHeight int) (tea.Cmd, bool) {
 	if p.closed {
-		return nil
+		return nil, false
 	}
 	if cellWidth <= 0 || cellHeight <= 0 {
-		return p.reportError(errors.New("ntpicture: invalid cell geometry"))
+		return p.reportError(errors.New("ntpicture: invalid cell geometry")), false
 	}
 	mode := PictureGlyph
 	if kitty {
@@ -596,7 +601,7 @@ func (p *Picture) applyTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 		if p.ownsSession && p.opts.Session != nil {
 			p.opts.Session.setCellSize(cellWidth, cellHeight)
 		}
-		return nil
+		return nil, true
 	}
 	oldMode, oldConfig := p.mode, *c
 	p.mode = mode
@@ -605,13 +610,13 @@ func (p *Picture) applyTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd {
 		if err := p.geometryError(); err != nil {
 			p.mode = oldMode
 			*c = oldConfig
-			return p.reportError(err)
+			return p.reportError(err), false
 		}
 	}
 	if p.ownsSession && p.opts.Session != nil {
 		p.opts.Session.setCellSize(cellWidth, cellHeight)
 	}
-	return p.changed()
+	return p.changed(), true
 }
 
 // SetMode uses the picture’s terminal session capability. Pass PictureAuto to
@@ -630,8 +635,8 @@ func (p *Picture) SetMode(mode PictureMode) tea.Cmd {
 			st := p.opts.Session.Snapshot()
 			cw, ch = st.CellPixelWidth, st.CellPixelHeight
 		}
-		cmd := p.applyTerminal(p.KittySupported() == KittyCapabilitySupported, cw, ch)
-		if p.err != nil {
+		cmd, ok := p.applyTerminalStatus(p.KittySupported() == KittyCapabilitySupported, cw, ch)
+		if !ok {
 			p.autoMode = oldAuto
 		}
 		return cmd
@@ -651,8 +656,8 @@ func (p *Picture) SetMode(mode PictureMode) tea.Cmd {
 	cw, ch := p.CellPixelSize()
 	oldAuto := p.autoMode
 	p.autoMode = false
-	cmd := p.applyTerminal(mode == PictureKitty, cw, ch)
-	if p.err != nil {
+	cmd, ok := p.applyTerminalStatus(mode == PictureKitty, cw, ch)
+	if !ok {
 		p.autoMode = oldAuto
 	}
 	return cmd
@@ -695,6 +700,7 @@ func (p *Picture) changedConfig() tea.Cmd {
 }
 
 func (p *Picture) changedWith(fromConfig bool) tea.Cmd {
+	p.cancelRestore()
 	p.generation++
 	p.err = nil
 	p.dirty = true
@@ -953,8 +959,8 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			return tea.RawMsg{Msg: f.APC}
 		}, func() tea.Msg {
 			defer func() {
-				close(j.outputDone)
 				j.placement.lease.clearOutputDone(j.outputDone)
+				close(j.outputDone)
 			}()
 			// A Close/replacement can race with the raw output after acceptance.
 			// Cleanup survives removal of this Picture from the host's routing table.
@@ -1221,13 +1227,11 @@ func (p *Picture) Stop() tea.Cmd {
 			return nil
 		}
 		front.lease.outputMu.Lock()
-		if restoreCtx.Err() != nil || !front.active.Load() {
+		if restoreCtx.Err() != nil || !front.active.Load() || front.lease.outputDone != nil {
 			front.lease.outputMu.Unlock()
 			return nil
 		}
-		if front.lease.outputDone == nil {
-			front.lease.overwritten.Store(false)
-		}
+		front.lease.overwritten.Store(false)
 		front.lease.outputMu.Unlock()
 		return tea.RawMsg{Msg: frame.APC}
 	}

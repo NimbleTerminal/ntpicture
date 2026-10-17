@@ -219,3 +219,40 @@ func TestCreateIgnoresUmask(t *testing.T) {
 	}
 	_ = f.Close()
 }
+
+func TestConsumedLiveObjectReleasesPendingCapBeforeNextCreate(t *testing.T) {
+	// Reserve more than half of maxPendingBytes without calling Retire or Unlink,
+	// simulate terminal consumption (unlinkSHM), and verify the next >32 MiB Create
+	// reaps the consumed reservation instead of failing the 64 MiB cap.
+	const halfPlus = (maxPendingBytes / 2) + 1024
+	obj1, err := Create(halfPlus, func([]byte) error { return nil })
+	if err != nil {
+		t.Fatalf("first Create(%d): %v", halfPlus, err)
+	}
+	defer func() { _ = obj1.Unlink() }()
+
+	// While obj1 is still unconsumed, a second allocation of halfPlus must fail.
+	if _, err := Create(halfPlus, func([]byte) error { return nil }); err == nil {
+		t.Fatal("expected second Create to fail while first object is still unconsumed")
+	}
+
+	// Simulate the terminal reading and unlinking obj1 while it remains the live front.
+	if err := unlinkSHM(obj1.Name); err != nil {
+		t.Fatalf("terminal unlinkSHM: %v", err)
+	}
+
+	obj2, err := Create(halfPlus, func([]byte) error { return nil })
+	if err != nil {
+		t.Fatalf("second Create after terminal consumed obj1 failed: %v", err)
+	}
+	defer func() { _ = obj2.Unlink() }()
+	if !obj1.Done() {
+		t.Fatal("expected consumed obj1 to be marked Done()")
+	}
+	if err := obj2.Unlink(); err != nil {
+		t.Fatal(err)
+	}
+	if pendingBytes() != 0 {
+		t.Fatalf("pendingBytes() = %d, want 0", pendingBytes())
+	}
+}

@@ -121,8 +121,12 @@ func TestNativeSharedMemoryQuery(t *testing.T) {
 		t.Fatalf("query suppresses its reply: %q", apc)
 	}
 	recordKittyTimeout()
-	if !probe.Done() || kittySharedProbe.Load() != nil {
-		t.Fatal("unanswered probe object not released")
+	if sharedCap() != KittyCapabilityUnsupported || probe.Done() || kittySharedProbe.Load() != probe {
+		t.Fatal("timeout must fall back to unsupported while keeping probe linked for a late terminal read")
+	}
+	recordKittyResponse(sharedProbeReply("OK"))
+	if sharedCap() != KittyCapabilitySupported || !probe.Done() || kittySharedProbe.Load() != nil {
+		t.Fatal("late probe reply did not upgrade capability and release probe object")
 	}
 }
 

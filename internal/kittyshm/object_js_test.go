@@ -67,4 +67,17 @@ func TestBrowserObject(t *testing.T) {
 	if r.Get("size").Int() != 0 || !obj.Done() || pendingBytes() != 0 {
 		t.Fatal("entry or accounting leaked")
 	}
+
+	// Terminal deleting the live entry from the registry releases its pending reservation.
+	r2 := js.Global().Get("Map").New()
+	js.Global().Set("ghosttyKittySharedMemory", r2)
+	objA, err := Create(16, func([]byte) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = objA.Unlink() }()
+	r2.Call("delete", objA.Name)
+	if pendingBytes() != 0 || !objA.Done() {
+		t.Fatalf("consumed browser object kept reservation: pending=%d done=%v", pendingBytes(), objA.Done())
+	}
 }
