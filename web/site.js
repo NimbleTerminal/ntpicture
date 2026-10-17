@@ -18,6 +18,12 @@ document.title = `${title} · ntpicture`;
 const restart = new URL(location.href);
 restart.searchParams.set('demo', demo);
 document.querySelector('#restart').href = restart.href;
+const sourcePath = composite
+  ? 'blob/main/examples/animation/composite.go'
+  : scroll
+    ? 'blob/main/examples/animation/scroll.go'
+    : `tree/main/examples/${demo}`;
+document.querySelector('#source').href = `https://github.com/NimbleTerminal/ntpicture/${sourcePath}`;
 for (const link of document.querySelectorAll('[data-demo]')) {
   if (link.dataset.demo === (composite ? 'composite' : scroll ? 'scroll' : demo)) link.setAttribute('aria-current', 'page');
 }

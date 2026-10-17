@@ -12,8 +12,14 @@ for (const demo of ['still', 'simple', 'grid', 'animation', 'framebuffer']) {
   assert.ok(WebAssembly.validate(bytes), `${demo}: valid WASM`);
 }
 const html = await readFile('web/index.html', 'utf8');
+assert.ok(html.includes('id="source"'), 'demo source link present');
 for (const [, path] of html.matchAll(/(?:src|href)="([^"?#]+)"/g)) {
   if (/^(https?:|\.\/)/.test(path)) continue;
   await access(`web/${path}`);
 }
+for (const examplePath of [
+  'examples/still', 'examples/simple', 'examples/grid',
+  'examples/animation', 'examples/animation/composite.go',
+  'examples/animation/scroll.go', 'examples/framebuffer',
+]) await access(examplePath);
 console.log('Site links, runtime assets, and five WASM binaries checked.');
