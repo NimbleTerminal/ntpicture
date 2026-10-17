@@ -1,50 +1,32 @@
-# Changelog
+# `ntpicture` CHANGELOG
 
-## Unreleased
+## v0.1.0 (2026-10-17)
 
-Initial extraction of NTCharts and Gloss terminal image rendering into
-`nimbleterminal.dev/ntpicture`.
+**First release of `ntpicture`!** [NimbleTerminal](https://nimbleterminal.com) is proud to share this terminal image rendering library, focusing on the [Kitty terminal graphics procotol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
 
-- `Picture`, a Bubble Tea v2 component that keeps the displayed image on screen
-  while preparing a replacement, coalesces rapid updates, rejects stale results,
-  and cleans up placements. `Submit` and `SetImageFor` / `SetImageImmutableFor`
-  tie frames to target geometry; `SetCrop` / `ResetCrop` crop source pixel
-  regions before fitting; `SetViewport` and `ResetViewport` clip prepared Kitty
-  or glyph cells without re-encoding; `RasterGeometry`, `SetResolution`, and
-  `SetMaxRasterPixels` let producers target scaled and pixel-budgeted Kitty
-  rasters while preserving cell footprint and camera aspect; `AutoMode` and
-  `ToggleMode` manage automatic and manual glyph/Kitty switching; `Stop` cancels
-  pending work while retaining the committed frame; `Keep` and
-  `KeepOnMainScreen` freeze the last presented frame on exit (including across
-  alternate-to-main screen switches).
-- `TerminalSession` (`NewTerminalSession`, `TerminalOptions`,
-  `TerminalSessionMsg`, `SetCellSize`, `SetKittyCapability`) for per-connection
-  Kitty and shared-memory capability discovery, cell-pixel geometry tracking,
-  and `NTPICTURE_KITTY` / `NTPICTURE_TMUX_PASSTHROUGH` environment overrides
-  without import-time side effects. Standalone `Picture` instances own an
-  isolated session by default when `Options.Session` is nil.
-- Kitty graphics transport with `StableID` streaming, PNG/RGBA/zlib direct
-  encodings, native POSIX and browser `ghosttyKittySharedMemory` shared memory,
-  and half-block ANSI glyph fallback (`GridImage` and `PictureGlyph`).
-- Static image decoders (`ntpicture/decoders`), bounded GIF and lazy
-  animated-WebP decoding (`ntpicture/animation`), and immutable `Composite` /
-  `Window` / `Positions` composition for multi-region animations.
-- Playback controllers (`playback.Controller` and `playback.Layers`):
-  deadline-paced playback, cell-aligned Kitty overlay planning and splicing over
-  a static composite base, shared clocks across repeated region keys, off-loop
-  `SetComposite` window cropping and position carry, `SetActive` suspension,
-  `Snapshot` export of the committed frame, and a uniform presentation method
-  set (`Init`, `Update`, `View`, geometry/mode, `Viewport`, `SetVisible`,
-  `Stop`, `Keep`, `KeepOnMainScreen`, `Close`) shared with `Picture`.
-- `ntpicture/legacy` compatibility subpackage (`Model`, `NewModel`,
-  `NewModelWithConfig`, `DefaultTerminalSession`, `QueryKittySupport`,
-  `KittySupported`, `KittyEnvSignalled`, `KittyUnavailable`,
-  `ForceKittyCapability`, `SetTmuxPassthrough`, `RequestCellSize`,
-  `IsPictureMsg`) isolating the low-level NTCharts surface and process-wide
-  capability helpers from the root package.
-- Examples (still, simple, grid, animation with side-by-side, layered
-  `--composite`, and mixed-image `--scroll` modes, and live framebuffer) built
-  for native terminals and the browser via booba, plus task-based QA
-  (`golangci-lint`, race tests, fuzz targets, and `govulncheck`).
+We gained tremendous experience and quality code from the devlopment of [`ntcharts.Picture`](https://github.com/NimbleMarkets/ntcharts/blob/v2/examples/README.md#picture),
+especially the performance engineering of our [GPU Shader example](https://nimblemarkets.github.io/ntcharts/demos/shaders/).  It started at 4 frames-per-second native and is now >100 fps!    We also gained experience from our NTCharts media widgets, `ntcharts-svg` and `ncharts-pdf`, which layer over it.  Our [`gloss` tool](https://nimbleterminal.github.io/gloss/) surfaced animation, GIF/WebP decoding, and more advanced compositing features.   Finally, our [3D engine `nt3d`](https://nimbleterminal.github.io/nt3d/) and [`ntcharts3d` widget](https://nimblemarkets.github.io/ntcharts3d/) further pushed optimization and usability.
 
-Consumer migration is tracked in [MIGRATION.md](./MIGRATION.md).
+The whole time we also focused on WASM compatibiilty and browser embedding with our [`booba` tooling](https://github.com/NimbleMarkets/booba) and contributions to [TinyGo](https://tinygo.org).   Our [`ntpicture` browser demo](https://nimbleterminal.github.io/ntpicture/) and all the NimbleTerminal and NimbleMarkets demos leverage this to help users understand the capabilities.
+
+Here's what to expect:
+* `Picture`: a Bubble Tea v2 image component with Kitty graphics and
+  half-block glyph fallback. It keeps the old image on screen while preparing
+  a new one, coalesces updates, rejects stale results, and cleans up
+  placements. Supports fit modes, crop, viewports, stable-ID streaming,
+  resolution control, atomic `Submit`, and `Stop` / `Keep` / `Close`.
+* `TerminalSession`: per-connection discovery of Kitty, shared-memory, and
+  cell-size support, with `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH`
+  overrides. No import-time side effects.
+* Kitty transport: PNG, RGBA, and zlib encodings, plus native and browser
+  shared memory with direct fallback, and tmux passthrough.
+* Examples (still, simple, grid, animation, framebuffer) for native terminals
+  and the [browser demo](https://nimbleterminal.github.io/ntpicture/).
+
+* `package animation`: bounded GIF and lazy WebP decoding, and immutable composites
+  of several animated regions.
+* `package playback`: deadline-paced `Controller` and Kitty-overlay `Layers`, sharing
+  one presentation method set with `Picture`.
+* `package decoders`: optional static image format registration.
+* `package legacy`: adapters for users of the [NTCharts `picture.Model` API](https://pkg.go.dev/github.com/NimbleMarkets/ntcharts/v2@v2.8.0/picture) and process-wide capability helpers.
+  See [MIGRATION.md](./MIGRATION.md).
