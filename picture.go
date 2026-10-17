@@ -662,6 +662,7 @@ func (p *Picture) ToggleMode() tea.Cmd {
 	}
 	if p.mode == PictureGlyph {
 		if p.KittySupported() != KittyCapabilitySupported {
+			p.autoMode = false
 			return nil
 		}
 		return p.SetMode(PictureKitty)

@@ -934,12 +934,17 @@ func TestPictureOwnedSessionToggleModeAndSetters(t *testing.T) {
 	}
 	drivePicture(t, p, p.SetImage(testPixels(color.RGBA{R: 255, A: 255})))
 
-	// ToggleMode while Kitty is unsupported is a clean no-op without setting Status().Err.
+	// ToggleMode while Kitty is pending/unsupported is a clean no-op without
+	// setting Status().Err, and clears AutoMode so a late probe does not override manual input.
 	if cmd := p.ToggleMode(); cmd != nil {
 		t.Fatal("expected ToggleMode() to return nil when Kitty is unsupported")
 	}
-	if p.Status().Err != nil || p.Mode() != PictureGlyph || !p.AutoMode() {
-		t.Fatalf("ToggleMode() when unsupported mutated state: Err=%v Mode=%v AutoMode=%v", p.Status().Err, p.Mode(), p.AutoMode())
+	if p.Status().Err != nil || p.Mode() != PictureGlyph || p.AutoMode() {
+		t.Fatalf("ToggleMode() when unsupported/pending: Err=%v Mode=%v AutoMode=%v", p.Status().Err, p.Mode(), p.AutoMode())
+	}
+	drivePicture(t, p, p.SetMode(PictureAuto))
+	if !p.AutoMode() {
+		t.Fatal("SetMode(PictureAuto) did not restore AutoMode")
 	}
 
 	// SetCellSize updates cell pixel geometry without clearing AutoMode.

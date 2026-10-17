@@ -642,7 +642,7 @@ func (l *Layers) SetMode(mode picture.PictureMode) tea.Cmd {
 		return nil
 	}
 	if mode != picture.PictureAuto && mode == l.mode {
-		return nil
+		return l.base.SetMode(mode)
 	}
 	prevMode := l.mode
 	prevCW, prevCH := l.cw, l.ch
@@ -669,14 +669,15 @@ func (l *Layers) SetMode(mode picture.PictureMode) tea.Cmd {
 }
 
 // ToggleMode switches between PictureGlyph and PictureKitty when Kitty is
-// supported, without reporting an error when Kitty is unavailable.
+// supported, without reporting an error when Kitty is unavailable. Explicit
+// toggling disables AutoMode until SetMode(PictureAuto) is called.
 func (l *Layers) ToggleMode() tea.Cmd {
 	if l == nil || l.closed {
 		return nil
 	}
 	if l.mode == picture.PictureGlyph {
 		if l.KittySupported() != picture.KittyCapabilitySupported {
-			return nil
+			return l.base.SetMode(picture.PictureGlyph)
 		}
 		return l.SetMode(picture.PictureKitty)
 	}
