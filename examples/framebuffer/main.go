@@ -151,7 +151,7 @@ func (m *model) handleKey(press tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.keeping = true
 		m.stop()
 		m.session.Close()
-		return tea.Sequence(m.pic.Keep(), tea.Quit), true
+		return tea.Sequence(m.pic.KeepOnMainScreen(), tea.Quit), true
 	case key.Matches(press, keys.Quit):
 		m.stop()
 		m.session.Close()

@@ -21,6 +21,7 @@ type Keys struct {
 	animation                           bool
 	grid                                bool
 	framebuffer                         bool
+	scroll                              bool
 }
 
 func New(grid, kitty bool) Keys {
@@ -51,6 +52,23 @@ func Animation(paused bool) Keys {
 	return k
 }
 
+// Scroll describes the scrolling mixed-image document demo. Up/Down scroll the
+// document, Space pauses/resumes visible animations, Home jumps to the top,
+// g toggles glyph/Kitty once Kitty support is confirmed, Q keeps the visible
+// layout on the main screen, and q clears and quits.
+func Scroll(paused, kitty bool) Keys {
+	k := New(false, kitty)
+	k.scroll = true
+	label := "Pause"
+	if paused {
+		label = "Play"
+	}
+	k.Play = key.NewBinding(key.WithKeys("space"), key.WithHelp("space", label))
+	k.Restart = key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "Top"))
+	k.Keep = key.NewBinding(key.WithKeys("Q"), key.WithHelp("Q", "Keep screen & quit"))
+	return k
+}
+
 // Framebuffer describes the continuously rendered demo. Movement keys pan the
 // viewport. Resolution keys apply only while Kitty is selected, because glyph
 // output stays at two pixel rows per cell; the rendering toggle is advertised
@@ -76,6 +94,9 @@ func (k Keys) ShortHelp() []key.Binding {
 	if k.animation {
 		return []key.Binding{k.Play, k.Previous, k.Next, k.Restart, k.Keep}
 	}
+	if k.scroll {
+		return []key.Binding{k.Play, k.Up, k.Down, k.Restart, k.Toggle, k.Keep}
+	}
 	if k.framebuffer {
 		return []key.Binding{k.Play, k.Up, k.Down, k.Left, k.Right, k.Center, k.Softer, k.Sharper, k.Toggle, k.Keep}
 	}
@@ -85,19 +106,23 @@ func (k Keys) ShortHelp() []key.Binding {
 	return []key.Binding{k.Quit}
 }
 func (k Keys) FullHelp() [][]key.Binding {
-	if k.grid || k.animation || k.framebuffer {
+	if k.grid || k.animation || k.framebuffer || k.scroll {
 		return [][]key.Binding{k.ShortHelp(), {k.Quit}}
 	}
 	return [][]key.Binding{{k.Quit}}
 }
 func (k Keys) View() string {
 	h := help.New()
-	if k.animation || k.framebuffer {
+	if k.animation || k.framebuffer || k.scroll {
 		// Compact terminal labels; browser buttons retain the full descriptions.
 		for binding, label := range map[*key.Binding]string{
 			&k.Previous: "Prev", &k.Next: "Next", &k.Restart: "First", &k.Keep: "Keep screen",
 			&k.Center: "Center", &k.Softer: "Res-", &k.Sharper: "Res+",
 		} {
+			if k.scroll && binding == &k.Restart {
+				binding.SetHelp(binding.Help().Key, "Top")
+				continue
+			}
 			binding.SetHelp(binding.Help().Key, label)
 		}
 	}
@@ -108,7 +133,7 @@ func (k Keys) View() string {
 		pan := key.NewBinding(key.WithKeys("up", "down", "left", "right"), key.WithHelp("arrows", "Pan"))
 		bindings = []key.Binding{k.Play, pan, k.Center, k.Softer, k.Sharper, k.Toggle, k.Keep}
 	}
-	if k.grid || k.animation || k.framebuffer {
+	if k.grid || k.animation || k.framebuffer || k.scroll {
 		bindings = append(bindings, k.Quit)
 	}
 	return h.ShortHelpView(bindings)

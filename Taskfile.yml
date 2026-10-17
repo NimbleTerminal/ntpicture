@@ -131,6 +131,8 @@ tasks:
         cmd: node scripts/smoke-demo.mjs {{.ITEM}}
       - node scripts/smoke-demo.mjs animation keep
       - node scripts/smoke-demo.mjs animation composite
+      - node scripts/smoke-demo.mjs animation scroll
+      - node scripts/smoke-demo.mjs animation scroll keep
       - node scripts/smoke-demo.mjs framebuffer keep
   serve-wasm-site:
     desc: Serve demos at http://localhost:8000/web/

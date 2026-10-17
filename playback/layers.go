@@ -872,16 +872,24 @@ func (l *Layers) SetAnchor(anchor picture.FitAnchor) tea.Cmd {
 
 // SetViewport clips the composed cell view without rescaling or retransmitting pixels.
 func (l *Layers) SetViewport(v picture.Viewport) {
-	if !l.closed {
+	if l != nil && !l.closed {
 		l.viewport, l.viewportOn = v, true
 	}
 }
 
 // ResetViewport restores the full cell view.
 func (l *Layers) ResetViewport() {
-	if !l.closed {
+	if l != nil && !l.closed {
 		l.viewportOn = false
 	}
+}
+
+// Viewport reports the active cell viewport and whether one is set.
+func (l *Layers) Viewport() (picture.Viewport, bool) {
+	if l == nil || !l.viewportOn {
+		return picture.Viewport{}, false
+	}
+	return l.viewport, true
 }
 
 // Update routes messages to the base picture and overlays, tracks region

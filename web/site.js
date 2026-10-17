@@ -10,7 +10,8 @@ const demos = {
 const requested = new URLSearchParams(location.search).get('demo');
 const demo = Object.hasOwn(demos, requested) ? requested : 'still';
 const composite = demo === 'animation' && new URLSearchParams(location.search).get('composite') === '1';
-const title = composite ? 'Animated regions' : demos[demo];
+const scroll = demo === 'animation' && !composite && new URLSearchParams(location.search).get('scroll') === '1';
+const title = composite ? 'Animated regions' : scroll ? 'Scrolling document' : demos[demo];
 const status = document.querySelector('#status');
 document.querySelector('#title').textContent = title;
 document.title = `${title} · ntpicture`;
@@ -18,7 +19,7 @@ const restart = new URL(location.href);
 restart.searchParams.set('demo', demo);
 document.querySelector('#restart').href = restart.href;
 for (const link of document.querySelectorAll('[data-demo]')) {
-  if (link.dataset.demo === (composite ? 'composite' : demo)) link.setAttribute('aria-current', 'page');
+  if (link.dataset.demo === (composite ? 'composite' : scroll ? 'scroll' : demo)) link.setAttribute('aria-current', 'page');
 }
 if (demo === 'grid') {
   document.querySelector('#help').textContent = 'Arrows / WASD / HJKL move · g toggles glyph/Kitty · q quits. Click the terminal to focus.';
@@ -39,6 +40,9 @@ async function main() {
   if (composite) {
     go.argv = ['animation', '--composite'];
     document.querySelector('#help').textContent = 'One picture containing GIF and WebP regions. Space pauses/plays · Home restarts · Q keeps the screen · q clears and quits.';
+  } else if (scroll) {
+    go.argv = ['animation', '--scroll'];
+    document.querySelector('#help').textContent = 'Mixed still and animated images in a scrollable document. Up/Down/J/K scroll · Space pauses/plays · Home returns to top · g toggles glyph/Kitty · Q keeps the screen · q clears and quits.';
   }
   const response = await fetch(`demos/${demo}.wasm`);
   if (!response.ok) throw new Error(`Download failed (${response.status})`);

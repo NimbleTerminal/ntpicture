@@ -105,21 +105,29 @@ changes do not clear them. Use `Restart`, a valid player `Seek`, or `SetSource`
 to retry or replace the source; restart/seek preserve or set pause as documented.
 
 `SetVisible(false)` cancels work and removes placements while retaining the
-source. `Close` is final and idempotent (`Closed()` reports whether `Close` or
-`Keep` has stopped the component, or whether the receiver is nil). Local
-resources are released even if its command is not run, but terminal deletion
-requires running that command. An accepted transmission carries a cleanup guard
-for removal races. No component clears other images globally.
+source. `Stop()` cancels pending preparation, composition, queued seeks/restarts,
+and in-flight transmissions while preserving the last committed `View()` and
+terminal placement (restoring committed pixels if a stable-ID transfer already
+started); unlike `Keep()` or `Close()`, `Stop()` is non-final so subsequent
+setters, `Keep()`, or `Close()` continue to work. `Close()` is final and
+idempotent (`Closed()` reports whether `Close`, `Keep`, or `KeepOnMainScreen`
+has stopped the component, or whether the receiver is nil). Local resources are
+released even if its command is not run, but terminal deletion requires running
+that command. An accepted transmission carries a cleanup guard for removal
+races. No component clears other images globally.
 
-`Keep()` is a final alternative to `Close()` for still images, mesh frames, and
-playback controllers. It cancels pending replacements and freezes the last
-presented view. Return `tea.Sequence(pic.Keep(), tea.Quit)` and include that
-view in the application's final main-screen layout. Kitty content is
-retransmitted directly before exit when shared buffers must be released or an
-accepted streaming update must be undone. Direct fronts otherwise send no image
-on exit; glyph content stays in the final view. Run the returned command. A
-subsequent `Close()` is a no-op. The host controls screen selection, help
-removal, and space for the shell prompt.
+`Keep()` and `KeepOnMainScreen()` are final alternatives to `Close()` for still
+images, mesh frames, playback controllers, and layered composites. They cancel
+pending replacements and freeze the last presented view. When the program stays
+on the main screen (`View().AltScreen == false`), return
+`tea.Sequence(pic.Keep(), tea.Quit)`: shared-memory or overwritten stable-ID
+fronts are retransmitted directly before exit, while direct fronts send no
+extra transfer. When the program exits from the alternate screen to the main
+screen by changing `View().AltScreen` from `true` to `false`, return
+`tea.Sequence(pic.KeepOnMainScreen(), tea.Quit)` instead so the retained Kitty
+placement is retransmitted and recreated on the main screen after `ESC[?1049l`.
+Run the returned command. A subsequent `Close()` is a no-op. The host controls
+screen selection, help removal, and space for the shell prompt.
 
 Default image IDs start at a randomized offset to reduce collisions with images
 kept by previous processes. This is best effort, not a cross-process
@@ -334,6 +342,63 @@ MiB input, 32 Mi canvas pixels, 1,000 frames, and 64 MiB GIF frame storage.
 Lazy failures identify the frame and pause playback through `ctrl.Status().Err`.
 Hosts still own controls, visibility decisions, and aggregate resource budgets.
 
+### Shared presentation interface for mixed still and animated images
+
+`*ntpicture.Picture`, `*playback.Controller`, and `*playback.Layers` implement
+the same presentation method set so hosts (such as a scrollable document, list,
+or thumbnail grid) can manage still and animated items through a small
+consumer-defined interface:
+
+- **Event loop**: `Init() tea.Cmd`, `Update(tea.Msg) tea.Cmd`, `View() string`
+- **Geometry and mode**: `SetSize(cols, rows int) tea.Cmd`,
+  `Size() (cols, rows int)`,
+  `SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd`,
+  `SetCellSize(cellWidth, cellHeight int) tea.Cmd`,
+  `CellPixelSize() (width, height int)`,
+  `SetKittyCapability(KittyCapability) tea.Cmd`,
+  `KittySupported() KittyCapability`, `TerminalState() TerminalState`,
+  `Session() *TerminalSession`, `SetMode(PictureMode) tea.Cmd`,
+  `ToggleMode() tea.Cmd`, `Mode() PictureMode`, `AutoMode() bool`
+- **Framing, clipping, and raster**: `SetViewport(Viewport)`, `ResetViewport()`,
+  `Viewport() (Viewport, bool)`, `SetBackground(color.Color) tea.Cmd`,
+  `Background() color.Color`, `SetFit(FitMode) tea.Cmd`, `Fit() FitMode`,
+  `SetAnchor(FitAnchor) tea.Cmd`, `Anchor() FitAnchor`,
+  `Resolution() float64`, `RasterGeometry() RasterGeometry` (plus
+  `SetCrop(image.Rectangle) tea.Cmd`, `ResetCrop() tea.Cmd`,
+  `Crop() image.Rectangle`, `SetResolution(float64) tea.Cmd`,
+  `SetMaxRasterPixels(int) tea.Cmd`, and `MaxRasterPixels() int` on `Picture`
+  and `playback.Controller`)
+- **Visibility and cleanup**: `SetVisible(visible bool) tea.Cmd`,
+  `Visible() bool`, `Stop() tea.Cmd`, `Keep() tea.Cmd`,
+  `KeepOnMainScreen() tea.Cmd`, `Close() tea.Cmd`, `Closed() bool`
+
+```go
+type presentedImage interface {
+    Init() tea.Cmd
+    Update(tea.Msg) tea.Cmd
+    View() string
+    SetSize(cols, rows int) tea.Cmd
+    SetCellSize(cellWidth, cellHeight int) tea.Cmd
+    SetViewport(ntpicture.Viewport)
+    ResetViewport()
+    SetVisible(visible bool) tea.Cmd
+    Visible() bool
+    Stop() tea.Cmd
+    Keep() tea.Cmd
+    KeepOnMainScreen() tea.Cmd
+    Close() tea.Cmd
+}
+```
+
+In a scrollable document, call `item.SetVisible(false)` and
+`item.ResetViewport()` when an item scrolls completely out of view (releasing
+its terminal placement and pausing offscreen animation work while preserving its
+current frame position), `item.SetViewport(ntpicture.Viewport{Y: clipY, Width: cols, Height: visH})`
+and `item.SetVisible(true)` when partially clipped at the top or bottom edge,
+and `item.ResetViewport()` with `item.SetVisible(true)` when fully visible. See
+[`examples/animation/scroll.go`](./examples/animation/scroll.go) (`go -C examples run ./animation --scroll`)
+for a complete working example.
+
 ## Composing several animations
 
 `animation.Composite` combines an immutable base image with pixel rectangles
@@ -465,20 +530,23 @@ task build-examples       # bin/ntpicture-{still,simple,grid,animation,framebuff
 task serve-wasm-site      # http://localhost:8000/web/
 ```
 
-The site runs five examples locally in the browser through booba: a generated
-still image, the embedded-image viewer ported from NTCharts, its interactive
-`GridImage` board, side-by-side GIF/WebP playback from Gloss, and a live
-framebuffer that streams a procedurally rendered scene with stable Kitty IDs,
-pausing, viewport panning and resolution changes. The same programs run
-natively. Use arrows/WASD/HJKL in the grid, `g` to switch rendering
-modes, and `q` to quit. Restart reloads a fresh browser session. Booba action
-buttons above the terminal come from the same Go help bindings as the keyboard
-controls; the grid exposes movement and, when Kitty is available, rendering
-mode. Animation exposes play/pause, frame stepping, first-frame seeking, and
-keep-screen exit. Use the keyboard’s `q` to clear and quit the animation demo.
-The framebuffer exposes pause, panning, recentering, Kitty-only resolution
-steps, the rendering toggle, and keep-screen exit; see
-[examples/framebuffer](./examples/framebuffer/README.md) for its producer policy.
+The site runs five WASM binaries locally in the browser through booba: a
+generated still image, the embedded-image viewer ported from NTCharts, its
+interactive `GridImage` board, GIF/WebP playback from Gloss (including
+`--composite` layered regions and `--scroll` mixed still/animated document
+scrolling), and a live framebuffer that streams a procedurally rendered scene
+with stable Kitty IDs, pausing, viewport panning and resolution changes. The
+same programs run natively. Use arrows/WASD/HJKL in the grid, `g` to switch
+rendering modes, and `q` to quit. Restart reloads a fresh browser session. Booba
+action buttons above the terminal come from the same Go help bindings as the
+keyboard controls; the grid exposes movement and, when Kitty is available,
+rendering mode. Animation exposes play/pause, frame stepping, first-frame
+seeking, and keep-screen exit (`--scroll` exposes Up/Down scrolling, Top,
+play/pause, glyph/Kitty toggling, and keep-screen exit). Use the keyboard’s `q`
+to clear and quit the animation demo. The framebuffer exposes pause, panning,
+recentering, Kitty-only resolution steps, the rendering toggle, and keep-screen
+exit; see [examples/framebuffer](./examples/framebuffer/README.md) for its
+producer policy.
 
 Examples have their own Go module; booba stays out of the library's dependency
 graph. The NTCharts URL, heatmap, and chart adapters remain NTCharts examples.

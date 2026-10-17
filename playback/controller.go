@@ -53,6 +53,11 @@ type Status struct {
 // Controller belongs to one Bubble Tea event loop. Forward every message to
 // every controller, including hidden ones, and execute every returned command.
 // Message ownership is private; unrelated and stale results are ignored.
+//
+// Controller, ntpicture.Picture, and Layers share the same presentation
+// methods (Init, Update, View, geometry/mode, Viewport, SetVisible, Stop, Keep,
+// KeepOnMainScreen, and Close) so hosts can manage mixed still and animated
+// images through a small local interface.
 type Controller struct {
 	pic                               *picture.Picture
 	source                            animation.Source
@@ -646,10 +651,26 @@ func (c *Controller) ResetCrop() tea.Cmd {
 }
 
 // SetViewport clips the prepared picture without seeking or restarting playback.
-func (c *Controller) SetViewport(v picture.Viewport) { c.pic.SetViewport(v) }
+func (c *Controller) SetViewport(v picture.Viewport) {
+	if c != nil {
+		c.pic.SetViewport(v)
+	}
+}
 
 // ResetViewport restores the complete picture view.
-func (c *Controller) ResetViewport() { c.pic.ResetViewport() }
+func (c *Controller) ResetViewport() {
+	if c != nil {
+		c.pic.ResetViewport()
+	}
+}
+
+// Viewport reports the active cell viewport and whether one is set.
+func (c *Controller) Viewport() (picture.Viewport, bool) {
+	if c == nil {
+		return picture.Viewport{}, false
+	}
+	return c.pic.Viewport()
+}
 
 // Custom image implementations need not be comparable. Unknown identities are
 // conservatively resubmitted; immutable sources may reuse an image to skip work.

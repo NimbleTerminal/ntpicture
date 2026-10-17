@@ -34,3 +34,27 @@ browser buttons.
 smaller source. `Picture.SetViewport` only clips prepared cells; moving it does
 not retransmit a bitmap. See README's "Layered composite playback" and "Window
 versus Viewport" sections.
+
+## Scrolling mixed-image document
+
+Run `GOWORK=off go -C examples run ./animation --scroll`, or open
+`?demo=animation&scroll=1` on the browser site. Four document items—an animated
+GIF (`*playback.Controller`), a painted still card (`*ntpicture.Picture`), an
+animated WebP (`*playback.Controller`), and a second still card—are managed
+through one local `scrollablePicture` interface sharing a `TerminalSession`:
+
+- **Partial clipping:** Items straddling the top or bottom edge of the scroll
+  window call `SetViewport(Viewport{Y: visY, Width: cols, Height: visH})`,
+  emitting only the visible Kitty placeholder or glyph rows without resampling
+  or retransmitting the bitmap. Fully visible items call `ResetViewport()`.
+- **Offscreen pause and resume:** Items scrolled completely out of view call
+  `SetVisible(false)`, deleting their terminal placement and stopping offscreen
+  animation timers while preserving the current frame; scrolling back into view
+  calls `SetVisible(true)` and resumes from that frame.
+- **Cell-size changes:** `uv.CellSizeEvent` updates on the shared
+  `TerminalSession` propagate `SetCellSize(cw, ch)` and recompute item row
+  heights for the new cell aspect ratio.
+- **Keep-screen exit:** Pressing `Q` switches from the alternate screen to the
+  main screen, calls `KeepOnMainScreen()` on visible items so their retained
+  Kitty placements are recreated after `ESC[?1049l`, and closes offscreen items.
+

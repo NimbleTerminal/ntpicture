@@ -1040,3 +1040,93 @@ func TestControllerKeepOnMainScreenBubbleTeaAltScreenSwitch(t *testing.T) {
 		t.Fatalf("expected exactly 1 Kitty transmission on main screen with Keep(), got %d", got)
 	}
 }
+
+// sharedPresentation is the common presentation surface shared across
+// *picture.Picture, *Controller, and *Layers.
+type sharedPresentation interface {
+	Init() tea.Cmd
+	Update(tea.Msg) tea.Cmd
+	View() string
+	SetSize(cols, rows int) tea.Cmd
+	Size() (cols, rows int)
+	SetTerminal(kitty bool, cellWidth, cellHeight int) tea.Cmd
+	SetCellSize(cellWidth, cellHeight int) tea.Cmd
+	CellPixelSize() (width, height int)
+	SetKittyCapability(picture.KittyCapability) tea.Cmd
+	KittySupported() picture.KittyCapability
+	TerminalState() picture.TerminalState
+	Session() *picture.TerminalSession
+	SetMode(picture.PictureMode) tea.Cmd
+	ToggleMode() tea.Cmd
+	Mode() picture.PictureMode
+	AutoMode() bool
+	SetViewport(picture.Viewport)
+	ResetViewport()
+	Viewport() (picture.Viewport, bool)
+	SetBackground(color.Color) tea.Cmd
+	Background() color.Color
+	SetFit(picture.FitMode) tea.Cmd
+	Fit() picture.FitMode
+	SetAnchor(picture.FitAnchor) tea.Cmd
+	Anchor() picture.FitAnchor
+	Resolution() float64
+	RasterGeometry() picture.RasterGeometry
+	SetVisible(visible bool) tea.Cmd
+	Visible() bool
+	Stop() tea.Cmd
+	Keep() tea.Cmd
+	KeepOnMainScreen() tea.Cmd
+	Close() tea.Cmd
+	Closed() bool
+}
+
+// sharedCropAndRaster extends sharedPresentation with the crop and raster-scale
+// setters shared by *picture.Picture and *Controller.
+type sharedCropAndRaster interface {
+	sharedPresentation
+	SetCrop(image.Rectangle) tea.Cmd
+	ResetCrop() tea.Cmd
+	Crop() image.Rectangle
+	SetResolution(float64) tea.Cmd
+	SetMaxRasterPixels(int) tea.Cmd
+	MaxRasterPixels() int
+}
+
+var (
+	_ sharedCropAndRaster = (*picture.Picture)(nil)
+	_ sharedCropAndRaster = (*Controller)(nil)
+	_ sharedPresentation  = (*Layers)(nil)
+)
+
+func TestSharedPresentationViewportGetter(t *testing.T) {
+	session := picture.NewTerminalSession(picture.TerminalOptions{
+		Kitty:        picture.KittyCapabilityUnsupported,
+		SharedMemory: picture.KittyCapabilityUnsupported,
+	})
+	defer session.Close()
+
+	pic := picture.New(picture.Options{Session: session})
+	ctrl := New(distinctFramePlayer(t), Options{Picture: picture.Options{Session: session}})
+	layers := NewLayers(nil, Options{Picture: picture.Options{Session: session}})
+	items := []sharedPresentation{pic, ctrl, layers}
+	defer func() {
+		for _, item := range items {
+			_ = item.Close()
+		}
+	}()
+
+	vp := picture.Viewport{X: 1, Y: 2, Width: 8, Height: 4}
+	for i, item := range items {
+		if got, ok := item.Viewport(); ok || got != (picture.Viewport{}) {
+			t.Fatalf("item %d: expected no initial viewport, got (%+v, %v)", i, got, ok)
+		}
+		item.SetViewport(vp)
+		if got, ok := item.Viewport(); !ok || got != vp {
+			t.Fatalf("item %d: expected viewport %+v, got (%+v, %v)", i, vp, got, ok)
+		}
+		item.ResetViewport()
+		if got, ok := item.Viewport(); ok || got != (picture.Viewport{}) {
+			t.Fatalf("item %d: expected cleared viewport after ResetViewport, got (%+v, %v)", i, got, ok)
+		}
+	}
+}

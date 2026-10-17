@@ -18,15 +18,23 @@ type Viewport struct{ X, Y, Width, Height int }
 // It emits no commands, does no image preparation, and does not cancel playback.
 // Subsequent frames use this viewport until ResetViewport is called.
 func (p *Picture) SetViewport(v Viewport) {
-	if !p.closed {
+	if p != nil && !p.closed {
 		p.viewport, p.viewportSet = v, true
 	}
 }
 
 func (p *Picture) ResetViewport() {
-	if !p.closed {
+	if p != nil && !p.closed {
 		p.viewportSet = false
 	}
+}
+
+// Viewport reports the active cell viewport and whether one is set.
+func (p *Picture) Viewport() (Viewport, bool) {
+	if p == nil || !p.viewportSet {
+		return Viewport{}, false
+	}
+	return p.viewport, true
 }
 
 func (v Viewport) bounds(cols, rows int) image.Rectangle {

@@ -153,7 +153,7 @@ func (m *compositeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.final = content[:strings.LastIndex(content, "\n")+1]
 			m.keeping = true
 			m.session.Close()
-			return m, tea.Sequence(m.layers.Keep(), tea.Quit)
+			return m, tea.Sequence(m.layers.KeepOnMainScreen(), tea.Quit)
 		case key.Matches(v, keys.Quit):
 			m.session.Close()
 			return m, tea.Sequence(m.layers.Close(), tea.Quit)

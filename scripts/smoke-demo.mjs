@@ -9,7 +9,9 @@ assert.ok(['still', 'simple', 'grid', 'animation', 'framebuffer'].includes(demo)
 vm.runInThisContext(await readFile('web/wasm_exec.js', 'utf8'));
 const go = new Go();
 const composite = process.argv.includes('composite');
+const scroll = process.argv.includes('scroll');
 if (composite) go.argv = ['animation', '--composite'];
+if (scroll) go.argv = ['animation', '--scroll'];
 let exitCode;
 go.exit = code => { exitCode = code; };
 const { instance } = await WebAssembly.instantiate(await readFile(`web/demos/${demo}.wasm`), go.importObject);
@@ -46,7 +48,12 @@ try {
     assert.equal(right.keys[right.preferred].key, 'right');
   }
   if (demo === 'animation') {
-    for (const label of (composite ? ['Pause', 'First frame', 'Keep screen & quit'] : ['Pause', 'Previous frame', 'Next frame', 'First frame', 'Keep screen & quit'])) {
+    const expectedActions = composite
+      ? ['Pause', 'First frame', 'Keep screen & quit']
+      : scroll
+        ? ['Pause', 'Up', 'Down', 'Top', 'Keep screen & quit']
+        : ['Pause', 'Previous frame', 'Next frame', 'First frame', 'Keep screen & quit'];
+    for (const label of expectedActions) {
       assert.ok(snapshot.actions.some(action => action.label === label && action.enabled), `${label} action`);
     }
     bubbletea_write(' ');
@@ -56,14 +63,14 @@ try {
       paused += bubbletea_read();
     }
     assert.ok(paused.includes('aused'), 'animation pauses through input bridge');
-    bubbletea_write(composite ? '\x1b[H' : '.');
+    bubbletea_write(composite ? '\x1b[H' : scroll ? '\x1b[B' : '.');
     let stepped = '';
     for (let n = 0; n < 100 && (!composite ? stepped.length === 0 : n < 4); n++) {
       await delay(25);
       stepped += bubbletea_read();
     }
     // Restart may leave the screen identical when already on frame one.
-    if (!composite) assert.ok(stepped.length > 0, 'paused animation can step frames');
+    if (!composite) assert.ok(stepped.length > 0, scroll ? 'scroll document moves down' : 'paused animation can step frames');
     bubbletea_write(' ');
   }
   if (demo === 'framebuffer') {
@@ -106,7 +113,7 @@ try {
     changed += bubbletea_read();
   }
   assert.ok(changed.length > 0, 'resize or movement produces output');
-  bubbletea_write(process.argv[3] === 'keep' ? 'Q' : quit.keys[quit.preferred].key);
+  bubbletea_write(process.argv.includes('keep') ? 'Q' : quit.keys[quit.preferred].key);
   await running;
   assert.equal(exitCode, 0);
   assert.equal(globalThis.bubbletea_exited, true, 'exit published to adapter');

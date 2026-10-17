@@ -111,6 +111,11 @@ type ErrorMsg struct {
 // transmission pacing and placement cleanup. All methods belong to one Bubble
 // Tea event loop; do not copy it. Run every returned command, including Close.
 // Forward messages to Update even while hidden. The host owns keys and layout.
+//
+// Picture, playback.Controller, and playback.Layers share the same presentation
+// methods (Init, Update, View, geometry/mode, Viewport, SetVisible, Stop, Keep,
+// KeepOnMainScreen, and Close) so hosts can manage mixed still and animated
+// images through a small local interface.
 type Picture struct {
 	opts                  Options
 	ownsSession           bool

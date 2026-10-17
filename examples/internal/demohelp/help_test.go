@@ -54,3 +54,30 @@ func TestFramebufferActionsFollowMode(t *testing.T) {
 		t.Fatal("paused label")
 	}
 }
+
+func TestScrollActionsFollowCapabilities(t *testing.T) {
+	for _, kitty := range []bool{false, true} {
+		snapshot, diagnostics, err := bubblehelp.Snapshot(Scroll(false, kitty), "demo", "scroll", 1, bubblehelp.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(diagnostics) != 0 {
+			t.Fatalf("unsupported keys: %v", diagnostics)
+		}
+		labels := map[string]bool{}
+		for _, action := range snapshot.Actions {
+			labels[action.Label] = action.Enabled
+		}
+		for _, label := range []string{"Pause", "Up", "Down", "Top", "Keep screen & quit", "Quit"} {
+			if !labels[label] {
+				t.Fatalf("%s missing for kitty=%v", label, kitty)
+			}
+		}
+		if labels["Glyph / Kitty"] != kitty {
+			t.Fatalf("toggle advertised=%v, capability=%v", labels["Glyph / Kitty"], kitty)
+		}
+	}
+	if Scroll(true, false).Play.Help().Desc != "Play" {
+		t.Fatal("paused label")
+	}
+}

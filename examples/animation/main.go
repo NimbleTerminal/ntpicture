@@ -69,7 +69,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.finalView = content[:strings.LastIndex(content, "\n")+1]
 			m.keeping = true
 			m.session.Close()
-			return m, tea.Sequence(tea.Batch(m.tracks[0].Keep(), m.tracks[1].Keep()), tea.Quit)
+			return m, tea.Sequence(tea.Batch(m.tracks[0].KeepOnMainScreen(), m.tracks[1].KeepOnMainScreen()), tea.Quit)
 		}
 		if key.Matches(press, keys.Quit) {
 			m.session.Close()
@@ -132,6 +132,23 @@ func (m model) View() tea.View {
 	return v
 }
 func main() {
+	if slices.Contains(os.Args, "--scroll") {
+		m, err := initialScrollModel()
+		if err == nil {
+			defer m.session.Close()
+			defer func() {
+				for i := range m.items {
+					_ = m.items[i].pic.Close()
+				}
+			}()
+			err = demohelp.Run(m, "Scrolling document")
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if slices.Contains(os.Args, "--composite") {
 		m, err := initialCompositeModel()
 		if err == nil {

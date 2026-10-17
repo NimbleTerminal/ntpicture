@@ -13,8 +13,10 @@ Initial extraction of NTCharts and Gloss terminal image rendering into
   or glyph cells without re-encoding; `RasterGeometry`, `SetResolution`, and
   `SetMaxRasterPixels` let producers target scaled and pixel-budgeted Kitty
   rasters while preserving cell footprint and camera aspect; `AutoMode` and
-  `ToggleMode` manage automatic and manual glyph/Kitty switching; `Keep` freezes
-  the last presented frame on exit.
+  `ToggleMode` manage automatic and manual glyph/Kitty switching; `Stop` cancels
+  pending work while retaining the committed frame; `Keep` and
+  `KeepOnMainScreen` freeze the last presented frame on exit (including across
+  alternate-to-main screen switches).
 - `TerminalSession` (`NewTerminalSession`, `TerminalOptions`,
   `TerminalSessionMsg`, `SetCellSize`, `SetKittyCapability`) for per-connection
   Kitty and shared-memory capability discovery, cell-pixel geometry tracking,
@@ -30,16 +32,19 @@ Initial extraction of NTCharts and Gloss terminal image rendering into
 - Playback controllers (`playback.Controller` and `playback.Layers`):
   deadline-paced playback, cell-aligned Kitty overlay planning and splicing over
   a static composite base, shared clocks across repeated region keys, off-loop
-  `SetComposite` window cropping and position carry, `SetActive` suspension, and
-  `Snapshot` export of the committed frame.
+  `SetComposite` window cropping and position carry, `SetActive` suspension,
+  `Snapshot` export of the committed frame, and a uniform presentation method
+  set (`Init`, `Update`, `View`, geometry/mode, `Viewport`, `SetVisible`,
+  `Stop`, `Keep`, `KeepOnMainScreen`, `Close`) shared with `Picture`.
 - `ntpicture/legacy` compatibility subpackage (`Model`, `NewModel`,
   `NewModelWithConfig`, `DefaultTerminalSession`, `QueryKittySupport`,
   `KittySupported`, `KittyEnvSignalled`, `KittyUnavailable`,
   `ForceKittyCapability`, `SetTmuxPassthrough`, `RequestCellSize`,
   `IsPictureMsg`) isolating the low-level NTCharts surface and process-wide
   capability helpers from the root package.
-- Examples (still, simple, grid, animation, and live framebuffer) built for
-  native terminals and the browser via booba, plus task-based QA
+- Examples (still, simple, grid, animation with side-by-side, layered
+  `--composite`, and mixed-image `--scroll` modes, and live framebuffer) built
+  for native terminals and the browser via booba, plus task-based QA
   (`golangci-lint`, race tests, fuzz targets, and `govulncheck`).
 
 Consumer migration is tracked in [MIGRATION.md](./MIGRATION.md).
