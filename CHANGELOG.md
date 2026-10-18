@@ -1,5 +1,12 @@
 # `ntpicture` CHANGELOG
 
+## Unreleased
+
+- Fix `legacy.Model.View` and `String` discarding the glyph cache at the
+  package bridge. Unchanged presentations now reuse rendered content without
+  reading source pixels, while model copies and deferred Kitty renders retain
+  their existing ownership behavior.
+
 ## v0.1.0 (2026-10-17)
 
 **First release of `ntpicture`!** [NimbleTerminal](https://nimbleterminal.dev) is proud to share this terminal image rendering library, focusing on the [Kitty terminal graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).

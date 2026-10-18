@@ -57,8 +57,8 @@ var (
 	ModelSetKittyFormat           func(m any, f int8) (any, tea.Cmd)
 	ModelKittyMedium              func(m any) int8
 	ModelSetKittyMedium           func(m any, medium int8) (any, tea.Cmd)
-	ModelString                   func(m any) string
+	ModelString                   func(m any) (any, string)
 	ModelUpdate                   func(m any, msg tea.Msg) (any, tea.Cmd)
-	ModelView                     func(m any) tea.View
+	ModelView                     func(m any) (any, tea.View)
 	ModelRenderCmdContext         func(m any, ctx context.Context) (any, tea.Cmd)
 )

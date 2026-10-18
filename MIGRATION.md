@@ -1,5 +1,33 @@
 # Extraction status
 
+## Legacy glyph-cache fix (unreleased; intended for v0.1.1)
+
+In v0.1.0, the public `legacy.Model.View()` and `String()` bridge rendered a
+copy of its stored model and discarded the populated glyph cache. Repeated
+unchanged presentations consequently read and rendered source pixels again.
+The bridge now returns and stores the updated value state, retaining the
+immutable presentation without sharing mutable glyph scratch between model
+copies. Setters and terminal-message handling still invalidate presentation;
+deferred Kitty preparation and stale-frame rejection are unchanged.
+
+ntcharts-osm's `mapview/picture.go` presentation-cache adapter can be removed
+once it uses this fix and its existing
+`TestGlyphCacheSurvivesValueReceiverView` passes with the adapter bypassed.
+On 2026-10-18, the full ntcharts-osm `mapview` test package passed in a
+temporary copy using this checkout, with the adapter reduced to an embedded
+`legacy.Model` and its regression test unchanged. This is automated coverage,
+not visual terminal verification; the reference checkout was not modified.
+Keep that regression test. Retain `*legacy.Model` in the host so a value-receiver
+host View updates the same picture; copying a Model before its first View does
+not populate the original's cache. Continue forwarding messages and executing
+returned commands, and keep source pixels immutable until replaced.
+
+The intended consumer pin is `nimbleterminal.dev/ntpicture v0.1.1` **after that
+release includes this fix**. This change is currently unreleased; v0.1.0 is
+still affected. Until publication, keep the workaround on v0.1.0 or test this
+checkout via a temporary replace directive. Do not treat a local replacement
+as verification of a published module.
+
 ## Implemented in this checkout
 
 - NTCharts renderer, fit/cell/grid geometry, glyph output, Kitty encodings,

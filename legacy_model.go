@@ -517,18 +517,24 @@ func init() {
 		cmd := m.SetKittyMedium(KittyMedium(medium))
 		return m, cmd
 	}
-	legacybridge.ModelString = func(v any) string {
-		m := v.(legacyModel)
-		return m.String()
+	legacybridge.ModelString = func(v any) (any, string) {
+		next, view := legacybridge.ModelView(v)
+		return next, view.Content
 	}
 	legacybridge.ModelUpdate = func(v any, msg tea.Msg) (any, tea.Cmd) {
 		m := v.(legacyModel)
 		cmd := m.Update(msg)
 		return m, cmd
 	}
-	legacybridge.ModelView = func(v any) tea.View {
+	legacybridge.ModelView = func(v any) (any, tea.View) {
 		m := v.(legacyModel)
-		return m.View()
+		view := m.View()
+		// Public Model copies retain independent value state. Keep the immutable
+		// presentation, but do not publish mutable scratch that subsequent
+		// renders of those copies could overwrite (or race on).
+		m.glyphFit = fitScratch{}
+		m.glyphBuf = nil
+		return m, view
 	}
 	legacybridge.ModelRenderCmdContext = func(v any, ctx context.Context) (any, tea.Cmd) {
 		m := v.(legacyModel)

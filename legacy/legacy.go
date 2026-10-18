@@ -205,7 +205,9 @@ func (m *Model) SetKittyMedium(medium ntpicture.KittyMedium) tea.Cmd {
 
 // String returns the rendered image content as a plain string.
 func (m *Model) String() string {
-	return legacybridge.ModelString(m.state())
+	next, content := legacybridge.ModelString(m.state())
+	m.inner = next
+	return content
 }
 
 // Update processes the picture component's own messages.
@@ -217,7 +219,9 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 
 // View returns the rendered image as a tea.View.
 func (m *Model) View() tea.View {
-	return legacybridge.ModelView(m.state())
+	next, view := legacybridge.ModelView(m.state())
+	m.inner = next
+	return view
 }
 
 // DefaultTerminalSession returns the compatibility session used by process-wide
