@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid per-pixel allocations when packing opaque NRGBA images for Kitty zlib output.
+
 - Fix `legacy.Model.View` and `String` discarding the glyph cache at the
   package bridge. Unchanged presentations now reuse rendered content without
   reading source pixels, while model copies and deferred Kitty renders retain

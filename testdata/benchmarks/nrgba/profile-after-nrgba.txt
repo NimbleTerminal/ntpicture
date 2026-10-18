@@ -1,0 +1,7 @@
+File: after.test
+Type: alloc_objects
+Time: 2026-10-18 19:23:11 EDT
+Active filters:
+   focus=image.\(\*NRGBA\).At
+Showing nodes accounting for 0, 0% of 1316371 total
+      flat  flat%   sum%        cum   cum%

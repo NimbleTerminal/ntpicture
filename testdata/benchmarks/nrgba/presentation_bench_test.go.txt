@@ -1,0 +1,352 @@
+package ntcharts3d
+
+import (
+	"fmt"
+	"image"
+	"image/color"
+	"io"
+	"reflect"
+ "os"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"nimbleterminal.dev/nt3d"
+	picture "nimbleterminal.dev/ntpicture"
+)
+
+// presentationPump executes Batch commands concurrently and preserves Sequence
+// output ordering. Retire timers remain in flight across measured frames.
+// It is an application-side sink, not a terminal emulator or Tea screen renderer.
+type presentationPump struct {
+	tb                                       testing.TB
+ allowResize bool
+	m                                        *Model
+	rendered, completed, rawBytes, gridBytes int
+	render, output                           time.Duration
+	submitted                                time.Time
+	size                                     image.Point
+	hook                                     func()
+	delay                                    time.Duration
+	events                                   chan presentationEvent
+	active                                   int
+	starts                                   map[uint64]time.Time
+	media                                    map[uint64]picture.KittyMedium
+	directFrames, shmFrames                  int
+}
+
+type presentationEvent struct {
+	msg    tea.Msg
+	follow []tea.Cmd
+}
+
+func (p *presentationPump) launch(cmd tea.Cmd, follow []tea.Cmd) {
+	if cmd == nil {
+		if len(follow) > 0 {
+			p.launch(follow[0], follow[1:])
+		}
+		return
+	}
+	p.active++
+	go func() { p.events <- presentationEvent{cmd(), follow} }()
+}
+
+func (p *presentationPump) run(cmd tea.Cmd) {
+	if p.events == nil {
+		p.events = make(chan presentationEvent, 256)
+		p.starts = make(map[uint64]time.Time)
+		p.media = make(map[uint64]picture.KittyMedium)
+	}
+	before := p.completed
+	p.launch(cmd, nil)
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	for p.active > 0 {
+		if !p.m.closed && p.completed > before && p.completed == p.rendered && !p.m.busy && !p.m.dirty && !p.m.PictureStatus().Busy {
+			return
+		}
+		select {
+		case event := <-p.events:
+			p.active--
+			msg := event.msg
+			switch v := msg.(type) {
+			case tea.BatchMsg:
+				for _, child := range v {
+					p.launch(child, nil)
+				}
+			case tea.RawMsg:
+				s, ok := v.Msg.(string)
+				if !ok {
+					p.tb.Fatalf("unexpected raw payload %T", v.Msg)
+				}
+				if p.delay > 0 {
+					time.Sleep(p.delay)
+				}
+				n, err := io.WriteString(io.Discard, s)
+				if err != nil {
+					p.tb.Fatal(err)
+				}
+				p.rawBytes += n
+			default:
+				value := reflect.ValueOf(msg)
+				if msg != nil && value.Kind() == reflect.Slice && value.Type().Elem() == reflect.TypeOf(tea.Cmd(nil)) {
+					sequence := make([]tea.Cmd, value.Len())
+					for i := range sequence {
+						sequence[i] = value.Index(i).Interface().(tea.Cmd)
+					}
+					sequence = append(sequence, event.follow...)
+					if len(sequence) > 0 {
+						p.launch(sequence[0], sequence[1:])
+					}
+					continue
+				}
+				if msg != nil {
+					p.route(msg)
+				}
+			}
+			if len(event.follow) > 0 {
+				p.launch(event.follow[0], event.follow[1:])
+			}
+		case <-deadline.C:
+			p.tb.Fatal("presentation did not settle")
+		}
+	}
+}
+
+func (p *presentationPump) route(msg tea.Msg) {
+	switch v := msg.(type) {
+	case rendered:
+		if v.err != nil || v.renderMode != reviewMode() || v.frame == nil {
+			p.tb.Fatalf("render fallback/error: %+v", v)
+		}
+		if v.frame.Bounds().Size() != p.size {
+			p.tb.Fatalf("raster changed: %v want %v", v.frame.Bounds(), p.size)
+		}
+		p.rendered++
+		p.render += v.elapsed
+		p.submitted = time.Now()
+	case picture.ErrorMsg:
+		p.tb.Fatal(v.Err)
+	case picture.PresentedMsg:
+		if v.Owner == p.m.pic {
+			p.completed++
+			start, ok := p.starts[v.Generation]
+			if !ok {
+ if !p.allowResize {p.tb.Fatalf("unmatched completion %d", v.Generation)}
+ // Resize may re-present the retained image without a new rendered message.
+ p.rendered++; start=time.Now()
+ }
+			p.output += time.Since(start)
+			delete(p.starts, v.Generation)
+			if p.m.PictureMode() == picture.PictureKitty {
+				if p.media[v.Generation] == picture.KittyMediumSharedMemory {
+					p.shmFrames++
+				} else {
+					p.directFrames++
+				}
+			}
+			delete(p.media, v.Generation)
+			n, err := io.WriteString(io.Discard, p.m.View().Content)
+			if err != nil {
+				p.tb.Fatal(err)
+			}
+			p.gridBytes += n
+		}
+	}
+	previous := p.m.PictureStatus().Presented
+	_, next := p.m.Update(msg)
+	status := p.m.PictureStatus()
+	if status.Presented != previous {
+		p.media[status.Presented] = status.Medium
+	}
+	if _, ok := msg.(rendered); ok {
+		p.starts[status.Generation] = p.submitted
+	}
+	if _, ok := msg.(rendered); ok && p.hook != nil {
+		hook := p.hook
+		p.hook = nil
+		hook()
+	}
+	p.launch(next, nil)
+	if !p.m.closed && (p.m.shrink != 0 || p.m.RenderMode() != reviewMode()) {
+		p.tb.Fatal("adaptive quality changed; sample invalid")
+	}
+}
+
+func presentationFixture(tb testing.TB, mode, workload string, cols, rows int) (*presentationPump, *image.RGBA) {
+	tb.Helper()
+	kitty, shared := picture.KittyCapabilityUnsupported, picture.KittyCapabilityUnsupported
+	medium := picture.KittyMediumDirect
+	if mode != "glyph" {
+		kitty = picture.KittyCapabilitySupported
+	}
+	if mode == "shm" {
+		if !picture.KittySharedMemorySupported() {
+			tb.Skip("shared memory unavailable on this platform")
+		}
+		shared, medium = picture.KittyCapabilitySupported, picture.KittyMediumSharedMemory
+	}
+	noTmux := false
+	session := picture.NewTerminalSession(picture.TerminalOptions{Kitty: kitty, SharedMemory: shared, CellPixelWidth: 8, CellPixelHeight: 16, TmuxPassthrough: &noTmux})
+	m := New(cols, rows, WithRenderMode(reviewMode()), WithAutoRotate(false), WithTerminalSession(session), WithKittyMedium(medium), WithKittyFormat(picture.KittyFormatZlib), WithAxes(Axes{X: Axis{Hidden: true}, Y: Axis{Hidden: true}, Z: Axis{Hidden: true}}))
+	src := image.NewRGBA(image.Rect(0, 0, 512, 512))
+	for y := range 512 {
+		for x := range 512 {
+			c := color.RGBA{218, 226, 206, 255}
+			switch {
+			case (x+y/3)%512 < 512/12:
+				c = color.RGBA{120, 175, 210, 255}
+			case x%32 < 3 || y%32 < 3:
+				c = color.RGBA{245, 240, 225, 255}
+			default:
+				c.R -= uint8((x/32+y/32)%5) * 8
+			}
+			src.SetRGBA(x, y, c)
+		}
+	}
+	tex, err := NewTexture(src)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	m.SetColorLegendVisible(false)
+	m.SetCamera(Camera{Alpha: 55, Beta: -90, Distance: 3.4, Projection: Perspective})
+	if workload == "bars" {
+		m.SetBars("bars", Bars{NX: 8, NY: 4, Values: []float32{1, 2, 3, 4, 5, 6, 7, 8, 8, 7, 6, 5, 4, 3, 2, 1, 2, 4, 6, 8, 1, 3, 5, 7, 7, 5, 3, 1, 8, 6, 4, 2}})
+	} else {
+		m.SetSurface("map", Surface{NX: 2, NY: 2, Z: make([]float32, 4), MinX: -1, MaxX: 1, MinY: -1, MaxY: 1, Material: &Material{Texture: tex, Unlit: true}})
+	}
+	p := &presentationPump{tb: tb, m: m, size: image.Pt(cols*8, (rows-2)*16)}
+	if mode == "glyph" {
+		p.size = image.Pt(cols, (rows-2)*2)
+	}
+	tb.Cleanup(func() { p.run(m.Dispose()); _ = m.Close(); session.Close() })
+	p.run(m.Init())
+	if m.Err() != nil || p.completed != 1 || m.PictureStatus().Busy {
+		tb.Fatalf("warmup failed: %v %+v", m.Err(), m.PictureStatus())
+	}
+	if mode != "glyph" && (m.PictureMode() != picture.PictureKitty || m.PictureStatus().Medium != medium) {
+		tb.Fatalf("transport fallback: %+v", m.PictureStatus())
+	}
+	return p, src
+}
+
+func BenchmarkPresentation(b *testing.B) {
+	for _, mode := range []string{"glyph", "direct", "shm"} {
+		for _, work := range []string{"camera", "texture", "bars", "burst"} {
+			b.Run(mode+"/"+work, func(b *testing.B) {
+				p, src := presentationFixture(b, mode, work, 80, 22)
+				p.rendered, p.completed, p.rawBytes, p.gridBytes = 0, 0, 0, 0
+				p.render, p.output = 0, 0
+				p.directFrames, p.shmFrames = 0, 0
+				var prep time.Duration
+				requested := 0
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					start := time.Now()
+					var cmd tea.Cmd
+					if work == "texture" {
+						tex, err := NewTexture(src)
+						if err != nil {
+							b.Fatal(err)
+						}
+						cmd = p.m.SetSeriesTexture("map", tex)
+					} else {
+						c := p.m.Camera()
+						c.Beta = -90 + float64(i%72)*5
+						cmd = p.m.SetCamera(c)
+					}
+					requested++
+					prep += time.Since(start)
+					if work == "burst" {
+						p.delay = time.Millisecond
+						p.hook = func() {
+							for j := 0; j < 3; j++ {
+								c := p.m.Camera()
+								c.Beta += 5
+								requested++
+								if next := p.m.SetCamera(c); next != nil {
+									b.Fatal("producer escaped presentation backpressure")
+								}
+							}
+						}
+					}
+					p.run(cmd)
+					if p.m.busy || p.m.PictureStatus().Busy || p.m.dirty {
+						b.Fatal("unsettled presentation")
+					}
+				}
+				b.StopTimer()
+				b.ReportMetric(float64(p.directFrames), "direct-frames")
+				b.ReportMetric(float64(p.shmFrames), "shm-frames")
+				b.ReportMetric(float64(requested), "requested")
+				b.ReportMetric(float64(p.completed), "completed")
+				b.ReportMetric(float64(requested-p.completed), "coalesced")
+				b.ReportMetric(float64(p.render.Nanoseconds())/float64(p.rendered), "render-ns/frame")
+				b.ReportMetric(float64(prep.Nanoseconds())/float64(b.N), "prepare-ns/op")
+				b.ReportMetric(float64(p.output.Nanoseconds())/float64(p.completed), "output-ns/frame")
+				b.ReportMetric(float64(p.rawBytes)/float64(p.completed), "protocol-B/frame")
+				b.ReportMetric(float64(p.gridBytes)/float64(p.completed), "view-B/frame")
+				b.Logf("raster=%v renderer=%v picture=%v transport=%+v aniso=%d shrink=%g frames=%d", p.size, p.m.RenderMode(), p.m.PictureMode(), p.m.PictureStatus(), p.m.anisotropy, p.m.shrink, p.rendered)
+			})
+		}
+	}
+}
+
+func TestPresentationPump(t *testing.T) {
+	for _, mode := range []string{"glyph", "direct", "shm"} {
+		t.Run(mode, func(t *testing.T) {
+			p, _ := presentationFixture(t, mode, "camera", 8, 6)
+			p.hook = func() {
+				for i := range 3 {
+					c := p.m.Camera()
+					c.Beta += float64(i + 1)
+					if cmd := p.m.SetCamera(c); cmd != nil {
+						t.Fatal("missing backpressure")
+					}
+				}
+			}
+			c := p.m.Camera()
+			c.Beta += 5
+			p.run(p.m.SetCamera(c))
+			if p.completed != 3 || p.rendered != 3 || p.m.PictureStatus().Busy {
+				t.Fatal(fmt.Sprintf("burst did not coalesce: %+v", p))
+			}
+		})
+	}
+}
+
+// Isolate renderer lifetime from encoding and from upstream sampling changes.
+// v0.2.0's renderer is stateless; this measures whether retention alone helps.
+func BenchmarkSoftwareRendererLifetime(b *testing.B) {
+	for _, work := range []string{"camera", "bars"} {
+		for _, retain := range []bool{false, true} {
+			b.Run(fmt.Sprintf("%s/retain=%t", work, retain), func(b *testing.B) {
+				p, _ := presentationFixture(b, "glyph", work, 80, 22)
+				frame := engineFrame(p.m.frameSized(640, 320, 2, Software))
+				renderer := nt3d.NewSoftwareRenderer()
+				defer renderer.Close()
+				if _, err := renderer.Render(frame); err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					r := renderer
+					if !retain {
+						r = nt3d.NewSoftwareRenderer()
+					}
+					img, err := r.Render(frame)
+					if err != nil || img.Bounds().Size() != image.Pt(640, 320) {
+						b.Fatal("invalid rendering", err)
+					}
+					if !retain {
+						_ = r.Close()
+					}
+				}
+			})
+		}
+	}
+}
+
+func reviewMode() RenderMode { if os.Getenv("OSM_REVIEW_GPU")=="1" {return WebGPU}; return Software }

@@ -351,6 +351,18 @@ WithPositions intentionally recomposes changed positions for snapshot consistenc
 no-op merges reuse the original snapshot. Avoid merging just before a constructor
 when its previous-composite argument already supplies the needed positions.
 
+## NRGBA Kitty packing benchmarks
+
+The 2026-10-18 Go 1.27.2 macOS/Apple M5 Max comparison is archived in
+[testdata/benchmarks/nrgba/README.md](testdata/benchmarks/nrgba/README.md), with
+raw samples, source hashes, GPU harness, profiles and validation output.
+At 640×320, opaque NRGBA packing fell from 204,801 allocations/op to one
+and from 1.734 ms/op to 0.161 ms/op (three-sample medians). The matched native
+GPU camera presentation harness fell from 3.324 ms/op to 1.444 ms/op.
+These are discard-sink output completion timings, not terminal display FPS.
+Node WASM tests and demo lifecycle smoke checks passed; no new visual terminal
+or interactive browser acceptance is claimed.
+
 ## Cover preparation benchmarks
 
 ```sh

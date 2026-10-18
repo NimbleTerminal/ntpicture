@@ -1,0 +1,133 @@
+task: [fmt-check] files="$(gofmt -l .)"
+if [ -n "$files" ]; then printf '%s\n' "$files"; exit 1; fi
+
+task: [go-tidy-check] go mod tidy -diff
+task: [go-tidy-check] go -C examples mod tidy -diff
+task: [go-verify] go mod verify
+all modules verified
+task: [go-verify] go -C examples mod verify
+all modules verified
+task: [test-race] go test -mod=readonly -race ./...
+ok  	nimbleterminal.dev/ntpicture	3.309s
+ok  	nimbleterminal.dev/ntpicture/animation	(cached)
+ok  	nimbleterminal.dev/ntpicture/decoders	(cached)
+ok  	nimbleterminal.dev/ntpicture/internal/imageview	(cached)
+ok  	nimbleterminal.dev/ntpicture/internal/kittyshm	(cached)
+?   	nimbleterminal.dev/ntpicture/internal/legacybridge	[no test files]
+?   	nimbleterminal.dev/ntpicture/internal/tools/notices	[no test files]
+ok  	nimbleterminal.dev/ntpicture/legacy	1.447s
+ok  	nimbleterminal.dev/ntpicture/playback	6.452s
+task: [test-race] go -C examples test -mod=readonly -race ./...
+ok  	nimbleterminal.dev/ntpicture/examples/animation	1.728s
+ok  	nimbleterminal.dev/ntpicture/examples/framebuffer	1.233s
+?   	nimbleterminal.dev/ntpicture/examples/grid	[no test files]
+ok  	nimbleterminal.dev/ntpicture/examples/internal/demohelp	(cached)
+?   	nimbleterminal.dev/ntpicture/examples/simple	[no test files]
+?   	nimbleterminal.dev/ntpicture/examples/still	[no test files]
+task: [test-no-cgo] go test -mod=readonly ./...
+ok  	nimbleterminal.dev/ntpicture	0.943s
+ok  	nimbleterminal.dev/ntpicture/animation	(cached)
+ok  	nimbleterminal.dev/ntpicture/decoders	(cached)
+ok  	nimbleterminal.dev/ntpicture/internal/imageview	(cached)
+ok  	nimbleterminal.dev/ntpicture/internal/kittyshm	(cached)
+?   	nimbleterminal.dev/ntpicture/internal/legacybridge	[no test files]
+?   	nimbleterminal.dev/ntpicture/internal/tools/notices	[no test files]
+ok  	nimbleterminal.dev/ntpicture/legacy	0.360s
+ok  	nimbleterminal.dev/ntpicture/playback	2.058s
+task: [test-no-cgo] go -C examples test -mod=readonly ./...
+ok  	nimbleterminal.dev/ntpicture/examples/animation	0.335s
+ok  	nimbleterminal.dev/ntpicture/examples/framebuffer	0.167s
+?   	nimbleterminal.dev/ntpicture/examples/grid	[no test files]
+ok  	nimbleterminal.dev/ntpicture/examples/internal/demohelp	(cached)
+?   	nimbleterminal.dev/ntpicture/examples/simple	[no test files]
+?   	nimbleterminal.dev/ntpicture/examples/still	[no test files]
+task: [vet] go vet -mod=readonly ./...
+task: [vet] go -C examples vet -mod=readonly ./...
+task: [lint-install] if test -x "/Users/evan/projects/ntpicture/.task/bin/golangci-lint"; then
+  exit 0
+fi
+V="v2.14.0"
+if command -v golangci-lint >/dev/null && golangci-lint version 2>/dev/null | grep -Fq "${V#v}"; then
+  exit 0
+fi
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+
+task: [lint] if test -x "/Users/evan/projects/ntpicture/.task/bin/golangci-lint"; then
+  LINTER="/Users/evan/projects/ntpicture/.task/bin/golangci-lint"
+else
+  LINTER="$(command -v golangci-lint)"
+fi
+"$LINTER" run ./...
+(cd examples && "$LINTER" run ./...)
+
+0 issues.
+0 issues.
+task: [cross-windows] go build -mod=readonly ./...
+task: [cross-windows] go -C examples build -mod=readonly ./...
+task: [build] go build -mod=readonly ./...
+task: [build-examples] mkdir -p bin
+task: [build-examples] go -C examples build -mod=readonly -o ../bin/ntpicture-still ./still
+task: [build-examples] go -C examples build -mod=readonly -o ../bin/ntpicture-simple ./simple
+task: [build-examples] go -C examples build -mod=readonly -o ../bin/ntpicture-grid ./grid
+task: [build-examples] go -C examples build -mod=readonly -o ../bin/ntpicture-animation ./animation
+task: [build-examples] go -C examples build -mod=readonly -o ../bin/ntpicture-framebuffer ./framebuffer
+task: [build-wasm] mkdir -p web/demos
+task: [build-wasm] go -C examples build -mod=readonly -o ../web/demos/still.wasm ./still
+task: [build-wasm] go -C examples build -mod=readonly -o ../web/demos/simple.wasm ./simple
+task: [build-wasm] go -C examples build -mod=readonly -o ../web/demos/grid.wasm ./grid
+task: [build-wasm] go -C examples build -mod=readonly -o ../web/demos/animation.wasm ./animation
+task: [build-wasm] go -C examples build -mod=readonly -o ../web/demos/framebuffer.wasm ./framebuffer
+task: [build-wasm-site] go -C examples tool booba-assets --no-index ../web
+  wasm_exec.js          → ../web/wasm_exec.js
+  booba/ (19 files)      → ../web/booba
+  ghostty-web/ (3 files) → ../web/ghostty-web
+task: [build-wasm-site] cp LICENSE NOTICE.md THIRD_PARTY_NOTICES.md web/
+task: [check-site] node --check web/site.js
+task: [check-site] node scripts/check-site.mjs
+Site links, runtime assets, and five WASM binaries checked.
+task: [check-site] node scripts/smoke-demo.mjs still
+still: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs simple
+simple: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs grid
+grid: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs animation
+animation: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs framebuffer
+framebuffer: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs animation keep
+animation: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs animation composite
+animation: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs animation scroll
+animation: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs animation scroll keep
+animation: startup, action publication, resize/input, and clean exit passed
+task: [check-site] node scripts/smoke-demo.mjs framebuffer keep
+framebuffer: startup, action publication, resize/input, and clean exit passed
+task: [notices-check] mkdir -p dist
+task: [notices-check] go run ./internal/tools/notices > dist/THIRD_PARTY_NOTICES.md
+task: [notices-check] cmp THIRD_PARTY_NOTICES.md dist/THIRD_PARTY_NOTICES.md
+task: [test-wasm] go test -mod=readonly -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./... ./examples/...
+ok  	nimbleterminal.dev/ntpicture	1.781s
+ok  	nimbleterminal.dev/ntpicture/animation	0.248s
+ok  	nimbleterminal.dev/ntpicture/decoders	0.182s
+ok  	nimbleterminal.dev/ntpicture/internal/imageview	0.181s
+ok  	nimbleterminal.dev/ntpicture/internal/kittyshm	0.186s
+?   	nimbleterminal.dev/ntpicture/internal/legacybridge	[no test files]
+?   	nimbleterminal.dev/ntpicture/internal/tools/notices	[no test files]
+ok  	nimbleterminal.dev/ntpicture/legacy	0.438s
+ok  	nimbleterminal.dev/ntpicture/playback	2.699s
+ok  	nimbleterminal.dev/ntpicture/examples/animation	0.495s
+ok  	nimbleterminal.dev/ntpicture/examples/framebuffer	0.272s
+?   	nimbleterminal.dev/ntpicture/examples/grid	[no test files]
+ok  	nimbleterminal.dev/ntpicture/examples/internal/demohelp	0.199s
+?   	nimbleterminal.dev/ntpicture/examples/simple	[no test files]
+?   	nimbleterminal.dev/ntpicture/examples/still	[no test files]
+task: [vulncheck-install] go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+task: [vulncheck] "/Users/evan/projects/ntpicture/.task/bin/govulncheck" -test ./...
+No vulnerabilities found.
+task: [vulncheck] "/Users/evan/projects/ntpicture/.task/bin/govulncheck" -test ./...
+No vulnerabilities found.
+task: [vulncheck-wasm] "/Users/evan/projects/ntpicture/.task/bin/govulncheck" ./... ./examples/...
+No vulnerabilities found.

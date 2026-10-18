@@ -129,6 +129,15 @@ func kittyRGBBytes(img image.Image) []byte {
 		}
 		return out
 	}
+	if src, ok := img.(*image.NRGBA); ok {
+		for y := 0; y < b.Dy(); y++ {
+			row := src.Pix[y*src.Stride : y*src.Stride+4*b.Dx()]
+			for x := 0; x < len(row); x += 4 {
+				out = append(out, row[x], row[x+1], row[x+2])
+			}
+		}
+		return out
+	}
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
 			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)

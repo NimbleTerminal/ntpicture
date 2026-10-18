@@ -1,0 +1,42 @@
+goos: darwin
+goarch: arm64
+pkg: nimbleterminal.dev/ntpicture
+cpu: Apple M5 Max
+BenchmarkKittyRGBPacking/320x160/RGBA-18         	    5726	     40199 ns/op	  155653 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/320x160/RGBA-18         	    5958	     45013 ns/op	  155650 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/320x160/RGBA-18         	    4388	     48632 ns/op	  155650 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/320x160/NRGBA-18        	     542	    484430 ns/op	  360461 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/NRGBA-18        	     537	    452685 ns/op	  360453 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/NRGBA-18        	     518	    444932 ns/op	  360452 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/NRGBASubimage-18         	     552	    434725 ns/op	  360452 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/NRGBASubimage-18         	     553	    433018 ns/op	  360453 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/NRGBASubimage-18         	     555	    437854 ns/op	  360451 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/Generic-18               	     298	    802374 ns/op	  360452 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/Generic-18               	     298	    794062 ns/op	  360452 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/320x160/Generic-18               	     300	    796657 ns/op	  360453 B/op	   51201 allocs/op
+BenchmarkKittyRGBPacking/640x320/RGBA-18                  	    1617	    148911 ns/op	  614401 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/640x320/RGBA-18                  	    1635	    145270 ns/op	  614400 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/640x320/RGBA-18                  	    1670	    145438 ns/op	  614401 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/640x320/NRGBA-18                 	     138	   1734370 ns/op	 1433605 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/NRGBA-18                 	     138	   1735065 ns/op	 1433609 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/NRGBA-18                 	     138	   1731213 ns/op	 1433607 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/NRGBASubimage-18         	     138	   1728002 ns/op	 1433611 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/NRGBASubimage-18         	     138	   1732085 ns/op	 1433607 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/NRGBASubimage-18         	     138	   1732461 ns/op	 1433608 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/Generic-18               	      75	   3179486 ns/op	 1433609 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/Generic-18               	      78	   3163716 ns/op	 1433606 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/640x320/Generic-18               	      75	   3206867 ns/op	 1433605 B/op	  204801 allocs/op
+BenchmarkKittyRGBPacking/1280x640/RGBA-18                 	     346	    648962 ns/op	 2457609 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/1280x640/RGBA-18                 	     327	    764843 ns/op	 2457604 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/1280x640/RGBA-18                 	     322	    684909 ns/op	 2457603 B/op	       1 allocs/op
+BenchmarkKittyRGBPacking/1280x640/NRGBA-18                	      32	   7200158 ns/op	 5734409 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/NRGBA-18                	      32	   7160771 ns/op	 5734426 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/NRGBA-18                	      32	   7120148 ns/op	 5734419 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/NRGBASubimage-18        	      33	   7092158 ns/op	 5734408 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/NRGBASubimage-18        	      33	   8363125 ns/op	 5734466 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/NRGBASubimage-18        	      28	   7891969 ns/op	 5734433 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/Generic-18              	      16	  13626750 ns/op	 5734419 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/Generic-18              	      16	  13185263 ns/op	 5734407 B/op	  819201 allocs/op
+BenchmarkKittyRGBPacking/1280x640/Generic-18              	      18	  13223516 ns/op	 5734404 B/op	  819201 allocs/op
+PASS
+ok  	nimbleterminal.dev/ntpicture	8.659s
