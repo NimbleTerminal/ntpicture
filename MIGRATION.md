@@ -218,7 +218,7 @@ were independently validated in this documentation task.
   renderer. `testdata/compat/picture.go` remains a proposed alias adapter used
   by temporary-copy checks; installing it in NTCharts remains separate work.
 
-## Legacy glyph-cache fix (unreleased; intended for v0.1.1)
+## Legacy glyph-cache fix (v0.1.1)
 
 In v0.1.0, the public `legacy.Model.View()` and `String()` bridge rendered a
 copy of its stored model and discarded the populated glyph cache. Repeated
@@ -240,11 +240,10 @@ host View updates the same picture; copying a Model before its first View does
 not populate the original's cache. Continue forwarding messages and executing
 returned commands, and keep source pixels immutable until replaced.
 
-The intended consumer pin is `nimbleterminal.dev/ntpicture v0.1.1` **after that
-release includes this fix**. This change is currently unreleased; v0.1.0 is
-still affected. Until publication, keep the workaround on v0.1.0 or test this
-checkout via a temporary replace directive. Do not treat a local replacement
-as verification of a published module.
+The fix is included in `nimbleterminal.dev/ntpicture v0.1.1`; v0.1.0 remains
+affected. Consumers can remove the workaround after upgrading and running the
+regression test above. Do not treat a local replacement as verification of a
+published module.
 
 ## Implemented in this checkout
 

@@ -110,6 +110,24 @@ lazy failure reporting, and two simultaneously playing pictures. Keep dated
 acceptance records here, including remaining coverage and the tested revision,
 so they survive completion of the extraction.
 
+### v0.1.1 release preparation (2026-10-19)
+
+On macOS/arm64 with Go 1.27.2, the release candidate based on `aa73102`
+passed `task ci`, `task consumers`, and `task browser-check`. The consumer
+script was updated to preserve published dependency requirements for nested
+consumer tests and accommodate Gloss's removed `internal/animate` package.
+Consumer tests use disposable copies and local replacements; ntqrcode's nested
+consumer test instead resolves its published ntpicture requirement. A fresh
+consumer with `GOWORK=off` also resolved `nimbleterminal.dev/ntpicture@v0.1.0`
+without replacements. The new version must be checked after its tag is pushed.
+No dependencies or production consumer pins were changed.
+
+These automated checks cover native race/shared-memory behavior, fallback,
+WASM execution under Node, demo lifecycle smoke tests, and bundled browser
+protocol/pixel handling. No new manual terminal/browser visual acceptance was
+performed; the manual matrix above remains pending for this candidate. The
+prior visual records below do not establish visual acceptance of v0.1.1.
+
 ### Visual verification
 
 #### 2026-10-12

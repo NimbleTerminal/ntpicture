@@ -2,12 +2,15 @@
 
 ## Unreleased
 
-- Avoid per-pixel allocations when packing opaque NRGBA images for Kitty zlib output.
+## v0.1.1 (2026-10-19)
 
+- Avoid per-pixel allocations when packing opaque NRGBA images for Kitty zlib output.
 - Fix `legacy.Model.View` and `String` discarding the glyph cache at the
   package bridge. Unchanged presentations now reuse rendered content without
   reading source pixels, while model copies and deferred Kitty renders retain
   their existing ownership behavior.
+- Document NTCharts compatibility and full migration paths, shared sessions,
+  and current consumer adoption.
 
 ## v0.1.0 (2026-10-17)
 

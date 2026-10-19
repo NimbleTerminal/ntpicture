@@ -46,7 +46,6 @@ def main():
         env = os.environ | {
             "GOWORK": "off",
             "CGO_ENABLED": "0",
-            "NTQRCODE_TEST_NTPICTURE": str(ROOT),
         }
         env.setdefault("GOCACHE", str(base / "go-cache"))
         for name in ("ntcharts", "ntcharts3d", "ntqrcode", "gloss"):
@@ -89,9 +88,10 @@ def main():
         modules = [base / name for name in ("ntcharts", "ntcharts3d", "ntqrcode", "gloss")]
         modules.append(picture / "chartpicture")
         for module in modules:
+            # Preserve published requirements: nested consumer tests deliberately
+            # ignore dependency replacements and resolve those versions remotely.
             edits = [
                 "go", "mod", "edit",
-                "-require=nimbleterminal.dev/ntpicture@v0.0.0",
                 f"-replace=nimbleterminal.dev/ntpicture={ROOT}",
                 f"-replace=github.com/NimbleMarkets/ntcharts/v2={base / 'ntcharts'}",
             ]
@@ -103,8 +103,11 @@ def main():
             (picture / "chartpicture", ["./..."]),
             (base / "ntqrcode", ["./qrcode"]),
             (base / "ntcharts3d", ["./..."]),
-            (base / "gloss", ["./internal/animate", "./internal/app"]),
+            (base / "gloss", ["./internal/app"]),
         ]
+        # Older Gloss checkouts still have the standalone animation package.
+        if (base / "gloss" / "internal" / "animate").is_dir():
+            checks.append((base / "gloss", ["./internal/animate"]))
         checks.append((base / "ntcharts", ["./picture/pictureurl"]))
         failures = []
         for directory, packages in checks:
