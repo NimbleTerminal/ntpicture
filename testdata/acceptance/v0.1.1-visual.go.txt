@@ -1,0 +1,42 @@
+package main
+import (
+ "fmt"
+ "image"
+ "image/color"
+ "sync/atomic"
+ tea "charm.land/bubbletea/v2"
+ booba "github.com/NimbleMarkets/go-booba"
+ nt "nimbleterminal.dev/ntpicture"
+ "nimbleterminal.dev/ntpicture/legacy"
+)
+type counted struct {image.Image; reads atomic.Int64}
+func(c *counted) At(x,y int)color.Color{c.reads.Add(1);return c.Image.At(x,y)}
+type model struct {old legacy.Model; modern *nt.Picture; src *counted; phase,cols,rows,redraw int; err string}
+func(m *model) replace() tea.Cmd {
+ w,h:=m.cols*8,m.rows*16
+ parent:=image.NewNRGBA(image.Rect(-4,-3,w+4,h+3))
+ img:=parent.SubImage(image.Rect(0,0,w,h)).(*image.NRGBA)
+ for y:=0;y<h;y++ {for x:=0;x<w;x++ {
+  c:=color.NRGBA{255,40,40,255}; if x>=w/3 {c=color.NRGBA{40,255,40,255}};if x>=2*w/3{c=color.NRGBA{40,80,255,255}}
+  if (x/16+y/16+m.phase)%2==0 {c.R/=2;c.G/=2;c.B/=2}; if x<3||y<3||x>=w-3||y>=h-3 {c=color.NRGBA{255,255,255,255}}
+  img.SetNRGBA(x,y,c)
+ }}
+ m.src=&counted{Image:img}
+ return tea.Batch(m.old.SetSize(m.cols,m.rows),m.old.SetImage(m.src),m.modern.Submit(nt.Frame{Image:img,Cols:m.cols,Rows:m.rows,Mode:nt.PictureKitty,CellWidth:8,CellHeight:16,Exact:true,Immutable:true}))
+}
+func(m *model) Init()tea.Cmd{return m.replace()}
+func(m *model) Update(msg tea.Msg)(tea.Model,tea.Cmd){
+ cmd:=m.modern.Update(msg)
+ switch v:=msg.(type){
+ case nt.ErrorMsg:m.err=fmt.Sprint(v)
+ case tea.WindowSizeMsg:m.cols=max(12,min(60,v.Width-2));m.rows=max(3,min(9,(v.Height-7)/2));return m,tea.Batch(cmd,m.replace())
+ case tea.KeyPressMsg:switch v.String(){case "q","ctrl+c":return m,tea.Sequence(m.modern.Close(),tea.Quit);case "r":m.phase++;return m,tea.Batch(cmd,m.replace());case "s":if m.cols>30{m.cols,m.rows=24,5}else{m.cols,m.rows=48,8};return m,tea.Batch(cmd,m.replace());case "space":m.redraw++}
+ }
+ return m,cmd
+}
+func(m *model) View()tea.View{
+ a:=m.old.View().Content;before:=m.src.reads.Load();b:=m.old.String();c:=m.old.View().Content
+ status:=m.modern.Status()
+ v:=tea.NewView(fmt.Sprintf("v0.1.1 focused check | r replace | s resize | space redraw | q quit\nlegacy glyph: cached=%v reads=%d redraw=%d phase=%d size=%dx%d\n",a==b&&b==c&&before==m.src.reads.Load(),before,m.redraw,m.phase,m.cols,m.rows)+a+fmt.Sprintf("\nNRGBA subimage: direct zlib | generation=%d presented=%d err=%s\n",status.Generation,status.Presented,m.err)+m.modern.View());v.AltScreen=true;return v
+}
+func main(){m:=&model{old:legacy.NewModel(),modern:nt.New(nt.Options{HostGeometry:true,Render:nt.Config{Fit:nt.FitFill,KittyFormat:nt.KittyFormatZlib,KittyMedium:nt.KittyMediumDirect}}),cols:40,rows:7};if err:=booba.Run(m);err!=nil{panic(err)}}

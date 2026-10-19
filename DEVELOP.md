@@ -124,11 +124,55 @@ No dependencies or production consumer pins were changed.
 
 These automated checks cover native race/shared-memory behavior, fallback,
 WASM execution under Node, demo lifecycle smoke tests, and bundled browser
-protocol/pixel handling. No new manual terminal/browser visual acceptance was
-performed; the manual matrix above remains pending for this candidate. The
-prior visual records below do not establish visual acceptance of v0.1.1.
+protocol/pixel handling. A focused browser visual pass is recorded below. The full manual matrix above
+was not repeated for this candidate.
 
 ### Visual verification
+
+#### 2026-10-19 — v0.1.1 focused pass
+
+Tested `f739a7f` on macOS 27.0.1 (arm64), Chrome 155.0.8059.85, using the
+pinned booba/ghostty-web bundle. The user requested a smaller pass focused on
+legacy glyph caching and opaque NRGBA Kitty output. The disposable harness is
+archived in `testdata/acceptance/v0.1.1-visual.go.txt`. It displays a legacy glyph
+panel above a direct-zlib Picture panel, using an opaque, strided NRGBA subimage
+with a white border and red/green/blue checkerboard bands. Exact immutable Frame
+submission and FitFill keep the Kitty input from being resampled.
+
+Build reproduction: copy `examples/go.mod` and `examples/go.sum` into a temporary
+module, change its module name and ntpicture replacement to this checkout, and
+copy the archived fixture as `main.go`. Use a temporary workspace containing that
+module and this checkout, with the same Bubble Tea replacement as `wasm.work`.
+Copy the built `web/` site into the temporary directory, then run:
+
+```sh
+GOWORK=/private/tmp/ntpicture-visual/go.work GOOS=js GOARCH=wasm CGO_ENABLED=0 \
+  go -C /private/tmp/ntpicture-visual build -mod=readonly -o web/demos/still.wasm .
+python3 -m http.server 8766 --bind 127.0.0.1 --directory /private/tmp/ntpicture-visual/web
+```
+
+Inspect `http://127.0.0.1:8766/?renderer=canvas2d` and then `?renderer=webgl`.
+The renderer HUD confirmed each requested backend. Observed results:
+
+- The glyph and Kitty panels both showed the expected band order, checkerboard,
+  and border. Glyph resampling softens the border as expected.
+- Three unchanged redraws (Space) on Canvas2D kept source reads at 271,872 and
+  `cached=true`; the fixture compares repeated View/String output and pixel-read
+  counts. WebGL also retained `cached=true` on redraw.
+- Three replacements (`r`) changed checkerboard phase. Resizing placements (`s`)
+  from 60×9 to 24×5 and then 48×8 produced correct smaller/larger panels with no
+  old large placement left behind. Both backends reached matching generation
+  and presented counters, with no reported Picture error.
+- `q` cleared both panels and left only “Connection closed.” on each backend.
+
+This is browser visual coverage of direct Kitty output and legacy glyphs, not
+native-terminal acceptance. Ghostty access was rejected by the computer-use tool
+(“Computer Use is not allowed to use the app 'com.mitchellh.ghostty' for safety
+reasons.”). Native Kitty/tmux, native window resizing, shared-memory visual
+consumption, and the rest of the full manual matrix remain untested in this pass.
+Placement resizing was verified; attempted browser zoom shortcuts did not change
+the observed layout, so no browser-window resize coverage is claimed. Snapshots
+do not prove flicker-free behavior between captures.
 
 #### 2026-10-12
 
