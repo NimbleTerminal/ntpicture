@@ -522,7 +522,7 @@ func (p *Picture) SetSize(cols, rows int) tea.Cmd {
 			return p.reportError(err)
 		}
 	}
-	return p.changed()
+	return p.changedConfig()
 }
 
 // SetTerminal applies an explicit host graphics decision without probing or
@@ -616,7 +616,7 @@ func (p *Picture) applyTerminalStatus(kitty bool, cellWidth, cellHeight int) (te
 	if p.ownsSession && p.opts.Session != nil {
 		p.opts.Session.setCellSize(cellWidth, cellHeight)
 	}
-	return p.changed(), true
+	return p.changedConfig(), true
 }
 
 // SetMode uses the picture’s terminal session capability. Pass PictureAuto to
@@ -721,7 +721,7 @@ func (p *Picture) changedWith(fromConfig bool) tea.Cmd {
 	if !p.visible || p.img == nil || p.cols == 0 || p.rows == 0 || p.opts.ClearOnReplace {
 		cleanup = p.clearFront()
 	}
-	sched := p.schedule()
+	sched := p.scheduleWithAborted(aborted)
 	if p.job != nil && fromConfig {
 		p.job.fromConfig = true
 	}
@@ -754,6 +754,10 @@ func (p *Picture) geometryError() error {
 }
 
 func (p *Picture) schedule() tea.Cmd {
+	return p.scheduleWithAborted(nil)
+}
+
+func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 	if p.closed || p.job != nil || !p.dirty {
 		return nil
 	}
@@ -772,6 +776,15 @@ func (p *Picture) schedule() tea.Cmd {
 		p.front.cfg.CellPixelWidth == cfg.CellPixelWidth && p.front.cfg.CellPixelHeight == cfg.CellPixelHeight && p.front.rasterSize == raster {
 		lease = p.front.lease
 		cfg.KittyID = p.front.cfg.KittyID
+	}
+	ownsID := false
+	if p.mode == PictureKitty && lease == nil && aborted != nil && aborted.placement != nil &&
+		aborted.placement.mode == PictureKitty && aborted.placement.ownsID && aborted.placement.lease != nil && aborted.placement.cfg.KittyID > 0 {
+		aborted.placement.ownsID = false
+		aborted.placement.kittyShared.release()
+		lease, ownsID = aborted.placement.lease, true
+		lease.active.Store(true)
+		cfg.KittyID = aborted.placement.cfg.KittyID
 	}
 	if p.mode == PictureKitty && lease == nil {
 		id, err := p.opts.NextID()
@@ -798,7 +811,7 @@ func (p *Picture) schedule() tea.Cmd {
 	}
 	placement.active.Store(true)
 	if p.mode == PictureKitty {
-		placement.lease = lease
+		placement.lease, placement.ownsID = lease, ownsID
 		if lease == nil {
 			lease = new(pictureImageID)
 			lease.active.Store(true)
@@ -914,13 +927,20 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 		}
 		j := v.job
 		if p.closed || j.ctx.Err() != nil || j.placement.generation != p.generation {
-			cleanup := p.dispose(j.placement)
 			j.cancel()
 			p.job = nil
 			if !p.closed && !p.dirty && p.frontNeedsPrepare() {
 				p.dirty = true
 			}
-			return tea.Batch(cleanup, p.schedule())
+			sched := p.scheduleWithAborted(j)
+			var cleanup tea.Cmd
+			if p.closed || j.placement.ownsID {
+				cleanup = p.dispose(j.placement)
+			} else {
+				j.placement.deactivate()
+				j.placement.kittyShared.release()
+			}
+			return tea.Batch(cleanup, sched)
 		}
 		if text, ok := v.frame.(string); ok {
 			j.placement.grid = text

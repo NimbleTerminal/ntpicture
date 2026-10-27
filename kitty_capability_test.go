@@ -498,3 +498,11 @@ func TestLegacySharedCapResolvesWhenEnvPreflightFails(t *testing.T) {
 		t.Fatalf("after ForceKittyCapability(Supported), kittySharedCap = %v, want Unknown", got)
 	}
 }
+
+func TestBuildKittyQueryAPCIncludesFeatureQueryForVirtualPlacements(t *testing.T) {
+	got := buildKittyQueryAPC(42069101)
+	want := "\x1b_Ga=q,t=d,e=T,U=1,f=24,s=1,v=1,i=42069101;AAAA\x1b\\"
+	if got != want {
+		t.Fatalf("buildKittyQueryAPC() = %q, want %q", got, want)
+	}
+}

@@ -225,10 +225,11 @@ func kittyEnvSignalFor(tmux bool) bool {
 
 // buildKittyQueryAPC encodes a Kitty graphics query (a=q): a tiny 1×1
 // transmit whose only purpose is to elicit a response. Kitty terminals
-// reply with `\e_Gi=<id>;OK\e\\`; non-Kitty terminals don't reply.
+// reply with `\e_Gi=<id>;OK\e\\` (and echo supported keys such as `U=1`
+// when `e=T` feature queries are supported); non-Kitty terminals don't reply.
 // The payload "AAAA" is base64 of three zero bytes (one RGB pixel).
 func buildKittyQueryAPC(id int) string {
-	return fmt.Sprintf("\x1b_Ga=q,t=d,f=24,s=1,v=1,i=%d;AAAA\x1b\\", id)
+	return fmt.Sprintf("\x1b_Ga=q,t=d,e=T,U=1,f=24,s=1,v=1,i=%d;AAAA\x1b\\", id)
 }
 
 // recordKittyResponse handles a uv.KittyGraphicsEvent. Any response

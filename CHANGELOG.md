@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Include `e=T,U=1` in the Kitty graphics capability probe APC (`a=q`) so terminals without `XTVERSION` can report virtual-placement support via feature-query responses.
+- Coalesce unstarted config/image/size/capability render jobs in place on `Picture` without advancing the Kitty image ID counter or queueing stale deletions.
+
 ## v0.1.1 (2026-10-19)
 
 - Avoid per-pixel allocations when packing opaque NRGBA images for Kitty zlib output.
