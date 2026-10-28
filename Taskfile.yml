@@ -197,6 +197,22 @@ tasks:
       - task: notices-check
       - task: test-wasm
       - task: vulncheck
+  bench-render:
+    desc: Benchmark presentation and playback to a discard sink (not visible FPS)
+    cmds: ["go test -mod=readonly -run '^$' -bench 'Benchmark(Presentation|PlaybackCache)$' -benchmem {{.CLI_ARGS}} ."]
+  bench-record:
+    desc: Archive benchmark samples and source/environment metadata
+    cmds: ['python3 scripts/bench-render.py {{.CLI_ARGS}}']
+  build-bench:
+    desc: Build the terminal/discard benchmark harness
+    cmds:
+      - mkdir -p bin
+      - go build -mod=readonly -o bin/ntpicture-bench ./cmd/ntpicture-bench
+  bench-terminal:
+    desc: Run the benchmark harness (pass explicit flags; defaults to discard)
+    cmds:
+      - task: build-bench
+      - bin/ntpicture-bench {{.CLI_ARGS}}
   clean:
     desc: Remove generated binaries and task tools
     cmds: ['rm -rf bin dist .task web/demos web/booba web/ghostty-web web/wasm_exec.js web/LICENSE web/NOTICE.md web/THIRD_PARTY_NOTICES.md']

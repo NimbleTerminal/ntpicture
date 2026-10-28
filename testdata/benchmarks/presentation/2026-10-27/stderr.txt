@@ -1,0 +1,1 @@
+task: [bench-render] go test -mod=readonly -run '^$' -bench 'Benchmark(Presentation|PlaybackCache)$' -benchmem '-count=5' '-benchtime=200ms' '-bench=Benchmark(Presentation|PlaybackCache)$' .

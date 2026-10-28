@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add repeatable presentation/playback benchmarks and a terminal workload runner with JSON timing, bandwidth, and environment reports.
+
 - Update StableID Kitty images in place with dirty rectangles; skip unchanged pixels.
 - Cache bounded playback frames in the terminal (32 MiB default) and select cached frames without re-encoding.
 - Add `Config.Transient`; FreshIDs playback sends the `N=1` eviction hint.

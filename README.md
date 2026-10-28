@@ -301,3 +301,7 @@ render configuration, viewport, source replacement, and hiding invalidate reuse.
 playback enables it automatically. `KittyFormatZlib` continues to emit `o=z`
 through both full uploads and frame edits, including direct fallback from shared
 memory; Ghostty 1.4's Wuffs decoder needs no separate client option.
+
+For reproducible performance comparisons and terminal workload reports, see
+[BENCHMARKS.md](BENCHMARKS.md). The harness keeps output-production timings separate
+from visual terminal acceptance.

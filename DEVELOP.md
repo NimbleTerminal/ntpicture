@@ -506,3 +506,11 @@ identical pixels, geometry/viewport invalidation, direct and tmux continuation
 actions, transient hints, and playback cache selection after seeks/resizes.
 These are command-stream checks, not visual terminal verification. Ghostty 1.4
 and Kitty visual acceptance for this change remains unverified.
+
+## Repeatable presentation and terminal benchmark suite
+
+See [BENCHMARKS.md](BENCHMARKS.md) for `task bench-record`, `task bench-render`,
+and the terminal/discard runner (`task build-bench`, `task bench-terminal`).
+The suite covers unchanged/localized/scattered/full updates and cold/warm playback
+caches. Reports distinguish command/write completion from actual terminal display;
+capability declarations and geometry accompany terminal comparisons.
