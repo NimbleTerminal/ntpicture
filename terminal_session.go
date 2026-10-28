@@ -22,7 +22,7 @@ import (
 // Background, fit, encoding, and selection of glyph/Kitty remain picture policy.
 type TerminalOptions struct {
 	Kitty, SharedMemory KittyCapability
-	// VirtualPlacement overrides U=1 feature detection for placement-only panning.
+	// VirtualPlacement overrides U=1 feature detection for Unicode placeholders.
 	VirtualPlacement KittyCapability
 	// FrameEdits, FrameAppend and FrameSelect override separate Kitty feature
 	// queries. Unknown keeps frame operations disabled until positively detected.
@@ -446,15 +446,12 @@ type kittyTransport struct {
 	frame                  bool
 	appendFrame            bool
 	offset                 image.Point
-	placementID            int
-	crop                   image.Rectangle
-	disableVirtualCrop     bool
 	frameEdits, frameCache bool
 }
 
 func legacyTransport() kittyTransport {
 	ensureLegacyEnv()
-	return kittyTransport{tmux: tmuxPassthroughEnabled.Load(), shared: kittySharedUsable(), disableVirtualCrop: KittyCapability(kittyVirtualCap.Load()) != KittyCapabilitySupported,
+	return kittyTransport{tmux: tmuxPassthroughEnabled.Load(), shared: kittySharedUsable(),
 		frameEdits: KittyCapability(kittyFrameCaps[0].Load()) == KittyCapabilitySupported,
 		frameCache: KittyCapability(kittyFrameCaps[1].Load()) == KittyCapabilitySupported && KittyCapability(kittyFrameCaps[2].Load()) == KittyCapabilitySupported}
 }
@@ -464,9 +461,8 @@ func (s *TerminalSession) transport() kittyTransport {
 	}
 	state := s.Snapshot()
 	return kittyTransport{tmux: state.TmuxPassthrough, shared: state.SharedMemory == KittyCapabilitySupported,
-		disableVirtualCrop: state.VirtualPlacement != KittyCapabilitySupported,
-		frameEdits:         state.FrameEdits == KittyCapabilitySupported,
-		frameCache:         state.FrameAppend == KittyCapabilitySupported && state.FrameSelect == KittyCapabilitySupported}
+		frameEdits: state.FrameEdits == KittyCapabilitySupported,
+		frameCache: state.FrameAppend == KittyCapabilitySupported && state.FrameSelect == KittyCapabilitySupported}
 }
 func (t kittyTransport) wrap(seq string) string {
 	if t.tmux {

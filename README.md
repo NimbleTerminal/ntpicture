@@ -92,25 +92,9 @@ pic.SetViewport(ntpicture.Viewport{Y: 20, Width: 80, Height: 15})
 content := pic.View() // rows 20–34 of the prepared image
 ```
 
-### Source-rectangle panning
-
-In Kitty mode, `SetImageCropped` / `SetImageImmutableCropped` upload the whole
-source once for transparent-background `FitContain`, or `FitFill` with a crop
-whose aspect matches the cell rectangle in pixels, when it fits within
-`MaxKittyPanPixels` (16 Mi pixels) and `Config.MaxRasterPixels`, if set.
-Subsequent `SetCrop` calls update only the virtual placement's source rectangle;
-they reuse the image ID and placeholder grid. Crops use source coordinates,
-including nonzero image origins. Empty crops return to ordinary full-image fitting.
-
-Panning requires `TerminalState.VirtualPlacement == KittyCapabilitySupported`.
-Discovery sends a plain graphics query first and, after its `OK` reply, sends a
-separate `e=T,U=1` feature query. Only an `OK` reply echoing `U=1` enables the
-optimization. Hosts with verified support can set `TerminalOptions.VirtualPlacement`
-explicitly; forcing basic Kitty support alone does not grant it. Unknown or
-unsupported features, opaque/translucent backgrounds, mismatched `FitFill` aspect,
-oversized sources, and `FitCover` use ordinary per-crop preparation.
-StableID dirty-frame edits and playback caching remain separate from whole-source
-panning, so changing between them replaces the image as needed.
+`SetCrop` prepares and uploads the cropped pixels. Unicode-placeholder feature
+support does not imply source-rectangle support on virtual placements. For
+scrolling without image uploads, use `SetViewport` over a prepared placement.
 
 ### Framebuffers and exact pixels
 

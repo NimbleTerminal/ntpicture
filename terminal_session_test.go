@@ -309,7 +309,7 @@ func TestTerminalSessionFeatureDetection(t *testing.T) {
 		if !strings.Contains(raw, "a=q,e=T,U=1") || strings.Contains(raw, "AAAA") || strings.Contains(raw, "\x1bPtmux;") != tmux {
 			t.Fatalf("wrong feature query: %q", raw)
 		}
-		if s.Snapshot().VirtualPlacement != KittyCapabilityUnknown || !s.transport().disableVirtualCrop {
+		if s.Snapshot().VirtualPlacement != KittyCapabilityUnknown {
 			t.Fatal("plain OK granted virtual placements")
 		}
 		s.Update(terminalFeatureTick{s})
@@ -322,7 +322,7 @@ func TestTerminalSessionFeatureDetection(t *testing.T) {
 			t.Fatal("missing U granted support")
 		}
 		s.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: s.probeID + 2, VirtualPlacement: true}, Payload: []byte("OK")})
-		if s.Snapshot().VirtualPlacement != KittyCapabilitySupported || s.transport().disableVirtualCrop {
+		if s.Snapshot().VirtualPlacement != KittyCapabilitySupported {
 			t.Fatal("U=1 not recorded")
 		}
 	}
