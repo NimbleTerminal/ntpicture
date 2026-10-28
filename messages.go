@@ -2,6 +2,7 @@ package ntpicture
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"image"
 	"nimbleterminal.dev/ntpicture/internal/kittyshm"
 	"nimbleterminal.dev/ntpicture/internal/legacybridge"
 )
@@ -9,6 +10,9 @@ import (
 // kittyFrameMsg carries the result of building a Kitty APC payload + grid for
 // a specific generation of a legacyModel.
 type kittyFrameMsg struct {
+	raster    *image.NRGBA
+	unchanged bool
+
 	modelID uint64
 	ID      int
 	Seq     uint64

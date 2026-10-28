@@ -78,6 +78,15 @@ func (transport kittyTransport) buildKittyAPC(img image.Image, id, cols, rows in
 	if err := encoder.Encode(&buf, img); err != nil {
 		return ""
 	}
+	if transport.frame {
+		o := transport.kittyPNGOptions(id, cols, rows, z...)
+		o.ImageWidth, o.ImageHeight = img.Bounds().Dx(), img.Bounds().Dy()
+		var out bytes.Buffer
+		if err := encodeKittyGraphicsData(&out, buf.Bytes(), o); err != nil {
+			return ""
+		}
+		return out.String()
+	}
 	return transport.buildKittyPNGAPC(buf.Bytes(), id, cols, rows, z...)
 }
 
@@ -280,8 +289,32 @@ func (transport kittyTransport) kittyPNGOptions(id, cols, rows int, z ...int) *k
 		Quiet:            2,
 		Chunk:            true,
 	}
+	if transport.frame {
+		o.Action = kitty.Frame
+		o.VirtualPlacement = false
+		o.Columns, o.Rows, o.Z = 0, 1, 0
+		o.OffsetX = 1 // X=1: replace pixels, including transparent pixels.
+		o.X, o.Y = transport.offset.X, transport.offset.Y
+		if transport.appendFrame {
+			o.Columns, o.Rows, o.Z = 1, 0, -1
+		}
+	}
+	if transport.transient && !transport.frame {
+		o.ChunkFormatter = func(s string) string {
+			if strings.Contains(s, "a=T") || strings.Contains(s, "a=t") {
+				return strings.Replace(s, "\x1b_G", "\x1b_GN=1,", 1)
+			}
+			return s
+		}
+	}
 	if transport.tmux {
-		o.ChunkFormatter = ansi.TmuxPassthrough
+		previous := o.ChunkFormatter
+		o.ChunkFormatter = func(s string) string {
+			if previous != nil {
+				s = previous(s)
+			}
+			return ansi.TmuxPassthrough(s)
+		}
 	}
 	return o
 }

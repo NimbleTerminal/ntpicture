@@ -498,3 +498,11 @@ scalers across Kitty jobs or a different resampler, which this change does not
 attempt. These local measurements are diagnostic, not portable latency
 guarantees. Preserve anchor and sampling tests, including translucent pixels
 and nonzero source origins, when revisiting this.
+
+### Kitty frame update validation (2026-10-27)
+
+Protocol regression tests cover StableID full/root edits, dirty rectangles,
+identical pixels, geometry/viewport invalidation, direct and tmux continuation
+actions, transient hints, and playback cache selection after seeks/resizes.
+These are command-stream checks, not visual terminal verification. Ghostty 1.4
+and Kitty visual acceptance for this change remains unverified.

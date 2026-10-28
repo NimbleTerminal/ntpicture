@@ -256,7 +256,9 @@ func TestSupersededStableIDBorrowerRetiresSharedMemory(t *testing.T) {
 	drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
 
 	// Prepare borrower B and deliver picturePrepared to Update without committing its sequence.
-	prepCmd := p.SetImage(randomNRGBA(2, 2))
+	changed := randomNRGBA(2, 2)
+	changed.Pix[0] ^= 255
+	prepCmd := p.SetImage(changed)
 	prepMsg := prepCmd()
 	seqCmd := p.Update(prepMsg)
 	borrowerObj := p.job.placement.kittyShared.object

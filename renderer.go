@@ -60,6 +60,9 @@ const (
 // Config configures rendering policy for Picture (via Options.Render) or
 // legacy.Model at construction.
 type Config struct {
+	// Transient asks supporting terminals to evict this image before persistent images.
+	Transient bool
+
 	// KittyZ sets placement depth; negative values place graphics under text.
 	KittyZ     int
 	KittyID    int         // default 43 (ignored by Picture, which uses Options.NextID)
@@ -181,6 +184,9 @@ func normalizeConfig(cfg Config) Config {
 }
 
 type kittyPrepareParams struct {
+	baseline *image.NRGBA
+	retain   bool
+
 	modelID         uint64
 	seq             uint64
 	img             image.Image
@@ -212,6 +218,22 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (kittyFrameMsg
 	if prepared == nil || ctx.Err() != nil {
 		return kittyFrameMsg{}, false
 	}
+	var raster *image.NRGBA
+	if p.retain {
+		b := prepared.Bounds()
+		raster = &image.NRGBA{Pix: kittyRGBABytes(prepared), Stride: 4 * b.Dx(), Rect: image.Rect(0, 0, b.Dx(), b.Dy())}
+	}
+	if p.baseline != nil && raster != nil && p.baseline.Rect == raster.Rect {
+		dirty := dirtyPixels(p.baseline, raster)
+		if dirty.Empty() {
+			return kittyFrameMsg{ID: p.kittyID, Seq: p.seq, Grid: buildKittyGrid(p.cols, p.rows, p.kittyID), raster: raster, unchanged: true, Format: p.format, Medium: KittyMediumDirect}, true
+		}
+		p.transport.frame = true
+		if dirty.Dx()*dirty.Dy()*4 < raster.Rect.Dx()*raster.Rect.Dy()*3 {
+			prepared = raster.SubImage(dirty)
+			p.transport.offset = dirty.Min
+		}
+	}
 	actualMedium, actualFormat := KittyMediumDirect, p.format
 	var apc string
 	var object *kittyshm.Object
@@ -229,7 +251,7 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (kittyFrameMsg
 		apc = p.transport.buildKittyAPC(prepared, p.kittyID, p.cols, p.rows, p.format, p.kittyZ)
 		yieldToJS()
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || apc == "" {
 		_ = object.Unlink()
 		return kittyFrameMsg{}, false
 	}
@@ -242,6 +264,7 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (kittyFrameMsg
 	}
 	grid := buildKittyGrid(p.cols, p.rows, p.kittyID)
 	return kittyFrameMsg{
+		raster:       raster,
 		modelID:      p.modelID,
 		ID:           p.kittyID,
 		Seq:          p.seq,

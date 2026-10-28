@@ -1,6 +1,7 @@
 package ntpicture
 
 import (
+	"image"
 	"os"
 	"runtime"
 	"sync"
@@ -369,18 +370,24 @@ func (s *TerminalSession) unavailable() error {
 	}
 }
 
-type kittyTransport struct{ tmux, shared bool }
+type kittyTransport struct {
+	tmux, shared bool
+	transient    bool
+	frame        bool
+	appendFrame  bool
+	offset       image.Point
+}
 
 func legacyTransport() kittyTransport {
 	ensureLegacyEnv()
-	return kittyTransport{tmuxPassthroughEnabled.Load(), kittySharedUsable()}
+	return kittyTransport{tmux: tmuxPassthroughEnabled.Load(), shared: kittySharedUsable()}
 }
 func (s *TerminalSession) transport() kittyTransport {
 	if s.legacy {
 		return legacyTransport()
 	}
 	state := s.Snapshot()
-	return kittyTransport{state.TmuxPassthrough, state.SharedMemory == KittyCapabilitySupported}
+	return kittyTransport{tmux: state.TmuxPassthrough, shared: state.SharedMemory == KittyCapabilitySupported}
 }
 func (t kittyTransport) wrap(seq string) string {
 	if t.tmux {

@@ -70,7 +70,8 @@ type Options struct {
 	// StableID reuses the displayed Kitty image ID while cell geometry and
 	// raster dimensions are unchanged, keeping View identical. Pixels update
 	// on transmission, before PresentedMsg; output already sent cannot be
-	// recalled. Resize, mode changes, hiding and clearing start a fresh ID.
+	// recalled. Requires Kitty animation-frame support (Ghostty 1.4+).
+	// Resize, mode changes, hiding and clearing start a fresh ID.
 	// ClearOnReplace takes precedence. Glyph rendering is unaffected.
 	StableID bool
 	// RetireDelay defaults to 50ms. A negative duration means immediate retirement.
@@ -117,6 +118,8 @@ type ErrorMsg struct {
 // KeepOnMainScreen, and Close) so hosts can manage mixed still and animated
 // images through a small local interface.
 type Picture struct {
+	frameEpoch uint64
+
 	opts                  Options
 	ownsSession           bool
 	mode                  PictureMode
@@ -144,6 +147,10 @@ type Picture struct {
 }
 
 type picturePlacement struct {
+	epoch  uint64
+	raster *image.NRGBA
+	frames *pictureFrames
+
 	cfg         Config
 	mode        PictureMode
 	cols, rows  int
@@ -696,6 +703,7 @@ func (p *Picture) changed() tea.Cmd {
 }
 
 func (p *Picture) changedConfig() tea.Cmd {
+	p.frameEpoch++
 	return p.changedWith(true)
 }
 
@@ -797,7 +805,9 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 		cfg.KittyID = id
 	}
 	transport := p.session().transport()
+	transport.transient = cfg.Transient
 	placement := &picturePlacement{
+		epoch:       p.frameEpoch,
 		cfg:         cfg,
 		mode:        p.mode,
 		cols:        p.cols,
@@ -830,6 +840,8 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 	p.job = job
 	img, mode, cols, rows := p.img, p.mode, p.cols, p.rows
 	var params kittyPrepareParams
+	var selectFrame string
+	var cached bool
 	if mode == PictureKitty {
 		cpw := max(1, int(float64(cfg.CellPixelWidth)*cfg.KittyResolutionFactor))
 		cph := max(1, int(float64(cfg.CellPixelHeight)*cfg.KittyResolutionFactor))
@@ -852,13 +864,18 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 			transport:  transport,
 			shared:     placement.kittyShared,
 		}
+		params.retain = p.opts.StableID && !p.opts.ClearOnReplace
+		selectFrame, cached = p.configureFrames(&params, placement)
 		params.shared.begin(params.seq)
 	}
 	job.run = func() tea.Msg {
 		var frame tea.Msg
 		if ctx.Err() == nil {
 			if mode == PictureKitty {
-				if msg, ok := prepareKittyFrame(ctx, params); ok {
+				if cached {
+					frame = kittyFrameMsg{APC: selectFrame, Grid: buildKittyGrid(cols, rows, cfg.KittyID), Format: cfg.KittyFormat, Medium: KittyMediumDirect}
+				} else if msg, ok := prepareKittyFrame(ctx, params); ok {
+					msg.APC += selectFrame
 					frame = msg
 				}
 			} else {
@@ -947,8 +964,17 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			return p.commit(j, p.opts.Render.KittyFormat, KittyMediumDirect)
 		}
 		f, ok := v.frame.(kittyFrameMsg)
-		if !ok || f.APC == "" {
+		if !ok || (f.APC == "" && !f.unchanged) {
 			return p.failPreparedJob(j, errors.New("ntpicture: image preparation failed"))
+		}
+		j.placement.raster = f.raster
+		if f.unchanged {
+			// No new transfer consumed the old shared object. Move ownership so
+			// retiring the previous placement cannot release it prematurely.
+			j.placement.kittyShared = p.front.kittyShared
+			p.front.kittyShared = &kittySharedState{}
+			j.placement.grid = f.Grid
+			return p.commit(j, p.format, p.medium)
 		}
 		if f.sharedMemory != nil && !j.placement.kittyShared.submit(f.Seq, f.sharedMemory) {
 			return p.failPreparedJob(j, errors.New("ntpicture: shared image was retired before transmission"))
@@ -1176,6 +1202,9 @@ func (p *Picture) View() string {
 // KeepOnMainScreen still preserves it on exit, and subsequent setters can
 // submit new images or configuration changes.
 func (p *Picture) Stop() tea.Cmd {
+	if p != nil {
+		p.frameEpoch++
+	}
 	if p == nil || p.closed {
 		return nil
 	}

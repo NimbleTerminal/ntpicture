@@ -46,6 +46,7 @@ type legacyModel struct {
 	// kittyFormat selects PNG or raw RGBA transmission (see Config.KittyFormat).
 	kittyFormat KittyFormat
 	kittyMedium KittyMedium
+	transient   bool
 	kittyShared *kittySharedState
 
 	// lastRenderedGeom records the (cols, rows, cellPixelW, cellPixelH)
@@ -90,6 +91,7 @@ func newLegacyModelWithConfig(cfg Config) legacyModel {
 		kittyResolutionFactor: cfg.KittyResolutionFactor,
 		kittyFormat:           cfg.KittyFormat,
 		kittyMedium:           cfg.KittyMedium,
+		transient:             cfg.Transient,
 		kittyShared:           &kittySharedState{},
 		fit:                   cfg.Fit,
 		anchor:                cfg.Anchor,
@@ -407,6 +409,7 @@ func (m *legacyModel) renderCmdContext(ctx context.Context) tea.Cmd {
 		transport:  legacyTransport(),
 		shared:     m.kittyShared,
 	}
+	params.transport.transient = m.transient
 	params.shared.begin(params.seq)
 	return func() tea.Msg {
 		msg, ok := prepareKittyFrame(ctx, params)

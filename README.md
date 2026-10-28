@@ -277,3 +277,27 @@ Copyright (c) 2026 [Neomantra Corp](https://www.neomantra.com).
 ----
 Made with :heart: and :fire: by the team behind [Nimble
 Terminal](https://nimbleterminal.dev).
+
+### Kitty frame updates and playback caching
+
+StableID updates use Kitty root-frame edits (`a=f,r=1,X=1`) when placement
+and raster geometry are unchanged. The previous placement stays live during
+chunked uploads. Changes covering less than 75% of the raster transmit their
+bounding rectangle; identical pixels produce no transmission. This requires
+animation-frame support (Kitty or Ghostty 1.4+). Use fresh IDs for terminals
+that support static Kitty graphics but not frame editing.
+
+Playback caches bounded sources exposing one-based `Frame()` and `Frames()`
+positions, including `animation.Player`. Those positions must identify immutable
+frames within the source. `playback.Options.FrameCacheBytes` limits terminal
+uncompressed RGBA storage: zero defaults to 32 MiB, negative disables caching.
+FreshIDs and ClearOnReplace disable it. After upload, repeated positions use
+only `a=a` controls and skip Picture rasterization/encoding; source decoding and
+composition still follow the source's normal timing and seeking semantics.
+Out-of-order seeks map source positions to terminal append order. Geometry,
+render configuration, viewport, source replacement, and hiding invalidate reuse.
+
+`Config.Transient` adds the `N=1` eviction hint on image creation. FreshIDs
+playback enables it automatically. `KittyFormatZlib` continues to emit `o=z`
+through both full uploads and frame edits, including direct fallback from shared
+memory; Ghostty 1.4's Wuffs decoder needs no separate client option.

@@ -1130,3 +1130,85 @@ func TestSharedPresentationViewportGetter(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalFrameCache(t *testing.T) {
+	frames := make([]animation.ClipFrame, 3)
+	for i := range frames {
+		img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		img.SetRGBA(0, 0, color.RGBA{R: byte(80 * i), A: 255})
+		frames[i] = animation.ClipFrame{Image: img, Delay: time.Millisecond}
+	}
+	player, err := animation.NewPlayer(&animation.Clip{Bounds: image.Rect(0, 0, 2, 2), Frames: frames, LoopCount: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fresh := range []bool{false, true} {
+		c := New(player, Options{FreshIDs: fresh, Picture: picture.Options{RetireDelay: -1, Render: picture.Config{Fit: picture.FitFill}}})
+		c.paused = true
+		c.SetSize(2, 2)
+		c.SetTerminal(true, 1, 1)
+		raw := collectRawOutput(t, c, c.Init())
+		if !strings.Contains(raw, "a=T") || strings.Contains(raw, "N=1") != fresh {
+			t.Fatalf("initial: %q", raw)
+		}
+		for _, n := range []int{2, 3, 1, 2, 3} {
+			raw = collectRawOutput(t, c, c.Seek(n))
+			if fresh {
+				if !strings.Contains(raw, "N=1") {
+					t.Fatal("fresh frame lacks transient hint")
+				}
+				continue
+			}
+			if !strings.Contains(raw, fmt.Sprintf("c=%d,q=2", n)) {
+				t.Fatalf("frame %d: %q", n, raw)
+			}
+			if n == 1 && (len(raw) >= 40 || strings.Contains(raw, "a=f")) {
+				t.Fatalf("root cache miss: %q", raw)
+			}
+		}
+		raw = collectRawOutput(t, c, c.Seek(2))
+		if !fresh && (len(raw) >= 40 || strings.Contains(raw, "a=f") || !strings.Contains(raw, "a=a")) {
+			t.Fatalf("cache miss: %q", raw)
+		}
+		raw = collectRawOutput(t, c, c.SetSize(3, 3))
+		if !strings.Contains(raw, "a=T") {
+			t.Fatal("resize did not retransmit")
+		}
+		// First position after resize is terminal frame 1, even when source frame 2.
+		raw = collectRawOutput(t, c, c.Seek(1))
+		if !fresh && !strings.Contains(raw, "a=f") {
+			t.Fatal("uncached seek not appended")
+		}
+		drive(t, c, c.Close())
+	}
+}
+
+func TestTerminalFrameCacheLoopsAndBudget(t *testing.T) {
+	frames := make([]animation.ClipFrame, 3)
+	for i := range frames {
+		img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		img.SetRGBA(0, 0, color.RGBA{R: byte(80 * i), A: 255})
+		frames[i] = animation.ClipFrame{Image: img, Delay: time.Millisecond}
+	}
+	for _, capBytes := range []int{0, 47, -1} {
+		player, err := animation.NewPlayer(&animation.Clip{Bounds: image.Rect(0, 0, 2, 2), Frames: frames, LoopCount: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := New(player, Options{FrameCacheBytes: capBytes, Wait: func(context.Context, time.Duration) bool { return true }, Picture: picture.Options{RetireDelay: -1, Render: picture.Config{Fit: picture.FitFill}}})
+		c.SetSize(2, 2)
+		c.SetTerminal(true, 1, 1)
+		raw := collectRawOutput(t, c, c.Init())
+		if !c.Status().Finished || c.Status().PresentedPlayer.Frame() != 3 {
+			t.Fatal("loop did not finish at frame 3")
+		}
+		if capBytes == 0 {
+			if strings.Count(raw, "a=T") != 1 || strings.Count(raw, "a=f") != 2 || strings.Count(raw, "a=a") != 5 {
+				t.Fatalf("loop cache counts: %q", raw)
+			}
+		} else if strings.Contains(raw, "a=a") {
+			t.Fatal("disabled/over-budget cache selected a terminal frame")
+		}
+		drive(t, c, c.Close())
+	}
+}

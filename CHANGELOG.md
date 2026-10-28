@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Update StableID Kitty images in place with dirty rectangles; skip unchanged pixels.
+- Cache bounded playback frames in the terminal (32 MiB default) and select cached frames without re-encoding.
+- Add `Config.Transient`; FreshIDs playback sends the `N=1` eviction hint.
+
 - Include `e=T,U=1` in the Kitty graphics capability probe APC (`a=q`) so terminals without `XTVERSION` can report virtual-placement support via feature-query responses.
 - Coalesce unstarted config/image/size/capability render jobs in place on `Picture` without advancing the Kitty image ID counter or queueing stale deletions.
 

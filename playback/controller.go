@@ -14,12 +14,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 	picture "nimbleterminal.dev/ntpicture"
 	"nimbleterminal.dev/ntpicture/animation"
+	"nimbleterminal.dev/ntpicture/internal/framecache"
 	"nimbleterminal.dev/ntpicture/internal/imageview"
 )
 
 // Wait must honor cancellation. Nil uses a cancellable timer.
 type Wait func(context.Context, time.Duration) bool
 type Options struct {
+	// FrameCacheBytes caps terminal RGBA animation storage. Zero uses 32 MiB; negative disables caching.
+	FrameCacheBytes int
+
 	// Picture supplies rendering options. Its StableID field is ignored;
 	// FreshIDs controls playback ID policy instead.
 	Picture picture.Options
@@ -59,6 +63,9 @@ type Status struct {
 // KeepOnMainScreen, and Close) so hosts can manage mixed still and animated
 // images through a small local interface.
 type Controller struct {
+	cache      *framecache.Source
+	cacheBytes int
+
 	pic                               *picture.Picture
 	source                            animation.Source
 	seeker                            animation.Seekable
@@ -125,8 +132,18 @@ func NewSource(source animation.Source, options Options) *Controller {
 		options.Wait = wait
 	}
 	options.Picture.StableID = !options.FreshIDs
-	c := &Controller{now: time.Now, pic: picture.New(options.Picture), wait: options.Wait, visible: true, rate: 1, clearOnReplace: options.Picture.ClearOnReplace}
+	if options.FreshIDs {
+		options.Picture.Render.Transient = true
+	}
+	if options.FrameCacheBytes == 0 {
+		options.FrameCacheBytes = 32 << 20
+	}
+	if options.FreshIDs || options.Picture.ClearOnReplace {
+		options.FrameCacheBytes = -1
+	}
+	c := &Controller{cacheBytes: options.FrameCacheBytes, now: time.Now, pic: picture.New(options.Picture), wait: options.Wait, visible: true, rate: 1, clearOnReplace: options.Picture.ClearOnReplace}
 	c.setSource(source)
+	c.resetCache()
 	return c
 }
 func (c *Controller) setSource(source animation.Source) {
@@ -163,7 +180,16 @@ func (c *Controller) submit(source animation.Source) tea.Cmd {
 		return c.pic.SetImage(nil)
 	}
 	img := source.Image()
-	cmd := c.pic.SetImageImmutable(img)
+	submittedImage := img
+	if c.cache != nil && img != nil {
+		if pos, ok := source.(interface {
+			Frame() int
+			Frames() int
+		}); ok {
+			submittedImage = &framecache.Image{Image: img, Source: c.cache, Frame: pos.Frame()}
+		}
+	}
+	cmd := c.pic.SetImageImmutable(submittedImage)
 	s := c.pic.Status()
 	if !validImage(img) {
 		// A rejected image reverts Picture to its front (or clears it).
@@ -211,6 +237,7 @@ func (c *Controller) SetSource(source animation.Source) tea.Cmd {
 	c.err = nil
 	c.presentationErr = nil
 	c.setSource(source)
+	c.resetCache()
 	return c.submit(c.source)
 }
 
@@ -715,4 +742,11 @@ func (c *Controller) presentation(cmd tea.Cmd) tea.Cmd {
 		c.presentationErr = nil
 	}
 	return tea.Batch(cmd, c.schedule())
+}
+
+func (c *Controller) resetCache() {
+	c.cache = nil
+	if bounded, ok := c.source.(interface{ Frames() int }); ok && c.cacheBytes > 0 && bounded.Frames() > 1 {
+		c.cache = &framecache.Source{Frames: bounded.Frames(), Bytes: c.cacheBytes}
+	}
 }

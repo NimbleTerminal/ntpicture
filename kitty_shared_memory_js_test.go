@@ -182,7 +182,9 @@ func TestStableIDBrowserSharedMemory(t *testing.T) {
 	p.opts.Render.KittyMedium = KittyMediumSharedMemory
 	var view string
 	for i := 0; i < 5; i++ {
-		messages := drivePicture(t, p, p.SetImage(randomNRGBA(2, 2)))
+		img := randomNRGBA(2, 2)
+		img.Pix[0] = byte(i)
+		messages := drivePicture(t, p, p.SetImage(img))
 		if p.Status().Medium != KittyMediumSharedMemory || r.Get("size").Int() != 1 || strings.Contains(output(messages), "a=d") {
 			t.Fatal("stream lost registry transport or deleted live image")
 		}
@@ -190,6 +192,9 @@ func TestStableIDBrowserSharedMemory(t *testing.T) {
 			t.Fatal("stream changed browser placeholders")
 		}
 		view = p.View()
+		if raw := output(drivePicture(t, p, p.SetImage(img))); raw != "" || r.Get("size").Int() != 1 || p.Status().Medium != KittyMediumSharedMemory {
+			t.Fatal("identical frame lost shared-memory ownership or emitted output")
+		}
 	}
 	drivePicture(t, p, p.Keep())
 	if r.Get("size").Int() != 0 || p.View() != view {

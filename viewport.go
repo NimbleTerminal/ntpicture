@@ -19,12 +19,18 @@ type Viewport struct{ X, Y, Width, Height int }
 // Subsequent frames use this viewport until ResetViewport is called.
 func (p *Picture) SetViewport(v Viewport) {
 	if p != nil && !p.closed {
+		if !p.viewportSet || p.viewport != v {
+			p.frameEpoch++
+		}
 		p.viewport, p.viewportSet = v, true
 	}
 }
 
 func (p *Picture) ResetViewport() {
 	if p != nil && !p.closed {
+		if p.viewportSet {
+			p.frameEpoch++
+		}
 		p.viewportSet = false
 	}
 }
