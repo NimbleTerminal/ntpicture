@@ -162,8 +162,8 @@ func TestQueryKittySupportProbesSharedMemoryFirst(t *testing.T) {
 func TestQueryKittySupportProbesSharedMemoryWhenForced(t *testing.T) {
 	resetKittySharedCap(t)
 	seq := queryKittySupportRaw(t)
-	if !strings.Contains(seq, "a=q,t=s") || strings.Contains(seq, "a=q,t=d") {
-		t.Fatalf("want only the t=s query: %q", seq)
+	if !strings.Contains(seq, "a=q,t=s") || !strings.Contains(seq, "a=q,t=d") {
+		t.Fatalf("want shared-memory and basic query (for feature discovery): %q", seq)
 	}
 }
 

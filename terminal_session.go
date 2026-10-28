@@ -23,19 +23,23 @@ import (
 type TerminalOptions struct {
 	Kitty, SharedMemory KittyCapability
 	// VirtualPlacement overrides U=1 feature detection for placement-only panning.
-	VirtualPlacement                KittyCapability
-	CellPixelWidth, CellPixelHeight int
-	TmuxPassthrough                 *bool
+	VirtualPlacement KittyCapability
+	// FrameEdits, FrameAppend and FrameSelect override separate Kitty feature
+	// queries. Unknown keeps frame operations disabled until positively detected.
+	FrameEdits, FrameAppend, FrameSelect KittyCapability
+	CellPixelWidth, CellPixelHeight      int
+	TmuxPassthrough                      *bool
 }
 
 // TerminalState is a value snapshot, never mutable shared configuration.
 // SharedMemory describes terminal support, not guaranteed local allocation.
 type TerminalState struct {
-	Kitty, SharedMemory             KittyCapability
-	VirtualPlacement                KittyCapability
-	CellPixelWidth, CellPixelHeight int
-	TmuxPassthrough                 bool
-	EnvSignalled                    bool
+	Kitty, SharedMemory                  KittyCapability
+	VirtualPlacement                     KittyCapability
+	FrameEdits, FrameAppend, FrameSelect KittyCapability
+	CellPixelWidth, CellPixelHeight      int
+	TmuxPassthrough                      bool
+	EnvSignalled                         bool
 }
 
 // TerminalSessionMsg announces a discovery or geometry change. Match Session
@@ -66,6 +70,7 @@ type TerminalSession struct {
 	probeID                   int
 	featureSent               bool
 	virtualForced             bool
+	frameForced               [frameFeatureCount]bool
 	probe                     *kittyshm.Object
 	legacy                    bool
 }
@@ -154,6 +159,7 @@ func envTerminalConfig() (tmux bool, kitty KittyCapability, kittyForced bool) {
 func NewTerminalSession(opts TerminalOptions) *TerminalSession {
 	s := &TerminalSession{state: TerminalState{
 		Kitty: opts.Kitty, SharedMemory: opts.SharedMemory, VirtualPlacement: opts.VirtualPlacement,
+		FrameEdits: opts.FrameEdits, FrameAppend: opts.FrameAppend, FrameSelect: opts.FrameSelect,
 		CellPixelWidth: opts.CellPixelWidth, CellPixelHeight: opts.CellPixelHeight,
 	}}
 	if s.state.CellPixelWidth <= 0 {
@@ -173,8 +179,11 @@ func NewTerminalSession(opts TerminalOptions) *TerminalSession {
 	s.kittyForced = s.state.Kitty != KittyCapabilityUnknown
 	s.sharedForced = s.state.SharedMemory != KittyCapabilityUnknown
 	s.virtualForced = opts.VirtualPlacement != KittyCapabilityUnknown
+	for i, cap := range s.state.frameCapabilities() {
+		s.frameForced[i] = *cap != KittyCapabilityUnknown
+	}
 	// Outside the 24-bit image allocator and distinct from legacy probe IDs.
-	s.probeID = kittyFeatureProbeID + 1 + int(terminalProbeIDs.Add(3))
+	s.probeID = kittyFeatureProbeID + frameFeatureCount + 1 + int(terminalProbeIDs.Add(3+frameFeatureCount))
 	return s
 }
 
@@ -188,6 +197,9 @@ func (s *TerminalSession) Snapshot() TerminalState {
 		state.Kitty = kittySupported()
 		state.SharedMemory = KittyCapability(kittySharedCap.Load())
 		state.VirtualPlacement = KittyCapability(kittyVirtualCap.Load())
+		for i, cap := range state.frameCapabilities() {
+			*cap = KittyCapability(kittyFrameCaps[i].Load())
+		}
 		state.TmuxPassthrough = tmuxPassthroughEnabled.Load()
 		state.EnvSignalled = kittyEnvSignalledFn()
 	} else {
@@ -237,7 +249,7 @@ func (s *TerminalSession) Init() tea.Cmd {
 	}
 	transport := s.transport()
 	var query string
-	if s.state.Kitty == KittyCapabilityUnknown || (s.state.Kitty == KittyCapabilitySupported && !s.virtualForced) {
+	if s.state.Kitty == KittyCapabilityUnknown || (s.state.Kitty == KittyCapabilitySupported && s.needsFeatureQueries()) {
 		query = transport.wrap(buildKittyQueryAPC(s.probeID))
 	}
 	if s.state.Kitty != KittyCapabilityUnsupported && !s.sharedForced && runtime.GOOS != "js" {
@@ -293,9 +305,9 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 			if !s.isKittyForced() {
 				s.state.Kitty = KittyCapabilitySupported
 			}
-			if !s.featureSent && !s.virtualForced {
+			if !s.featureSent && s.needsFeatureQueries() {
 				s.featureSent = true
-				raw := s.transport().wrap(buildKittyFeatureQueryAPC(s.probeID + 2))
+				raw := s.featureQueries()
 				feature = tea.Sequence(func() tea.Msg {
 					if s.closed.Load() {
 						return nil
@@ -311,6 +323,13 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 				s.state.VirtualPlacement = KittyCapabilityUnsupported
 			}
 		}
+		if s.featureSent {
+			for i, cap := range s.state.frameCapabilities() {
+				if v.Options.ID == s.probeID+3+i && !s.frameForced[i] {
+					resolveFrameCapability(cap, v, i)
+				}
+			}
+		}
 		if v.Options.ID == s.probeID+1 && !s.sharedForced {
 			if string(v.Payload) == "OK" {
 				s.state.SharedMemory = KittyCapabilitySupported
@@ -323,10 +342,18 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 	case terminalFeatureTick:
 		if s.legacy && v.session == s {
 			kittyVirtualCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
+			timeoutLegacyFrameCapabilities()
 			break
 		}
 		if v.session == s && !s.virtualForced && s.state.VirtualPlacement == KittyCapabilityUnknown {
 			s.state.VirtualPlacement = KittyCapabilityUnsupported
+		}
+		if v.session == s {
+			for i, cap := range s.state.frameCapabilities() {
+				if !s.frameForced[i] && *cap == KittyCapabilityUnknown {
+					*cap = KittyCapabilityUnsupported
+				}
+			}
 		}
 	case terminalSessionTick:
 		if v.session != s {
@@ -337,6 +364,13 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 		}
 		if s.state.SharedMemory == KittyCapabilityUnknown {
 			s.state.SharedMemory = KittyCapabilityUnsupported
+		}
+		if !s.featureSent {
+			for i, cap := range s.state.frameCapabilities() {
+				if !s.frameForced[i] && *cap == KittyCapabilityUnknown {
+					*cap = KittyCapabilityUnsupported
+				}
+			}
 		}
 	case kittyProbeTickMsg:
 		if s.legacy {
@@ -407,19 +441,22 @@ func (s *TerminalSession) unavailable() error {
 }
 
 type kittyTransport struct {
-	tmux, shared       bool
-	transient          bool
-	frame              bool
-	appendFrame        bool
-	offset             image.Point
-	placementID        int
-	crop               image.Rectangle
-	disableVirtualCrop bool
+	tmux, shared           bool
+	transient              bool
+	frame                  bool
+	appendFrame            bool
+	offset                 image.Point
+	placementID            int
+	crop                   image.Rectangle
+	disableVirtualCrop     bool
+	frameEdits, frameCache bool
 }
 
 func legacyTransport() kittyTransport {
 	ensureLegacyEnv()
-	return kittyTransport{tmux: tmuxPassthroughEnabled.Load(), shared: kittySharedUsable(), disableVirtualCrop: KittyCapability(kittyVirtualCap.Load()) != KittyCapabilitySupported}
+	return kittyTransport{tmux: tmuxPassthroughEnabled.Load(), shared: kittySharedUsable(), disableVirtualCrop: KittyCapability(kittyVirtualCap.Load()) != KittyCapabilitySupported,
+		frameEdits: KittyCapability(kittyFrameCaps[0].Load()) == KittyCapabilitySupported,
+		frameCache: KittyCapability(kittyFrameCaps[1].Load()) == KittyCapabilitySupported && KittyCapability(kittyFrameCaps[2].Load()) == KittyCapabilitySupported}
 }
 func (s *TerminalSession) transport() kittyTransport {
 	if s.legacy {
@@ -427,7 +464,9 @@ func (s *TerminalSession) transport() kittyTransport {
 	}
 	state := s.Snapshot()
 	return kittyTransport{tmux: state.TmuxPassthrough, shared: state.SharedMemory == KittyCapabilitySupported,
-		disableVirtualCrop: state.VirtualPlacement != KittyCapabilitySupported}
+		disableVirtualCrop: state.VirtualPlacement != KittyCapabilitySupported,
+		frameEdits:         state.FrameEdits == KittyCapabilitySupported,
+		frameCache:         state.FrameAppend == KittyCapabilitySupported && state.FrameSelect == KittyCapabilitySupported}
 }
 func (t kittyTransport) wrap(seq string) string {
 	if t.tmux {

@@ -70,7 +70,8 @@ type Options struct {
 	// StableID reuses the displayed Kitty image ID while cell geometry and
 	// raster dimensions are unchanged, keeping View identical. Pixels update
 	// on transmission, before PresentedMsg; output already sent cannot be
-	// recalled. Requires Kitty animation-frame support (Ghostty 1.4+).
+	// recalled. Frame edits are used only after separate capability detection;
+	// otherwise replacements use ordinary image uploads under the stable ID.
 	// Resize, mode changes, hiding and clearing start a fresh ID.
 	// ClearOnReplace takes precedence. Glyph rendering is unaffected.
 	StableID bool
@@ -894,7 +895,7 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 		// Whole-source pan uploads and animation-frame rasters have different
 		// geometry and ownership. Keep their preparation paths separate.
 		if !canPan {
-			params.retain = p.opts.StableID && !p.opts.ClearOnReplace
+			params.retain = p.opts.StableID && !p.opts.ClearOnReplace && transport.frameEdits
 			selectFrame, cached = p.configureFrames(&params, placement)
 			placement.cacheSelect = cached
 		}

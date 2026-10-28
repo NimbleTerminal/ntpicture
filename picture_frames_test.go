@@ -11,7 +11,7 @@ import (
 func TestStableFrameEdits(t *testing.T) {
 	for _, format := range []KittyFormat{KittyFormatPNG, KittyFormatRGBA, KittyFormatZlib} {
 		t.Run(format.String(), func(t *testing.T) {
-			p := New(Options{StableID: true, RetireDelay: -1, Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyFormat: format}})
+			p := New(Options{Session: frameTestSession(t), StableID: true, RetireDelay: -1, Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyFormat: format}})
 			p.SetSize(200, 100)
 			p.SetTerminal(true, 1, 1)
 			defer func() { drivePicture(t, p, p.Close()) }()
@@ -75,7 +75,7 @@ func TestFrameContinuationAndTransient(t *testing.T) {
 
 // The private frame wrapper is exactly the input submitted by playback.Controller.
 func testCachedSharedOwnership(t *testing.T) {
-	p := New(Options{StableID: true, RetireDelay: -1, Session: NewTerminalSession(TerminalOptions{Kitty: KittyCapabilitySupported, SharedMemory: KittyCapabilitySupported}), Render: Config{Fit: FitFill, KittyMedium: KittyMediumSharedMemory}})
+	p := New(Options{StableID: true, RetireDelay: -1, Session: NewTerminalSession(TerminalOptions{FrameEdits: KittyCapabilitySupported, FrameAppend: KittyCapabilitySupported, FrameSelect: KittyCapabilitySupported, Kitty: KittyCapabilitySupported, SharedMemory: KittyCapabilitySupported}), Render: Config{Fit: FitFill, KittyMedium: KittyMediumSharedMemory}})
 	p.SetSize(2, 2)
 	p.SetTerminal(true, 1, 1)
 	defer func() { drivePicture(t, p, p.Close()) }()

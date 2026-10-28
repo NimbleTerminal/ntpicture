@@ -34,7 +34,7 @@ func (p *Picture) configureFrames(params *kittyPrepareParams, placement *picture
 	compatible := front != nil && front.lease == placement.lease && !placement.ownsID &&
 		front.epoch == p.frameEpoch && front.cfg == placement.cfg &&
 		!front.lease.overwritten.Load() && front.lease.loadOutputDone() == nil
-	if compatible {
+	if compatible && placement.transport.frameEdits {
 		params.baseline = front.raster
 	}
 	tagged, ok := p.img.(*framecache.Image)
@@ -42,6 +42,9 @@ func (p *Picture) configureFrames(params *kittyPrepareParams, placement *picture
 		return "", false
 	}
 	params.img = tagged.Image
+	if !placement.transport.frameCache {
+		return "", false
+	}
 	size := placement.rasterSize
 	src := tagged.Source
 	if src == nil || tagged.Frame < 1 || tagged.Frame > src.Frames || src.Frames <= 1 || size.X <= 0 || size.Y <= 0 || src.Bytes <= 0 ||

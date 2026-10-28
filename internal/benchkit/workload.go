@@ -66,7 +66,7 @@ func New(cfg Config, output io.Writer, draw bool) (*Workload, error) {
 	if cfg.Glyph {
 		cap = nt.KittyCapabilityUnsupported
 	}
-	session := nt.NewTerminalSession(nt.TerminalOptions{Kitty: cap, SharedMemory: nt.KittyCapabilityUnsupported, CellPixelWidth: cfg.CellWidth, CellPixelHeight: cfg.CellHeight, TmuxPassthrough: &cfg.Tmux})
+	session := nt.NewTerminalSession(nt.TerminalOptions{FrameEdits: cap, FrameAppend: cap, FrameSelect: cap, Kitty: cap, SharedMemory: nt.KittyCapabilityUnsupported, CellPixelWidth: cfg.CellWidth, CellPixelHeight: cfg.CellHeight, TmuxPassthrough: &cfg.Tmux})
 	w := &Workload{Config: cfg, Driver: Driver{Output: output, Draw: draw}, session: session, frames: frames}
 	opts := nt.Options{Session: session, HostGeometry: true, StableID: cfg.Policy == "stable", RetireDelay: -1, Render: nt.Config{Fit: nt.FitFill, KittyFormat: cfg.Format, CellPixelWidth: cfg.CellWidth, CellPixelHeight: cfg.CellHeight}}
 	if cfg.Policy == "cache" || cfg.Policy == "uncached" {

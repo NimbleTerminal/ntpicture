@@ -48,6 +48,7 @@ const kittyProbeTimeout = 250 * time.Millisecond
 
 var (
 	kittyVirtualCap            atomic.Int32
+	kittyFrameCaps             [frameFeatureCount]atomic.Int32
 	kittyFeatureProbed         atomic.Bool
 	kittyCap                   atomic.Int32 // holds KittyCapability values
 	kittyEnvSignalled          atomic.Bool  // recorded result of the env preflight
@@ -106,6 +107,9 @@ func forceKittyCapability(c KittyCapability) {
 	switch c {
 	case KittyCapabilityUnknown:
 		kittyVirtualCap.Store(int32(KittyCapabilityUnknown))
+		for i := range kittyFrameCaps {
+			kittyFrameCaps[i].Store(int32(KittyCapabilityUnknown))
+		}
 		kittyFeatureProbed.Store(false)
 	case KittyCapabilityUnsupported:
 		if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
@@ -124,6 +128,9 @@ func resetKittyProbeState() {
 	kittyProbed.Store(false)
 	kittyFeatureProbed.Store(false)
 	kittyVirtualCap.Store(int32(KittyCapabilityUnknown))
+	for i := range kittyFrameCaps {
+		kittyFrameCaps[i].Store(int32(KittyCapabilityUnknown))
+	}
 	kittySharedProbed.Store(false)
 	kittySharedAutoUnsupported.Store(false)
 	_ = kittySharedProbe.Swap(nil).Unlink()
@@ -139,6 +146,9 @@ func queryKittySupport() tea.Cmd {
 	var kittyQuery, sharedQuery string
 	switch kittySupported() {
 	case KittyCapabilitySupported:
+		if !kittyFeatureProbed.Load() && !kittyProbed.Swap(true) {
+			kittyQuery = tmuxWrap(buildKittyQueryAPC(kittyProbeID))
+		}
 		if !kittySharedProbed.Load() {
 			if !kittySharedProbeable() {
 				if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
@@ -259,12 +269,29 @@ func recordKittyResponse(ev uv.KittyGraphicsEvent) tea.Cmd {
 		}
 		return nil
 	}
-	if ev.Options.ID != kittyProbeID || string(ev.Payload) != "OK" || defaultTerminalSession.isKittyForced() {
+	if kittyFeatureProbed.Load() {
+		for i := range kittyFrameCaps {
+			if ev.Options.ID == kittyFeatureProbeID+1+i {
+				cap := KittyCapability(kittyFrameCaps[i].Load())
+				resolveFrameCapability(&cap, ev, i)
+				if cap == KittyCapabilitySupported {
+					kittyFrameCaps[i].Store(int32(cap))
+				} else {
+					kittyFrameCaps[i].CompareAndSwap(int32(KittyCapabilityUnknown), int32(cap))
+				}
+				return nil
+			}
+		}
+	}
+	if ev.Options.ID != kittyProbeID || string(ev.Payload) != "OK" || (defaultTerminalSession.isKittyForced() && kittySupported() != KittyCapabilitySupported) {
 		return nil
 	}
 	var feature tea.Cmd
 	if kittyFeatureProbed.CompareAndSwap(false, true) {
 		raw := tmuxWrap(buildKittyFeatureQueryAPC(kittyFeatureProbeID))
+		for i := range frameFeatureCount {
+			raw += tmuxWrap(buildKittyFrameQueryAPC(kittyFeatureProbeID+1+i, i))
+		}
 		feature = tea.Sequence(func() tea.Msg { return tea.RawMsg{Msg: raw} }, tea.Tick(kittyProbeTimeout, func(time.Time) tea.Msg { return terminalFeatureTick{defaultTerminalSession} }))
 	}
 	if kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilitySupported)) ||
@@ -278,6 +305,7 @@ func recordKittyResponse(ev uv.KittyGraphicsEvent) tea.Cmd {
 // elapsed without a response. Idempotent and a no-op if the capability
 // was already resolved (by an earlier response or by ForceKittyCapability).
 func recordKittyTimeout() tea.Cmd {
+	timeoutLegacyFrameCapabilities()
 	if kittyFeatureProbed.Load() {
 		kittyVirtualCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
 	}

@@ -300,14 +300,25 @@ Terminal](https://nimbleterminal.dev).
 
 ### Kitty frame updates and playback caching
 
-StableID updates use Kitty root-frame edits (`a=f,r=1,X=1`) when placement
-and raster geometry are unchanged. The previous placement stays live during
-chunked uploads. Changes covering less than 75% of the raster transmit their
-bounding rectangle; identical pixels produce no transmission. This requires
-animation-frame support (Kitty or Ghostty 1.4+). Use fresh IDs for terminals
-that support static Kitty graphics but not frame editing.
+StableID updates retain one image ID. Root-frame edits (`a=f,r=1,X=1`) are
+used only after separate Kitty feature queries confirm the required fields.
+Until then, or after unsupported replies/timeouts, updates use ordinary full
+image uploads (`a=T`) under the same ID. No terminal name or version enables
+frame operations.
 
-Playback caches bounded sources exposing one-based `Frame()` and `Frames()`
+After basic Kitty detection, the session sends independent feature queries for
+root-frame editing (`e=f,r=1,X=1,x=1,y=1`), appending frames
+(`e=f,c=1,X=1,z=-1`), and selecting frames (`e=a,c=1`). Only `OK` replies that
+echo all requested non-default fields enable the corresponding capability.
+The pinned input parser does not expose `e`, so each query has a separate ID
+and requires the operation-specific echoes; a plain graphics `OK` cannot grant
+support. `TerminalState.FrameEdits`, `FrameAppend`, and `FrameSelect` report the
+results. Hosts with independent capability knowledge can explicitly configure
+these fields in `TerminalOptions`; forcing basic `Kitty` support does not force
+them. Late positive replies can enable optimizations after a timeout.
+
+When both frame appending and selection are supported, playback caches bounded
+sources exposing one-based `Frame()` and `Frames()`
 positions, including `animation.Player`. Those positions must identify immutable
 frames within the source. `playback.Options.FrameCacheBytes` limits terminal
 uncompressed RGBA storage: zero defaults to 32 MiB, negative disables caching.

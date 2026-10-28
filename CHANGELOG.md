@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Detect Kitty root-frame edits, frame appending, and frame selection separately.
+  StableID updates fall back to full image uploads until the required feature
+  replies arrive; playback caching likewise requires append and select support.
+  Basic Kitty support and terminal identity no longer imply animation support.
+
 - Preserve FitFill stretching and background compositing when source crops cannot use placement-only panning.
 - Retain shared-memory ownership and transport status when selecting cached playback frames, including through Keep.
 

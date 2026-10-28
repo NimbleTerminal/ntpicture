@@ -14,7 +14,7 @@ import (
 
 func newPanPicture(t *testing.T, stable bool) *Picture {
 	t.Helper()
-	p := New(Options{Session: NewTerminalSession(TerminalOptions{VirtualPlacement: KittyCapabilitySupported, CellPixelWidth: 1, CellPixelHeight: 1}), StableID: stable, RetireDelay: -1, Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1}})
+	p := New(Options{Session: NewTerminalSession(TerminalOptions{FrameEdits: KittyCapabilitySupported, VirtualPlacement: KittyCapabilitySupported, CellPixelWidth: 1, CellPixelHeight: 1}), StableID: stable, RetireDelay: -1, Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1}})
 	p.SetKittyCapability(KittyCapabilitySupported)
 	p.SetSize(20, 10)
 	p.SetMode(PictureKitty)

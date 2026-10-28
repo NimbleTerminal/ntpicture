@@ -1143,7 +1143,7 @@ func TestTerminalFrameCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fresh := range []bool{false, true} {
-		c := New(player, Options{FreshIDs: fresh, Picture: picture.Options{RetireDelay: -1, Render: picture.Config{Fit: picture.FitFill}}})
+		c := New(player, Options{FreshIDs: fresh, Picture: picture.Options{Session: frameTestSession(t), RetireDelay: -1, Render: picture.Config{Fit: picture.FitFill}}})
 		c.paused = true
 		c.SetSize(2, 2)
 		c.SetTerminal(true, 1, 1)
@@ -1195,7 +1195,7 @@ func TestTerminalFrameCacheLoopsAndBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := New(player, Options{FrameCacheBytes: capBytes, Wait: func(context.Context, time.Duration) bool { return true }, Picture: picture.Options{RetireDelay: -1, Render: picture.Config{Fit: picture.FitFill}}})
+		c := New(player, Options{FrameCacheBytes: capBytes, Wait: func(context.Context, time.Duration) bool { return true }, Picture: picture.Options{Session: frameTestSession(t), RetireDelay: -1, Render: picture.Config{Fit: picture.FitFill}}})
 		c.SetSize(2, 2)
 		c.SetTerminal(true, 1, 1)
 		raw := collectRawOutput(t, c, c.Init())
@@ -1211,4 +1211,13 @@ func TestTerminalFrameCacheLoopsAndBudget(t *testing.T) {
 		}
 		drive(t, c, c.Close())
 	}
+}
+
+// Frame-cache protocol tests explicitly model a terminal with these features.
+func frameTestSession(t *testing.T) *picture.TerminalSession {
+	t.Helper()
+	s := picture.NewTerminalSession(picture.TerminalOptions{Kitty: picture.KittyCapabilitySupported, SharedMemory: picture.KittyCapabilityUnsupported,
+		VirtualPlacement: picture.KittyCapabilityUnsupported, FrameEdits: picture.KittyCapabilitySupported, FrameAppend: picture.KittyCapabilitySupported, FrameSelect: picture.KittyCapabilitySupported})
+	t.Cleanup(s.Close)
+	return s
 }

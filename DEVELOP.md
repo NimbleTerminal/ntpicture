@@ -523,3 +523,11 @@ from U=1 feature replies, including errors, missing keys, late replies, and tmux
 Cached-frame ownership tests exercise both native shared memory and the browser
 registry through selection and Keep. These are protocol/unit checks, not new
 terminal or browser visual acceptance records.
+
+### Kitty frame capability regression coverage
+
+Frame-edit and playback-cache protocol tests declare their required features
+explicitly. Negative tests cover plain OK replies, partial echoes, errors,
+timeouts, foreign sessions, and older terminals that never answer feature
+queries. StableID's fallback must emit full uploads while retaining the ID.
+This protocol coverage does not constitute real-terminal visual acceptance.

@@ -178,6 +178,8 @@ func TestKeepDetachesBrowserRegistry(t *testing.T) {
 func TestStableIDBrowserSharedMemory(t *testing.T) {
 	r := shmTestRegistry(t)
 	p := testPicture(true)
+	// Model a successful frame-edit feature reply for this optimization test.
+	p.session().state.FrameEdits = KittyCapabilitySupported
 	p.opts.StableID = true
 	p.opts.Render.KittyMedium = KittyMediumSharedMemory
 	var view string
