@@ -2,26 +2,35 @@
 
 ## Unreleased
 
-- Detect Kitty root-frame edits, frame appending, and frame selection separately.
-  StableID updates fall back to full image uploads until the required feature
-  replies arrive; playback caching likewise requires append and select support.
-  Basic Kitty support and terminal identity no longer imply animation support.
+- Update go-booba to v0.10.5, Bubble Tea to v2.1.1, Ultraviolet, and golden-test dependencies; align the WASM Bubble Tea fork with go-booba.
 
-- Preserve FitFill stretching and background compositing when source crops cannot use placement-only panning.
-- Retain shared-memory ownership and transport status when selecting cached playback frames, including through Keep.
+## v0.1.2 (2026-10-28)
 
-- Restore bounded whole-source Kitty crop panning: upload once, then reuse the
-  image and grid with placement-only crop updates when virtual-placement support
-  is confirmed; otherwise retain per-crop preparation.
-
-- Add repeatable presentation/playback benchmarks and a terminal workload runner with JSON timing, bandwidth, and environment reports.
-
-- Update StableID Kitty images in place with dirty rectangles; skip unchanged pixels.
-- Cache bounded playback frames in the terminal (32 MiB default) and select cached frames without re-encoding.
-- Add `Config.Transient`; FreshIDs playback sends the `N=1` eviction hint.
-
-- Query `e=T,U=1` separately after successful plain Kitty detection and track virtual-placement support for crop panning.
-- Coalesce unstarted config/image/size/capability render jobs in place on `Picture` without advancing the Kitty image ID counter or queueing stale deletions.
+- Pan cropped Kitty images without retransmitting pixels: upload a bounded
+  source once, then update its virtual placement while retaining the image ID
+  and placeholder grid. Sources are capped at 16 Mi pixels and any configured
+  raster limit. Unsupported placements, oversized sources, and crops requiring
+  stretching or background compositing retain per-crop preparation.
+- Detect virtual placements, root-frame edits, frame appending, and frame
+  selection independently through Kitty feature queries. Optimizations require
+  positive replies with the requested feature fields; basic graphics support
+  and terminal names or versions do not enable them. Missing or unsupported
+  replies keep the compatible rendering path active.
+- Update `StableID` images with dirty rectangles and skip unchanged pixels when
+  frame editing is supported. Otherwise, send full image replacements under the
+  same stable ID.
+- Cache bounded playback frames in the terminal and select previously uploaded
+  frames without re-encoding when both frame appending and selection are
+  supported. `playback.Options.FrameCacheBytes` defaults to 32 MiB; negative
+  values disable caching.
+- Add `Config.Transient` for the Kitty `N=1` eviction hint. Fresh-ID playback
+  marks its images transient.
+- Coalesce unstarted image, configuration, size, and capability render jobs
+  without consuming additional image IDs or queuing stale deletions.
+- Preserve shared-memory ownership and transport status when selecting cached
+  playback frames, including during `Keep`.
+- Add repeatable presentation and playback benchmarks, plus a terminal workload
+  runner that records JSON timing, bandwidth, and environment reports.
 
 ## v0.1.1 (2026-10-19)
 

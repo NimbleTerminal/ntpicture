@@ -382,7 +382,7 @@ but do not install it in NTCharts.
   validation; verify module resolution from a clean consumer outside the
   workspace.
 - Browser builds still require wasm.work's explicit Bubble Tea replacement:
-  `github.com/neomantra/bubbletea/v2 v2.0.0-20261009201241-c397c32a5074`. Keep
+  `github.com/neomantra/bubbletea/v2 v2.0.0-20261020122444-536722b0bdb6`. Keep
   that pin and its bridge checks until an upstream/browser-compatible
   replacement passes the demo and visual matrix. Native builds use upstream.
 

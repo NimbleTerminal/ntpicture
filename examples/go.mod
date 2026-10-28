@@ -4,12 +4,12 @@ go 1.26.8
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
-	github.com/NimbleMarkets/go-booba v0.9.2
-	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
+	github.com/NimbleMarkets/go-booba v0.10.5
+	github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
 	github.com/charmbracelet/x/ansi v0.11.9
-	nimbleterminal.dev/ntpicture v0.0.0
+	nimbleterminal.dev/ntpicture v0.1.2
 )
 
 require (

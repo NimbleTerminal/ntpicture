@@ -63,7 +63,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## charm.land/bubbletea/v2 v2.1.0
+## charm.land/bubbletea/v2 v2.1.1
 
 ```
 MIT License
@@ -115,7 +115,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## github.com/NimbleMarkets/go-booba v0.9.2
+## github.com/NimbleMarkets/go-booba v0.10.5
 
 ```
 MIT License
@@ -175,7 +175,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
+## github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
 
 ```
 MIT License
@@ -421,7 +421,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## github.com/neomantra/bubbletea/v2 v2.0.0-20261009201241-c397c32a5074
+## github.com/neomantra/bubbletea/v2 v2.0.0-20261020122444-536722b0bdb6
 
 ```
 MIT License
