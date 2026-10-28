@@ -371,11 +371,14 @@ func (s *TerminalSession) unavailable() error {
 }
 
 type kittyTransport struct {
-	tmux, shared bool
-	transient    bool
-	frame        bool
-	appendFrame  bool
-	offset       image.Point
+	tmux, shared       bool
+	transient          bool
+	frame              bool
+	appendFrame        bool
+	offset             image.Point
+	placementID        int
+	crop               image.Rectangle
+	disableVirtualCrop bool
 }
 
 func legacyTransport() kittyTransport {
@@ -387,7 +390,8 @@ func (s *TerminalSession) transport() kittyTransport {
 		return legacyTransport()
 	}
 	state := s.Snapshot()
-	return kittyTransport{tmux: state.TmuxPassthrough, shared: state.SharedMemory == KittyCapabilitySupported}
+	return kittyTransport{tmux: state.TmuxPassthrough, shared: state.SharedMemory == KittyCapabilitySupported,
+		disableVirtualCrop: ghosttyEnvSignal() && !s.isKittyForced()}
 }
 func (t kittyTransport) wrap(seq string) string {
 	if t.tmux {

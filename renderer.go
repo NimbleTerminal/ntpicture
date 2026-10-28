@@ -195,6 +195,8 @@ type kittyPrepareParams struct {
 	fit             FitMode
 	anchor          FitAnchor
 	crop            image.Rectangle
+	panSource       bool
+	panCrop         image.Rectangle
 	format          KittyFormat
 	medium          KittyMedium
 	cols, rows      int
@@ -210,7 +212,11 @@ func prepareKittyFrame(ctx context.Context, p kittyPrepareParams) (kittyFrameMsg
 		return kittyFrameMsg{}, false
 	}
 	var prepared image.Image
-	if p.rasterSize.X > 0 && p.rasterSize.Y > 0 {
+	if p.panSource {
+		prepared = p.img
+		p.transport.placementID = kittyPanPlacementID
+		p.transport.crop = p.panCrop
+	} else if p.rasterSize.X > 0 && p.rasterSize.Y > 0 {
 		prepared = prepareSourceCrop(p.img, p.crop, p.fit, p.rasterSize.X, p.rasterSize.Y, 1, 1, p.background, p.anchor)
 	} else {
 		prepared = prepareSourceCrop(p.img, p.crop, p.fit, p.cols, p.rows, p.cpw, p.cph, p.background, p.anchor)

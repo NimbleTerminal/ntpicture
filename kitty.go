@@ -289,6 +289,11 @@ func (transport kittyTransport) kittyPNGOptions(id, cols, rows int, z ...int) *k
 		Quiet:            2,
 		Chunk:            true,
 	}
+	if !transport.crop.Empty() {
+		o.PlacementID = transport.placementID
+		o.X, o.Y = transport.crop.Min.X, transport.crop.Min.Y
+		o.Width, o.Height = transport.crop.Dx(), transport.crop.Dy()
+	}
 	if transport.frame {
 		o.Action = kitty.Frame
 		o.VirtualPlacement = false

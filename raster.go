@@ -82,8 +82,12 @@ func (p *Picture) SetMaxRasterPixels(maxPixels int) tea.Cmd {
 	}
 	maxPixels = normalizeMaxRasterPixels(maxPixels)
 	before := p.RasterGeometry().Pixels
+	beforeCap := p.opts.Render.MaxRasterPixels
 	p.opts.Render.MaxRasterPixels = maxPixels
-	if p.mode != PictureKitty || p.RasterGeometry().Pixels == before {
+	if p.mode != PictureKitty || (p.RasterGeometry().Pixels == before && beforeCap == maxPixels) {
+		return nil
+	}
+	if p.RasterGeometry().Pixels == before && (p.img == nil || p.opts.Render.Crop.Empty()) {
 		return nil
 	}
 	return p.changedConfig()

@@ -92,6 +92,22 @@ pic.SetViewport(ntpicture.Viewport{Y: 20, Width: 80, Height: 15})
 content := pic.View() // rows 20–34 of the prepared image
 ```
 
+### Source-rectangle panning
+
+In Kitty mode, `SetImageCropped` / `SetImageImmutableCropped` upload the whole
+source once for `FitContain` and `FitFill` when it fits within
+`MaxKittyPanPixels` (16 Mi pixels) and `Config.MaxRasterPixels`, if set.
+Subsequent `SetCrop` calls update only the virtual placement's source rectangle;
+they reuse the image ID and placeholder grid. Crops use source coordinates,
+including nonzero image origins. Empty crops return to ordinary full-image fitting.
+
+Ghostty environment detection keeps the per-crop preparation fallback because
+its virtual placements do not honor these source rectangles. Explicitly forcing
+Kitty support enables the fast path; use that override only on a compatible
+terminal. Oversized sources and `FitCover` also use the existing fallback.
+StableID dirty-frame edits and playback caching remain separate from whole-source
+panning, so changing between them replaces the image as needed.
+
 ### Framebuffers and exact pixels
 
 `RasterGeometry()` reports the target cells, pixel size, and physical display

@@ -62,6 +62,16 @@ func encodeKittyGraphicsData(w io.Writer, data []byte, o *kitty.Options) error {
 // placement depth, so preserve negative values until that dependency fixes it.
 func kittyPlacementOptions(o *kitty.Options) []string {
 	opts := o.Options()
+	// A zero coordinate must reset a previous nonzero source rectangle.
+	// The upstream serializer otherwise omits x=0 and y=0.
+	if o.VirtualPlacement && o.Width > 0 && o.Height > 0 {
+		if o.X == 0 {
+			opts = append(opts, "x=0")
+		}
+		if o.Y == 0 {
+			opts = append(opts, "y=0")
+		}
+	}
 	if o.Z < 0 {
 		opts = append(opts, fmt.Sprintf("z=%d", o.Z))
 	}

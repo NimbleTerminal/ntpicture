@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Restore bounded whole-source Kitty crop panning: upload once, then reuse the
+  image and grid with placement-only crop updates. Preserve Ghostty's per-crop
+  fallback alongside StableID frame edits and playback caching.
+
 - Add repeatable presentation/playback benchmarks and a terminal workload runner with JSON timing, bandwidth, and environment reports.
 
 - Update StableID Kitty images in place with dirty rectangles; skip unchanged pixels.

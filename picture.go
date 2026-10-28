@@ -159,6 +159,9 @@ type picturePlacement struct {
 	kittyShared *kittySharedState
 	image       image.Image
 	imgID       uint64
+	panSource   bool
+	panPutOnly  bool
+	panCrop     image.Rectangle
 	grid        string
 	generation  uint64
 	retireAt    time.Time
@@ -778,10 +781,17 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 	}
 	cfg := p.opts.Render
 	raster := p.RasterGeometry().Pixels
+	transport := p.session().transport()
+	panCrop, canPan := p.canKittyPan(p.img, cfg, transport)
 	var lease *pictureImageID
-	if p.opts.StableID && !p.opts.ClearOnReplace && p.mode == PictureKitty && p.front != nil &&
+	sameGrid := !p.opts.ClearOnReplace && p.mode == PictureKitty && p.front != nil &&
 		p.front.mode == PictureKitty && p.front.cols == p.cols && p.front.rows == p.rows &&
-		p.front.cfg.CellPixelWidth == cfg.CellPixelWidth && p.front.cfg.CellPixelHeight == cfg.CellPixelHeight && p.front.rasterSize == raster {
+		p.front.cfg.CellPixelWidth == cfg.CellPixelWidth && p.front.cfg.CellPixelHeight == cfg.CellPixelHeight && p.front.rasterSize == raster
+	panPutOnly := sameGrid && canPan && p.front.panSource && p.front.imgID == p.imgID &&
+		p.front.cfg.KittyFormat == cfg.KittyFormat && p.front.cfg.KittyMedium == cfg.KittyMedium &&
+		p.front.cfg.KittyZ == cfg.KittyZ && p.front.cfg.Transient == cfg.Transient &&
+		p.front.lease != nil && !p.front.lease.overwritten.Load() && p.front.lease.loadOutputDone() == nil
+	if sameGrid && p.front.panSource == canPan && (p.opts.StableID || (canPan && p.front.imgID == p.imgID)) {
 		lease = p.front.lease
 		cfg.KittyID = p.front.cfg.KittyID
 	}
@@ -804,7 +814,6 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 		}
 		cfg.KittyID = id
 	}
-	transport := p.session().transport()
 	transport.transient = cfg.Transient
 	placement := &picturePlacement{
 		epoch:       p.frameEpoch,
@@ -817,6 +826,9 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 		kittyShared: &kittySharedState{},
 		image:       p.img,
 		imgID:       p.imgID,
+		panSource:   canPan,
+		panPutOnly:  panPutOnly,
+		panCrop:     panCrop,
 		generation:  p.generation,
 	}
 	placement.active.Store(true)
@@ -839,6 +851,18 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 	job := &pictureJob{placement: placement, ctx: ctx, cancel: cancel}
 	p.job = job
 	img, mode, cols, rows := p.img, p.mode, p.cols, p.rows
+	if panPutOnly {
+		frontGrid, frontFormat, frontMedium := p.front.grid, p.format, p.medium
+		putAPC := transport.buildKittyPutAPC(cfg.KittyID, kittyPanPlacementID, cols, rows, panCrop, cfg.KittyZ)
+		job.run = func() tea.Msg {
+			var frame tea.Msg
+			if ctx.Err() == nil {
+				frame = kittyFrameMsg{ID: cfg.KittyID, Seq: 1, APC: putAPC, Grid: frontGrid, Format: frontFormat, Medium: frontMedium}
+			}
+			return picturePrepared{p, job, frame}
+		}
+		return job.execute
+	}
 	var params kittyPrepareParams
 	var selectFrame string
 	var cached bool
@@ -854,6 +878,8 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 			fit:        cfg.Fit,
 			anchor:     cfg.Anchor,
 			crop:       cfg.Crop,
+			panSource:  canPan,
+			panCrop:    panCrop,
 			format:     cfg.KittyFormat,
 			medium:     cfg.KittyMedium,
 			cols:       cols,
@@ -864,8 +890,12 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 			transport:  transport,
 			shared:     placement.kittyShared,
 		}
-		params.retain = p.opts.StableID && !p.opts.ClearOnReplace
-		selectFrame, cached = p.configureFrames(&params, placement)
+		// Whole-source pan uploads and animation-frame rasters have different
+		// geometry and ownership. Keep their preparation paths separate.
+		if !canPan {
+			params.retain = p.opts.StableID && !p.opts.ClearOnReplace
+			selectFrame, cached = p.configureFrames(&params, placement)
+		}
 		params.shared.begin(params.seq)
 	}
 	job.run = func() tea.Msg {
@@ -1067,6 +1097,10 @@ func (p *Picture) commit(j *pictureJob, format KittyFormat, medium KittyMedium) 
 			old.ownsID = false
 			j.placement.ownsID = true
 		}
+		if j.placement.panPutOnly {
+			j.placement.kittyShared = old.kittyShared
+			old.kittyShared = &kittySharedState{}
+		}
 		if p.opts.RetireDelay < 0 || p.mode == PictureGlyph {
 			cleanup = p.retirePlacement(old)
 		} else {
@@ -1246,6 +1280,8 @@ func (p *Picture) Stop() tea.Cmd {
 		fit:        cfg.Fit,
 		anchor:     cfg.Anchor,
 		crop:       cfg.Crop,
+		panSource:  front.panSource,
+		panCrop:    front.panCrop,
 		format:     cfg.KittyFormat,
 		medium:     KittyMediumDirect,
 		cols:       front.cols,
@@ -1353,6 +1389,8 @@ func (p *Picture) keep(retransmit bool) tea.Cmd {
 		fit:        cfg.Fit,
 		anchor:     cfg.Anchor,
 		crop:       cfg.Crop,
+		panSource:  front.panSource,
+		panCrop:    front.panCrop,
 		format:     cfg.KittyFormat,
 		medium:     KittyMediumDirect,
 		cols:       front.cols,
