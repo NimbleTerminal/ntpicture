@@ -3,9 +3,6 @@ package ntpicture
 import (
 	"fmt"
 	"image"
-	"os"
-	"runtime"
-	"strings"
 
 	"nimbleterminal.dev/ntpicture/internal/framecache"
 )
@@ -38,14 +35,16 @@ func (p *Picture) canKittyPan(img image.Image, cfg Config, transport kittyTransp
 	if crop.Empty() {
 		return image.Rectangle{}, false
 	}
+	// Kitty placements preserve aspect ratio and cannot composite our background.
+	// Preserve the normal renderer's pixel semantics when either is required.
+	if !bgIsTransparent(cfg.Background) {
+		return image.Rectangle{}, false
+	}
+	target := p.RasterGeometry().Pixels
+	if cfg.Fit == FitFill && int64(crop.Dx())*int64(target.Y) != int64(crop.Dy())*int64(target.X) {
+		return image.Rectangle{}, false
+	}
 	return crop.Sub(b.Min), true
-}
-
-// Ghostty's virtual placements need per-crop images. Explicit capability
-// overrides remain available for hosts that know their terminal supports crops.
-func ghosttyEnvSignal() bool {
-	return runtime.GOOS == "js" || strings.Contains(strings.ToLower(os.Getenv("TERM")), "ghostty") ||
-		strings.Contains(strings.ToLower(os.Getenv("TERM_PROGRAM")), "ghostty") || os.Getenv("GHOSTTY_RESOURCES_DIR") != ""
 }
 
 func (transport kittyTransport) buildKittyPutAPC(id, placement, cols, rows int, crop image.Rectangle, z int) string {

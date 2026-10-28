@@ -1,6 +1,8 @@
 package ntpicture
 
 import (
+	tea "charm.land/bubbletea/v2"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -55,7 +57,7 @@ func TestTerminalSessionProbeRouting(t *testing.T) {
 		t.Fatal("Init must run once")
 	}
 	_ = b.Init()
-	reply := uv.KittyGraphicsEvent{Options: kitty.Options{ID: a.probeID}}
+	reply := uv.KittyGraphicsEvent{Options: kitty.Options{ID: a.probeID}, Payload: []byte("OK")}
 	if b.Update(reply) != nil || b.Snapshot().Kitty != KittyCapabilityUnknown {
 		t.Fatal("foreign probe accepted")
 	}
@@ -67,7 +69,12 @@ func TestTerminalSessionProbeRouting(t *testing.T) {
 	if cmd == nil || a.Snapshot().Kitty != KittyCapabilitySupported {
 		t.Fatal("late reply not accepted")
 	}
-	msg := cmd().(TerminalSessionMsg)
+	var msg TerminalSessionMsg
+	for _, m := range probeMessages(cmd) {
+		if v, ok := m.(TerminalSessionMsg); ok {
+			msg = v
+		}
+	}
 	if msg.Session != a || msg.State.Kitty != KittyCapabilitySupported || !IsPictureMsg(msg) {
 		t.Fatal("missing scoped notification")
 	}
@@ -80,7 +87,7 @@ func TestTerminalSessionProbeRouting(t *testing.T) {
 	forced := NewTerminalSession(TerminalOptions{Kitty: KittyCapabilityUnsupported})
 	defer forced.Close()
 	_ = forced.Init()
-	forced.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: forced.probeID}})
+	forced.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: forced.probeID}, Payload: []byte("OK")})
 	if forced.Snapshot().Kitty != KittyCapabilityUnsupported {
 		t.Fatal("reply overrode explicit unsupported")
 	}
@@ -250,7 +257,7 @@ func TestDefaultTerminalSessionTracksLegacyGeometry(t *testing.T) {
 
 	withDefault := New(Options{Session: DefaultTerminalSession()})
 	defer func() { _ = withDefault.Close() }()
-	msgs := drivePicture(t, withDefault, withDefault.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}))
+	msgs := drivePicture(t, withDefault, withDefault.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")}))
 	found := false
 	for _, m := range msgs {
 		if msg, ok := m.(TerminalSessionMsg); ok && msg.Session == DefaultTerminalSession() && msg.State.Kitty == KittyCapabilitySupported {
@@ -259,5 +266,64 @@ func TestDefaultTerminalSessionTracksLegacyGeometry(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("picture with DefaultTerminalSession did not emit TerminalSessionMsg on probe reply")
+	}
+}
+
+// Flatten probe commands, including their timeout messages, without routing them.
+func probeMessages(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if msg == nil {
+		return nil
+	}
+	v := reflect.ValueOf(msg)
+	if v.Kind() != reflect.Slice {
+		return []tea.Msg{msg}
+	}
+	var out []tea.Msg
+	for i := 0; i < v.Len(); i++ {
+		out = append(out, probeMessages(v.Index(i).Interface().(tea.Cmd))...)
+	}
+	return out
+}
+
+func TestTerminalSessionFeatureDetection(t *testing.T) {
+	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("TERM", "xterm-kitty")
+	for _, tmux := range []bool{false, true} {
+		opts := sessionOptions(tmux)
+		opts.Kitty = KittyCapabilityUnknown
+		s := NewTerminalSession(opts)
+		defer s.Close()
+		initial := output(probeMessages(s.Init()))
+		if strings.Contains(initial, "e=T") || !strings.Contains(initial, "a=q,t=d,f=24") {
+			t.Fatalf("not a plain detect query: %q", initial)
+		}
+		s.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: s.probeID}, Payload: []byte("EINVAL")})
+		if s.Snapshot().Kitty == KittyCapabilitySupported || s.featureSent {
+			t.Fatal("error granted support")
+		}
+		raw := output(probeMessages(s.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: s.probeID}, Payload: []byte("OK")})))
+		if !strings.Contains(raw, "a=q,e=T,U=1") || strings.Contains(raw, "AAAA") || strings.Contains(raw, "\x1bPtmux;") != tmux {
+			t.Fatalf("wrong feature query: %q", raw)
+		}
+		if s.Snapshot().VirtualPlacement != KittyCapabilityUnknown || !s.transport().disableVirtualCrop {
+			t.Fatal("plain OK granted virtual placements")
+		}
+		s.Update(terminalFeatureTick{s})
+		if s.Snapshot().VirtualPlacement != KittyCapabilityUnsupported {
+			t.Fatal("feature timeout did not resolve")
+		}
+		// A terminal ignoring feature keys may return OK without U=1.
+		s.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: s.probeID + 2}, Payload: []byte("OK")})
+		if s.Snapshot().VirtualPlacement != KittyCapabilityUnsupported {
+			t.Fatal("missing U granted support")
+		}
+		s.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: s.probeID + 2, VirtualPlacement: true}, Payload: []byte("OK")})
+		if s.Snapshot().VirtualPlacement != KittyCapabilitySupported || s.transport().disableVirtualCrop {
+			t.Fatal("U=1 not recorded")
+		}
 	}
 }

@@ -3,6 +3,7 @@ package ntpicture
 import (
 	"image"
 	"image/color"
+	"nimbleterminal.dev/ntpicture/internal/framecache"
 	"strings"
 	"testing"
 )
@@ -69,5 +70,34 @@ func TestFrameContinuationAndTransient(t *testing.T) {
 			t.Fatalf("Transient=%v: %q", transient, raw)
 		}
 		drivePicture(t, p, p.Close())
+	}
+}
+
+// The private frame wrapper is exactly the input submitted by playback.Controller.
+func testCachedSharedOwnership(t *testing.T) {
+	p := New(Options{StableID: true, RetireDelay: -1, Session: NewTerminalSession(TerminalOptions{Kitty: KittyCapabilitySupported, SharedMemory: KittyCapabilitySupported}), Render: Config{Fit: FitFill, KittyMedium: KittyMediumSharedMemory}})
+	p.SetSize(2, 2)
+	p.SetTerminal(true, 1, 1)
+	defer func() { drivePicture(t, p, p.Close()) }()
+	src := &framecache.Source{Frames: 2, Bytes: 32 << 20}
+	first := &framecache.Image{Image: randomNRGBA(2, 2), Source: src, Frame: 1}
+	second := &framecache.Image{Image: randomNRGBA(2, 2), Source: src, Frame: 2}
+	drivePicture(t, p, p.SetImageImmutable(first))
+	drivePicture(t, p, p.SetImageImmutable(second))
+	shared := p.front.kittyShared
+	obj := shared.object
+	if obj == nil {
+		t.Skip("shared memory unavailable")
+	}
+	raw := output(drivePicture(t, p, p.SetImageImmutable(first)))
+	if !strings.Contains(raw, "a=a") || p.medium != KittyMediumSharedMemory || p.front.kittyShared != shared || obj.Done() {
+		t.Fatal("cache select dropped shared-memory ownership")
+	}
+	raw = output(drivePicture(t, p, p.Keep()))
+	if !strings.Contains(raw, "a=T") || strings.Contains(raw, "t=s") {
+		t.Fatal("Keep did not detach cached shared-memory image")
+	}
+	if !obj.Done() {
+		t.Fatal("Keep leaked shared object")
 	}
 }

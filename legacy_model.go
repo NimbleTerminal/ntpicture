@@ -278,7 +278,7 @@ func isPictureMsg(msg tea.Msg) bool {
 	}
 	switch msg.(type) {
 	case applyKittyGridMsg, uv.CellSizeEvent, uv.KittyGraphicsEvent, kittyProbeTickMsg,
-		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg, KittyCapabilityMsg, TerminalSessionMsg, terminalSessionTick:
+		picturePrepared, pictureReady, pictureRetire, PresentedMsg, ErrorMsg, KittyCapabilityMsg, TerminalSessionMsg, terminalSessionTick, terminalFeatureTick:
 		return true
 	}
 	return false
@@ -331,6 +331,8 @@ func (m *legacyModel) Update(msg tea.Msg) tea.Cmd {
 		return recordKittyResponse(msg)
 	case kittyProbeTickMsg:
 		return recordKittyTimeout()
+	case terminalFeatureTick:
+		return defaultTerminalSession.Update(msg)
 	}
 	return nil
 }

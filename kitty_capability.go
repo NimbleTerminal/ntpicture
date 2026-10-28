@@ -40,12 +40,15 @@ const (
 // Chosen to be far above any sensible consumer-assigned ID so it can
 // never collide with real images.
 const kittyProbeID = 42069101
+const kittyFeatureProbeID = kittyProbeID + 2
 
 // kittyProbeTimeout is how long probing waits for a response before concluding
 // the terminal does not support Kitty graphics.
 const kittyProbeTimeout = 250 * time.Millisecond
 
 var (
+	kittyVirtualCap            atomic.Int32
+	kittyFeatureProbed         atomic.Bool
 	kittyCap                   atomic.Int32 // holds KittyCapability values
 	kittyEnvSignalled          atomic.Bool  // recorded result of the env preflight
 	kittyProbeMu               sync.Mutex
@@ -101,6 +104,9 @@ func forceKittyCapability(c KittyCapability) {
 	defaultTerminalSession.setKittyForced(c != KittyCapabilityUnknown)
 	kittyCap.Store(int32(c))
 	switch c {
+	case KittyCapabilityUnknown:
+		kittyVirtualCap.Store(int32(KittyCapabilityUnknown))
+		kittyFeatureProbed.Store(false)
 	case KittyCapabilityUnsupported:
 		if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
 			kittySharedAutoUnsupported.Store(true)
@@ -116,6 +122,8 @@ func forceKittyCapability(c KittyCapability) {
 func resetKittyProbeState() {
 	kittyProbeMu.Lock()
 	kittyProbed.Store(false)
+	kittyFeatureProbed.Store(false)
+	kittyVirtualCap.Store(int32(KittyCapabilityUnknown))
 	kittySharedProbed.Store(false)
 	kittySharedAutoUnsupported.Store(false)
 	_ = kittySharedProbe.Swap(nil).Unlink()
@@ -225,44 +233,54 @@ func kittyEnvSignalFor(tmux bool) bool {
 
 // buildKittyQueryAPC encodes a Kitty graphics query (a=q): a tiny 1×1
 // transmit whose only purpose is to elicit a response. Kitty terminals
-// reply with `\e_Gi=<id>;OK\e\\` (and echo supported keys such as `U=1`
-// when `e=T` feature queries are supported); non-Kitty terminals don't reply.
+// reply with an OK payload; feature discovery uses a separate query.
 // The payload "AAAA" is base64 of three zero bytes (one RGB pixel).
 func buildKittyQueryAPC(id int) string {
-	return fmt.Sprintf("\x1b_Ga=q,t=d,e=T,U=1,f=24,s=1,v=1,i=%d;AAAA\x1b\\", id)
+	return fmt.Sprintf("\x1b_Ga=q,t=d,f=24,s=1,v=1,i=%d;AAAA\x1b\\", id)
 }
 
-// recordKittyResponse handles a uv.KittyGraphicsEvent. Any response
-// carrying our probe's image ID proves the terminal speaks the protocol
-// (even an error response — only a Kitty-aware terminal would have
-// produced it).
-//
-// A real response is authoritative and overrides the timeout's
-// pessimistic Unsupported conclusion: bubbletea's startup can deliver
-// the kittyProbeTickMsg before draining the input event queue, so the
-// timeout sometimes fires first even though the terminal responded
-// immediately. Two CompareAndSwaps cover both starting states
-// (Unknown after probe-but-no-tick, Unsupported after tick-but-late-
-// response) without overriding a Forced(Supported|Unsupported) state.
+// Feature queries are separate from basic detection: older terminals may drop
+// commands containing e entirely. The pinned input parser preserves U but not e,
+// so only a successful plain detect reply establishes transmission support.
+func buildKittyFeatureQueryAPC(id int) string {
+	return fmt.Sprintf("\x1b_Ga=q,e=T,U=1,i=%d\x1b\\", id)
+}
+
 func recordKittyResponse(ev uv.KittyGraphicsEvent) tea.Cmd {
 	if ev.Options.ID == kittySharedProbeID {
 		recordKittySharedResponse(string(ev.Payload) == "OK")
 		return nil
 	}
-	if ev.Options.ID != kittyProbeID || defaultTerminalSession.isKittyForced() {
+	if ev.Options.ID == kittyFeatureProbeID && kittyFeatureProbed.Load() {
+		if string(ev.Payload) == "OK" && ev.Options.VirtualPlacement {
+			kittyVirtualCap.Store(int32(KittyCapabilitySupported))
+		} else {
+			kittyVirtualCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
+		}
 		return nil
+	}
+	if ev.Options.ID != kittyProbeID || string(ev.Payload) != "OK" || defaultTerminalSession.isKittyForced() {
+		return nil
+	}
+	var feature tea.Cmd
+	if kittyFeatureProbed.CompareAndSwap(false, true) {
+		raw := tmuxWrap(buildKittyFeatureQueryAPC(kittyFeatureProbeID))
+		feature = tea.Sequence(func() tea.Msg { return tea.RawMsg{Msg: raw} }, tea.Tick(kittyProbeTimeout, func(time.Time) tea.Msg { return terminalFeatureTick{defaultTerminalSession} }))
 	}
 	if kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilitySupported)) ||
 		kittyCap.CompareAndSwap(int32(KittyCapabilityUnsupported), int32(KittyCapabilitySupported)) {
-		return kittyCapabilityCommand(KittyCapabilitySupported)
+		return tea.Batch(feature, kittyCapabilityCommand(KittyCapabilitySupported))
 	}
-	return nil
+	return feature
 }
 
 // recordKittyTimeout marks Kitty unsupported if the probe window has
 // elapsed without a response. Idempotent and a no-op if the capability
 // was already resolved (by an earlier response or by ForceKittyCapability).
 func recordKittyTimeout() tea.Cmd {
+	if kittyFeatureProbed.Load() {
+		kittyVirtualCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
+	}
 	changed := kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
 	kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
 	if changed {

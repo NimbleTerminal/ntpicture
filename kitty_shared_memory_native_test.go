@@ -279,3 +279,5 @@ func TestSupersededStableIDBorrowerRetiresSharedMemory(t *testing.T) {
 		t.Fatal("Close did not unlink retired borrower SHM object")
 	}
 }
+
+func TestCachedFrameNativeSharedOwnership(t *testing.T) { testCachedSharedOwnership(t) }

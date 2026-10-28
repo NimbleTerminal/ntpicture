@@ -35,7 +35,7 @@ func TestDefaultSessionPictureEmitsExportedKittyCapabilityMsg(t *testing.T) {
 	// without importing nimbleterminal.dev/ntpicture/legacy.
 	msgs := collectBatchMsgs(tea.Batch(
 		p.Init(),
-		p.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: 42069101}}),
+		p.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: 42069101}, Payload: []byte("OK")}),
 	))
 
 	var gotCap ntpicture.KittyCapability

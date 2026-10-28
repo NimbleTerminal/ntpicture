@@ -16,8 +16,11 @@ import (
 	"github.com/charmbracelet/x/ansi/kitty"
 )
 
-func decodeKittyPNG(t *testing.T, apc string) []byte {
+func decodeKittyPNG(t *testing.T, apc string, wantFirst ...string) []byte {
 	t.Helper()
+	if len(wantFirst) == 0 {
+		wantFirst = []string{"a=T", "f=100", "i=45", "c=2", "r=3", "U=1"}
+	}
 	var payload strings.Builder
 	chunks := strings.Split(strings.TrimSuffix(apc, "\x1b\\"), "\x1b\\")
 	for i, chunk := range chunks {
@@ -32,7 +35,7 @@ func decodeKittyPNG(t *testing.T, apc string) []byte {
 			t.Fatalf("missing quiet mode: %s", control)
 		}
 		if i == 0 {
-			for _, want := range []string{"a=T", "f=100", "i=45", "c=2", "r=3", "U=1"} {
+			for _, want := range wantFirst {
 				if !strings.Contains(control, want) {
 					t.Errorf("missing %s in %s", want, control)
 				}

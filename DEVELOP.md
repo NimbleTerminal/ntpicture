@@ -514,3 +514,12 @@ and the terminal/discard runner (`task build-bench`, `task bench-terminal`).
 The suite covers unchanged/localized/scattered/full updates and cold/warm playback
 caches. Reports distinguish command/write completion from actual terminal display;
 capability declarations and geometry accompany terminal comparisons.
+
+### Review regression coverage (2026-10-28)
+
+Panning regressions compare decoded pixels against ordinary preparation with 8×16
+cells and transparent/opaque backgrounds. Capability tests separate plain detection
+from U=1 feature replies, including errors, missing keys, late replies, and tmux.
+Cached-frame ownership tests exercise both native shared memory and the browser
+registry through selection and Keep. These are protocol/unit checks, not new
+terminal or browser visual acceptance records.

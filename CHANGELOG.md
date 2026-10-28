@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+- Preserve FitFill stretching and background compositing when source crops cannot use placement-only panning.
+- Retain shared-memory ownership and transport status when selecting cached playback frames, including through Keep.
+
 - Restore bounded whole-source Kitty crop panning: upload once, then reuse the
-  image and grid with placement-only crop updates. Preserve Ghostty's per-crop
-  fallback alongside StableID frame edits and playback caching.
+  image and grid with placement-only crop updates when virtual-placement support
+  is confirmed; otherwise retain per-crop preparation.
 
 - Add repeatable presentation/playback benchmarks and a terminal workload runner with JSON timing, bandwidth, and environment reports.
 
@@ -12,7 +15,7 @@
 - Cache bounded playback frames in the terminal (32 MiB default) and select cached frames without re-encoding.
 - Add `Config.Transient`; FreshIDs playback sends the `N=1` eviction hint.
 
-- Include `e=T,U=1` in the Kitty graphics capability probe APC (`a=q`) so terminals without `XTVERSION` can report virtual-placement support via feature-query responses.
+- Query `e=T,U=1` separately after successful plain Kitty detection and track virtual-placement support for crop panning.
 - Coalesce unstarted config/image/size/capability render jobs in place on `Picture` without advancing the Kitty image ID counter or queueing stale deletions.
 
 ## v0.1.1 (2026-10-19)

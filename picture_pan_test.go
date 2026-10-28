@@ -1,8 +1,10 @@
 package ntpicture
 
 import (
+	"bytes"
 	"image"
 	"image/color"
+	"image/png"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,7 +14,7 @@ import (
 
 func newPanPicture(t *testing.T, stable bool) *Picture {
 	t.Helper()
-	p := New(Options{StableID: stable, RetireDelay: -1, Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1}})
+	p := New(Options{Session: NewTerminalSession(TerminalOptions{VirtualPlacement: KittyCapabilitySupported, CellPixelWidth: 1, CellPixelHeight: 1}), StableID: stable, RetireDelay: -1, Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1}})
 	p.SetKittyCapability(KittyCapabilitySupported)
 	p.SetSize(20, 10)
 	p.SetMode(PictureKitty)
@@ -132,6 +134,48 @@ func TestSourcePanSharedOwnershipAndCoalescing(t *testing.T) {
 		}
 		if p.front.kittyShared != shared {
 			t.Fatal("pan released the original shared-memory ownership")
+		}
+	}
+}
+
+func TestSourcePanPreservesFitAndBackground(t *testing.T) {
+	for _, fit := range []FitMode{FitFill, FitContain} {
+		for _, opaque := range []bool{false, true} {
+			p := newPanPicture(t, false)
+			p.SetCellSize(8, 16)
+			p.SetFit(fit)
+			if opaque {
+				p.SetBackground(color.NRGBA{B: 200, A: 255})
+			}
+			img := image.NewNRGBA(image.Rect(0, 0, 80, 60))
+			for y := 0; y < 60; y++ {
+				for x := 0; x < 80; x++ {
+					img.SetNRGBA(x, y, color.NRGBA{R: 200, A: 128})
+				}
+			}
+			raw := output(drivePicture(t, p, p.SetImageImmutableCropped(img, image.Rect(0, 0, 20, 10))))
+			wantPan := fit == FitContain && !opaque
+			if p.front.panSource != wantPan {
+				t.Fatalf("fit=%v opaque=%v pan=%v", fit, opaque, p.front.panSource)
+			}
+			if wantPan {
+				continue
+			}
+			pixels, err := png.Decode(bytes.NewReader(decodeKittyPNG(t, raw, "a=T", "f=100", "c=20", "r=10", "U=1")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pixels.Bounds().Size() != image.Pt(160, 160) {
+				t.Fatalf("unprepared source: %v", pixels.Bounds())
+			}
+			expected := prepareSourceCrop(img, image.Rect(0, 0, 20, 10), fit, 160, 160, 1, 1, p.opts.Render.Background, AnchorCenter)
+			if !bytes.Equal(kittyRGBABytes(pixels), kittyRGBABytes(expected)) {
+				t.Fatal("pan fallback changed fit/background pixels")
+			}
+			raw = output(drivePicture(t, p, p.SetCrop(image.Rect(5, 5, 25, 15))))
+			if strings.Contains(raw, "a=p") || !strings.Contains(raw, "a=T") {
+				t.Fatal("unsafe crop used placement-only update")
+			}
 		}
 	}
 }

@@ -40,7 +40,7 @@ func TestLegacyDefaultSessionPictureEmitsExportedKittyCapabilityMsg(t *testing.T
 
 	msgs := collectBatchMsgs(tea.Batch(
 		p.Init(),
-		p.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: 42069101}}),
+		p.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: 42069101}, Payload: []byte("OK")}),
 	))
 
 	var gotCap ntpicture.KittyCapability

@@ -231,3 +231,11 @@ func TestTerminalSessionBrowserViewportAndFallback(t *testing.T) {
 		t.Fatal("session picture leaked registry entry")
 	}
 }
+
+func TestCachedFrameBrowserSharedOwnership(t *testing.T) {
+	r := shmTestRegistry(t)
+	testCachedSharedOwnership(t)
+	if r.Get("size").Int() != 0 {
+		t.Fatal("cache Keep leaked registry entries")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image/color"
 	"os"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -65,7 +66,7 @@ func TestForceKittyCapability_RoundTrips(t *testing.T) {
 func TestRecordKittyResponse_OurProbeMarksSupported(t *testing.T) {
 	resetKittyCapability(t)
 	recordKittyResponse(uv.KittyGraphicsEvent{
-		Options: kitty.Options{ID: kittyProbeID},
+		Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK"),
 	})
 	if got := KittySupported(); got != KittyCapabilitySupported {
 		t.Fatalf("after probe response: KittySupported = %v, want Supported", got)
@@ -100,7 +101,7 @@ func TestRecordKittyTimeout_FromUnknownMarksUnsupported(t *testing.T) {
 // from Unknown fails).
 func TestRecordKittyTimeout_DoesNotOverwriteSupported(t *testing.T) {
 	resetKittyCapability(t)
-	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}})
+	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")})
 	recordKittyTimeout()
 	if got := KittySupported(); got != KittyCapabilitySupported {
 		t.Fatalf("late timeout should not overwrite Supported; got %v", got)
@@ -115,7 +116,7 @@ func TestRecordKittyTimeout_DoesNotOverwriteSupported(t *testing.T) {
 func TestRecordKittyResponse_OverridesUnsupportedFromTimeout(t *testing.T) {
 	resetKittyCapability(t)
 	recordKittyTimeout() // sets Unsupported
-	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}})
+	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")})
 	if got := KittySupported(); got != KittyCapabilitySupported {
 		t.Fatalf("response should override Unsupported set by an earlier timeout; got %v", got)
 	}
@@ -124,7 +125,7 @@ func TestRecordKittyResponse_OverridesUnsupportedFromTimeout(t *testing.T) {
 func TestRecordKittyResponse_DoesNotOverrideForcedUnsupported(t *testing.T) {
 	resetKittyCapability(t)
 	ForceKittyCapability(KittyCapabilityUnsupported)
-	if cmd := recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}); cmd != nil {
+	if cmd := recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")}); cmd != nil {
 		t.Fatal("probe reply emitted command despite Forced(Unsupported)")
 	}
 	if got := KittySupported(); got != KittyCapabilityUnsupported {
@@ -206,7 +207,7 @@ func TestIsPictureMsg_IncludesKittyGraphicsEvent(t *testing.T) {
 func TestModel_Update_KittyGraphicsEventRecordsSupport(t *testing.T) {
 	resetKittyCapability(t)
 	m := NewModel()
-	m.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}})
+	m.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")})
 	if got := KittySupported(); got != KittyCapabilitySupported {
 		t.Fatalf("after Update routes response: KittySupported = %v, want Supported", got)
 	}
@@ -428,8 +429,8 @@ func TestCapabilityResolutionNotifications(t *testing.T) {
 	q := New(Options{Session: DefaultTerminalSession()})
 	defer func() { _ = p.Close(); _ = q.Close() }()
 	hasCapMsg := func(cmd tea.Cmd, want KittyCapability) bool {
-		for _, c := range collectBatchCmds(cmd) {
-			if m, ok := c().(KittyCapabilityMsg); ok && m.Capability == want {
+		for _, msg := range probeMessages(cmd) {
+			if m, ok := msg.(KittyCapabilityMsg); ok && m.Capability == want {
 				return true
 			}
 		}
@@ -442,7 +443,7 @@ func TestCapabilityResolutionNotifications(t *testing.T) {
 	if q.Update(kittyProbeTickMsg{}) != nil {
 		t.Fatal("duplicate transition notification")
 	}
-	ev := uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}}
+	ev := uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")}
 	supported := q.Update(ev)
 	if !hasCapMsg(supported, KittyCapabilitySupported) {
 		t.Fatal("late positive reply not reported")
@@ -469,8 +470,14 @@ func TestCapabilityQueryReportsKnownResult(t *testing.T) {
 func TestLegacyModelReturnsCapabilityCommand(t *testing.T) {
 	resetKittyCapability(t)
 	m := NewModel()
-	cmd := m.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}})
-	if cmd == nil || cmd().(KittyCapabilityMsg).Capability != KittyCapabilitySupported {
+	cmd := m.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")})
+	found := false
+	for _, msg := range probeMessages(cmd) {
+		if m, ok := msg.(KittyCapabilityMsg); ok && m.Capability == KittyCapabilitySupported {
+			found = true
+		}
+	}
+	if !found {
 		t.Fatal("legacy model dropped resolution command")
 	}
 }
@@ -499,10 +506,34 @@ func TestLegacySharedCapResolvesWhenEnvPreflightFails(t *testing.T) {
 	}
 }
 
-func TestBuildKittyQueryAPCIncludesFeatureQueryForVirtualPlacements(t *testing.T) {
+func TestBuildKittyQueryAPCUsesPlainDetection(t *testing.T) {
 	got := buildKittyQueryAPC(42069101)
-	want := "\x1b_Ga=q,t=d,e=T,U=1,f=24,s=1,v=1,i=42069101;AAAA\x1b\\"
+	want := "\x1b_Ga=q,t=d,f=24,s=1,v=1,i=42069101;AAAA\x1b\\"
 	if got != want {
 		t.Fatalf("buildKittyQueryAPC() = %q, want %q", got, want)
+	}
+}
+
+func TestLegacyDetectAndFeatureRepliesAreIndependent(t *testing.T) {
+	resetKittyCapability(t)
+	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("EINVAL")})
+	if KittySupported() != KittyCapabilityUnknown {
+		t.Fatal("error enabled transmission")
+	}
+	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyFeatureProbeID, VirtualPlacement: true}, Payload: []byte("OK")})
+	if KittySupported() != KittyCapabilityUnknown || KittyCapability(kittyVirtualCap.Load()) != KittyCapabilityUnknown {
+		t.Fatal("unsolicited feature reply enabled graphics")
+	}
+	raw := output(probeMessages(recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")})))
+	if !strings.Contains(raw, "a=q,e=T,U=1") || KittySupported() != KittyCapabilitySupported {
+		t.Fatal("detection did not start separate feature query")
+	}
+	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyFeatureProbeID}, Payload: []byte("OK")})
+	if KittyCapability(kittyVirtualCap.Load()) != KittyCapabilityUnsupported {
+		t.Fatal("plain feature OK granted U=1")
+	}
+	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyFeatureProbeID, VirtualPlacement: true}, Payload: []byte("OK")})
+	if KittyCapability(kittyVirtualCap.Load()) != KittyCapabilitySupported {
+		t.Fatal("U=1 not stored")
 	}
 }

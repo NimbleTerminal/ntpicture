@@ -161,6 +161,7 @@ type picturePlacement struct {
 	imgID       uint64
 	panSource   bool
 	panPutOnly  bool
+	cacheSelect bool
 	panCrop     image.Rectangle
 	grid        string
 	generation  uint64
@@ -895,15 +896,17 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 		if !canPan {
 			params.retain = p.opts.StableID && !p.opts.ClearOnReplace
 			selectFrame, cached = p.configureFrames(&params, placement)
+			placement.cacheSelect = cached
 		}
 		params.shared.begin(params.seq)
 	}
+	frontFormat, frontMedium := p.format, p.medium
 	job.run = func() tea.Msg {
 		var frame tea.Msg
 		if ctx.Err() == nil {
 			if mode == PictureKitty {
 				if cached {
-					frame = kittyFrameMsg{APC: selectFrame, Grid: buildKittyGrid(cols, rows, cfg.KittyID), Format: cfg.KittyFormat, Medium: KittyMediumDirect}
+					frame = kittyFrameMsg{APC: selectFrame, Grid: buildKittyGrid(cols, rows, cfg.KittyID), Format: frontFormat, Medium: frontMedium}
 				} else if msg, ok := prepareKittyFrame(ctx, params); ok {
 					msg.APC += selectFrame
 					frame = msg
@@ -925,14 +928,14 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	if p.opts.HostGeometry {
 		switch msg.(type) {
-		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, kittyProbeTickMsg, TerminalSessionMsg, KittyCapabilityMsg:
+		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg, TerminalSessionMsg, KittyCapabilityMsg:
 			return nil
 		}
 	}
 	sess := p.session()
 	terminal := false
 	switch v := msg.(type) {
-	case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, kittyProbeTickMsg:
+	case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg:
 		terminal = true
 	case TerminalSessionMsg:
 		if v.Session != sess {
@@ -1097,7 +1100,7 @@ func (p *Picture) commit(j *pictureJob, format KittyFormat, medium KittyMedium) 
 			old.ownsID = false
 			j.placement.ownsID = true
 		}
-		if j.placement.panPutOnly {
+		if j.placement.panPutOnly || j.placement.cacheSelect {
 			j.placement.kittyShared = old.kittyShared
 			old.kittyShared = &kittySharedState{}
 		}
