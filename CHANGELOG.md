@@ -2,10 +2,11 @@
 
 ## Unreleased
 
+## v0.1.3 (2026-10-28)
+
 - Remove unsupported placement-only Kitty panning and `MaxKittyPanPixels`.
   Crops always prepare the requested pixels; use `SetViewport` for scrolling
   without image uploads.
-
 - Update go-booba to v0.10.5, Bubble Tea to v2.1.1, Ultraviolet, and golden-test dependencies; align the WASM Bubble Tea fork with go-booba.
 
 ## v0.1.2 (2026-10-28)
