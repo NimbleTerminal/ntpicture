@@ -532,3 +532,12 @@ explicitly. Negative tests cover plain OK replies, partial echoes, errors,
 timeouts, foreign sessions, and older terminals that never answer feature
 queries. StableID's fallback must emit full uploads while retaining the ID.
 This protocol coverage does not constitute real-terminal visual acceptance.
+
+### Unknown-terminal Kitty detection acceptance (2026-10-30)
+
+On macOS, the user confirmed that the nt3d water demo displayed graphics in Rex
+with automatic detection after applying the probe-gate removal to base revision
+`10494fc`. Rex and macOS versions were not recorded. This is user-reported visual
+acceptance, not an automated terminal check. The demo was rebuilt against the
+patched local library. Full `task ci` passed on the staged patch, including race,
+no-CGO, WASM, browser lifecycle smoke checks, lint, and vulnerability checks.

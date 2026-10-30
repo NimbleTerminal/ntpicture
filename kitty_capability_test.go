@@ -369,7 +369,7 @@ func TestKittyUnavailable_Reasons(t *testing.T) {
 	}{
 		{"unknown", KittyCapabilityUnknown, false, false, ErrKittyProbePending},
 		{"supported", KittyCapabilitySupported, false, true, nil},
-		{"unsupported, env not signalled", KittyCapabilityUnsupported, false, false, ErrKittyNotDetected},
+		{"unsupported, env not signalled", KittyCapabilityUnsupported, false, false, ErrKittyProbeTimeout},
 		{"unsupported, probe timed out", KittyCapabilityUnsupported, true, false, ErrKittyProbeTimeout},
 		{"unsupported, forced with env signalled", KittyCapabilityUnsupported, true, true, ErrKittyNotDetected},
 	}
@@ -482,27 +482,24 @@ func TestLegacyModelReturnsCapabilityCommand(t *testing.T) {
 	}
 }
 
-func TestLegacySharedCapResolvesWhenEnvPreflightFails(t *testing.T) {
+func TestLegacyUnknownTerminalProbes(t *testing.T) {
 	resetKittyCapability(t)
 	resetKittySharedCap(t)
 	resetKittyProbeState()
 	t.Cleanup(resetKittyProbeState)
 	clearKittyEnv(t)
 	SetTmuxPassthrough(false)
-
-	cmd := QueryKittySupport()
-	if cmd == nil || cmd().(KittyCapabilityMsg).Capability != KittyCapabilityUnsupported {
-		t.Fatal("expected unsupported capability when env preflight fails")
+	raw := output(probeMessages(QueryKittySupport()))
+	if !strings.Contains(raw, buildKittyQueryAPC(kittyProbeID)) || KittySupported() != KittyCapabilityUnknown {
+		t.Fatal("unknown terminal must receive query and wait for response")
 	}
-	snap := DefaultTerminalSession().Snapshot()
-	if snap.Kitty != KittyCapabilityUnsupported || snap.SharedMemory != KittyCapabilityUnsupported {
-		t.Fatalf("expected both Kitty and SharedMemory to resolve to Unsupported when env preflight fails, got %+v", snap)
+	recordKittyTimeout()
+	if KittyUnavailable() != ErrKittyProbeTimeout {
+		t.Fatal("missing timeout diagnostic")
 	}
-
-	// Forcing KittyCapabilitySupported afterwards resets auto-unsupported shared memory back to Unknown so it can probe.
-	ForceKittyCapability(KittyCapabilitySupported)
-	if got := KittyCapability(kittySharedCap.Load()); got != KittyCapabilityUnknown {
-		t.Fatalf("after ForceKittyCapability(Supported), kittySharedCap = %v, want Unknown", got)
+	recordKittyResponse(uv.KittyGraphicsEvent{Options: kitty.Options{ID: kittyProbeID}, Payload: []byte("OK")})
+	if KittySupported() != KittyCapabilitySupported {
+		t.Fatal("late response did not enable graphics")
 	}
 }
 

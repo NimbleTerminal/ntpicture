@@ -327,3 +327,45 @@ func TestTerminalSessionFeatureDetection(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownTerminalProbesWithoutEnvironmentHint(t *testing.T) {
+	clearKittyEnv(t)
+	t.Setenv("NTPICTURE_KITTY", "")
+	for _, override := range []string{"", "unsupported", "supported"} {
+		t.Run(override, func(t *testing.T) {
+			t.Setenv("NTPICTURE_KITTY", override)
+			opts := sessionOptions(false)
+			opts.Kitty = KittyCapabilityUnknown
+			s := NewTerminalSession(opts)
+			defer s.Close()
+			raw := output(probeMessages(s.Init()))
+			queried := strings.Contains(raw, buildKittyQueryAPC(s.probeID))
+			if queried != (override != "unsupported") {
+				t.Fatalf("unexpected probe output %q", raw)
+			}
+			if s.Snapshot().EnvSignalled {
+				t.Fatal("unexpected environment hint")
+			}
+			if s.Init() != nil {
+				t.Fatal("repeated Init sent probe")
+			}
+			if override == "" {
+				if s.Snapshot().Kitty != KittyCapabilityUnknown {
+					t.Fatal("did not wait for response")
+				}
+				s.Update(terminalSessionTick{s})
+				if s.unavailable() != ErrKittyProbeTimeout {
+					t.Fatal("missing timeout diagnostic")
+				}
+			}
+			s.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: s.probeID}, Payload: []byte("OK")})
+			want := KittyCapabilitySupported
+			if override == "unsupported" {
+				want = KittyCapabilityUnsupported
+			}
+			if s.Snapshot().Kitty != want {
+				t.Fatal("reply handling ignored override or failed to detect support")
+			}
+		})
+	}
+}

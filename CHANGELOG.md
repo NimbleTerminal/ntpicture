@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Probe Kitty graphics support on unknown terminals instead of requiring a known
+  environment identifier; preserve explicit overrides and glyph fallback.
+
 ## v0.1.3 (2026-10-28)
 
 - Remove unsupported placement-only Kitty panning and `MaxKittyPanPixels`.

@@ -148,6 +148,11 @@ If the host already knows the terminal's capabilities, call
 `SetKittyCapability`; these skip probing. `ToggleMode()` switches between glyphs
 and Kitty when Kitty is supported.
 
+Kitty support is queried even when the terminal has no recognized environment
+identifier. Images stay in glyph mode until a positive response arrives; an
+unanswered probe falls back after 250 ms, and late positive replies are accepted.
+Explicitly disabling Kitty skips its probes.
+
 The `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` environment variables
 override detection. Values set explicitly in `TerminalOptions` take precedence
 over them.

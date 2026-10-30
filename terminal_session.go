@@ -241,9 +241,6 @@ func (s *TerminalSession) Init() tea.Cmd {
 	}
 	s.started = true
 	s.state.EnvSignalled = kittyEnvSignalFor(s.state.TmuxPassthrough)
-	if s.state.Kitty == KittyCapabilityUnknown && !s.state.EnvSignalled {
-		s.state.Kitty = KittyCapabilityUnsupported
-	}
 	if s.state.Kitty == KittyCapabilityUnsupported && !s.sharedForced {
 		s.state.SharedMemory = KittyCapabilityUnsupported
 	}
@@ -433,7 +430,7 @@ func (s *TerminalSession) unavailable() error {
 	case KittyCapabilityUnknown:
 		return ErrKittyProbePending
 	default:
-		if state.EnvSignalled && !s.isKittyForced() {
+		if !s.isKittyForced() {
 			return ErrKittyProbeTimeout
 		}
 		return ErrKittyNotDetected

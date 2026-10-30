@@ -21,8 +21,8 @@ type KittyCapability int8
 const (
 	// KittyCapabilityUnknown is the default state, before the probe has
 	// completed. Entering Kitty mode is blocked in this state — both
-	// Unknown and Unsupported keep Kitty escapes off the wire, so a
-	// non-Kitty terminal never sees garbage. Kitty terminals typically
+	// Unknown and Unsupported prevent image output; capability queries
+	// are still sent while Unknown. Kitty terminals typically
 	// resolve to Supported within a few milliseconds.
 	KittyCapabilityUnknown KittyCapability = iota
 
@@ -32,7 +32,7 @@ const (
 	KittyCapabilitySupported
 
 	// KittyCapabilityUnsupported means the probe timed out without a
-	// response or the environment was not recognized as Kitty-capable.
+	// response or support was explicitly disabled.
 	KittyCapabilityUnsupported
 )
 
@@ -85,10 +85,9 @@ var (
 	// terminal, so a later SetMode will succeed.
 	ErrKittyProbePending = errors.New("kitty graphics probe has not resolved yet; try again shortly")
 
-	// ErrKittyNotDetected means the environment did not look Kitty-aware,
-	// so no probe was sent (or the capability was set to unsupported by
-	// NTPICTURE_KITTY or TerminalOptions.Kitty).
-	ErrKittyNotDetected = errors.New("terminal not recognized as Kitty-capable; set NTPICTURE_KITTY=supported or configure TerminalOptions.Kitty to override")
+	// ErrKittyNotDetected means capability was explicitly set to unsupported
+	// by NTPICTURE_KITTY or TerminalOptions.Kitty.
+	ErrKittyNotDetected = errors.New("kitty graphics support explicitly disabled; set NTPICTURE_KITTY=supported or configure TerminalOptions.Kitty to override")
 
 	// ErrKittyProbeTimeout means a probe was sent but the terminal did not
 	// answer in time, which usually points to a multiplexer or transport
@@ -169,28 +168,20 @@ func queryKittySupport() tea.Cmd {
 		}
 	default:
 		if !kittyProbed.Load() {
-			if !kittyEnvSignal() {
-				kittyEnvSignalled.Store(false)
-				kittyCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported))
-				if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
-					kittySharedAutoUnsupported.Store(true)
-				}
-			} else {
-				kittyEnvSignalled.Store(true)
-				kittyProbed.Store(true)
-				kittyQuery = tmuxWrap(buildKittyQueryAPC(kittyProbeID))
-				if !kittySharedProbed.Load() {
-					if !kittySharedProbeable() {
-						if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
-							kittySharedAutoUnsupported.Store(true)
-						}
-					} else {
-						sharedQuery = kittySharedQueryAPC()
-						if sharedQuery != "" {
-							kittySharedProbed.Store(true)
-						} else if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
-							kittySharedAutoUnsupported.Store(true)
-						}
+			kittyEnvSignalled.Store(kittyEnvSignal())
+			kittyProbed.Store(true)
+			kittyQuery = tmuxWrap(buildKittyQueryAPC(kittyProbeID))
+			if !kittySharedProbed.Load() {
+				if !kittySharedProbeable() {
+					if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+						kittySharedAutoUnsupported.Store(true)
+					}
+				} else {
+					sharedQuery = kittySharedQueryAPC()
+					if sharedQuery != "" {
+						kittySharedProbed.Store(true)
+					} else if kittySharedCap.CompareAndSwap(int32(KittyCapabilityUnknown), int32(KittyCapabilityUnsupported)) {
+						kittySharedAutoUnsupported.Store(true)
 					}
 				}
 			}
