@@ -115,7 +115,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## github.com/NimbleMarkets/go-booba v0.10.5
+## github.com/NimbleMarkets/go-booba v0.10.7
 
 ```
 MIT License
@@ -473,7 +473,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## github.com/xo/terminfo v1.2.0
+## github.com/xo/terminfo v1.3.0
 
 ```
 The MIT License (MIT)

@@ -1,13 +1,14 @@
 # `ntpicture` CHANGELOG
 
-## Unreleased
+## v0.1.4 (2026-10-30)
 
+- Move detailed Kitty graphics guidance into KITTY.md and simplify the README.
+
+- Update go-booba to v0.10.7, terminfo to v1.3.0, and release validation tools.
 - Reap unanswered shared-memory probes after a five-second late-reply window,
   and release pending legacy probes when their terminal session closes.
-
 - Synchronize complete Picture uploads, including restoration and Keep, to prevent
   black flashes during chunked same-ID replacement on Ghostty 1.4 and Rex.
-
 - Probe Kitty graphics support on unknown terminals instead of requiring a known
   environment identifier; preserve explicit overrides and glyph fallback.
 

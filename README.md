@@ -148,33 +148,13 @@ If the host already knows the terminal's capabilities, call
 `SetKittyCapability`; these skip probing. `ToggleMode()` switches between glyphs
 and Kitty when Kitty is supported.
 
-Kitty support is queried even when the terminal has no recognized environment
-identifier. Images stay in glyph mode until a positive response arrives; an
-unanswered probe falls back after 250 ms, and late positive replies are accepted.
-Explicitly disabling Kitty skips its probes.
-Native shared-memory probes remain readable for up to five seconds for late
-replies, then are unlinked even if the terminal never responds. Close the
-terminal session on shutdown to release pending probes immediately; legacy
-hosts can call `legacy.DefaultTerminalSession().Close()`.
+With `AutoMode`, pictures use glyphs until the terminal confirms Kitty support.
+Explicitly disabling Kitty skips its probes. Close a shared session on shutdown
+after closing its pictures and running their cleanup commands.
 
-The `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` environment variables
-override detection. Values set explicitly in `TerminalOptions` take precedence
-over them.
-
-Image IDs come from a process-wide allocator, `NextImageID`. If you mix
-ntpicture with other Kitty image producers, give all of them the same allocator.
-
-## Transport
-
-Kitty output defaults to direct transmission (`KittyMediumDirect`) and supports
-PNG (`KittyFormatPNG`, default), raw RGBA (`KittyFormatRGBA`), and
-zlib-compressed (`KittyFormatZlib`) encodings. Setting
-`Config{KittyMedium: KittyMediumSharedMemory}` sends raw RGBA through shared
-memory where available: POSIX shared memory natively (CGO is required on macOS)
-and the `globalThis.ghosttyKittySharedMemory` registry in the browser. If
-shared memory is unavailable or fails, output falls back to direct transmission
-in the configured `KittyFormat`. tmux passthrough is supported. Glyph output
-uses colored half blocks, two pixel rows per cell.
+See [Kitty graphics](./KITTY.md) for capability detection and overrides,
+transport formats, shared-memory cleanup, tmux, frame updates, and playback
+caching.
 
 Source and prepared images are capped at 32 Mi pixels. Pending shared memory is
 capped at 64 MiB per process. These caps are safety bounds, not a memory
@@ -226,6 +206,9 @@ layers := playback.NewLayers(source, playback.Options{
     Picture: ntpicture.Options{Session: session},
 })
 ```
+
+For terminal frame caching and its memory limit, see
+[playback caching](./KITTY.md#playback-caching).
 
 ### Mixing stills and animations
 
@@ -290,42 +273,3 @@ Copyright (c) 2026 [Neomantra Corp](https://www.neomantra.com).
 ----
 Made with :heart: and :fire: by the team behind [Nimble
 Terminal](https://nimbleterminal.dev).
-
-### Kitty frame updates and playback caching
-
-StableID updates retain one image ID. Root-frame edits (`a=f,r=1,X=1`) are
-used only after separate Kitty feature queries confirm the required fields.
-Until then, or after unsupported replies/timeouts, updates use ordinary full
-image uploads (`a=T`) under the same ID. No terminal name or version enables
-frame operations.
-
-After basic Kitty detection, the session sends independent feature queries for
-root-frame editing (`e=f,r=1,X=1,x=1,y=1`), appending frames
-(`e=f,c=1,X=1,z=-1`), and selecting frames (`e=a,c=1`). Only `OK` replies that
-echo all requested non-default fields enable the corresponding capability.
-The pinned input parser does not expose `e`, so each query has a separate ID
-and requires the operation-specific echoes; a plain graphics `OK` cannot grant
-support. `TerminalState.FrameEdits`, `FrameAppend`, and `FrameSelect` report the
-results. Hosts with independent capability knowledge can explicitly configure
-these fields in `TerminalOptions`; forcing basic `Kitty` support does not force
-them. Late positive replies can enable optimizations after a timeout.
-
-When both frame appending and selection are supported, playback caches bounded
-sources exposing one-based `Frame()` and `Frames()`
-positions, including `animation.Player`. Those positions must identify immutable
-frames within the source. `playback.Options.FrameCacheBytes` limits terminal
-uncompressed RGBA storage: zero defaults to 32 MiB, negative disables caching.
-FreshIDs and ClearOnReplace disable it. After upload, repeated positions use
-only `a=a` controls and skip Picture rasterization/encoding; source decoding and
-composition still follow the source's normal timing and seeking semantics.
-Out-of-order seeks map source positions to terminal append order. Geometry,
-render configuration, viewport, source replacement, and hiding invalidate reuse.
-
-`Config.Transient` adds the `N=1` eviction hint on image creation. FreshIDs
-playback enables it automatically. `KittyFormatZlib` continues to emit `o=z`
-through both full uploads and frame edits, including direct fallback from shared
-memory; Ghostty 1.4's Wuffs decoder needs no separate client option.
-
-For reproducible performance comparisons and terminal workload reports, see
-[BENCHMARKS.md](BENCHMARKS.md). The harness keeps output-production timings separate
-from visual terminal acceptance.

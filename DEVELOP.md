@@ -341,7 +341,7 @@ exit. Browser click/touch verification remains part of manual acceptance.
 
 Dependency refresh: the fork revision `v2.0.0-20261010153813-5097f2f73229`
 returned by `@latest` fails to compile for js/wasm (missing platform methods).
-The workspace now pins `536722b0bdb6`, matching go-booba v0.10.5. Keep
+The workspace now pins `536722b0bdb6`, matching go-booba v0.10.7. Keep
 this explicit pin until a newer WASM-capable revision passes the browser checks.
 
 
