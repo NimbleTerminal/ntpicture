@@ -152,6 +152,10 @@ Kitty support is queried even when the terminal has no recognized environment
 identifier. Images stay in glyph mode until a positive response arrives; an
 unanswered probe falls back after 250 ms, and late positive replies are accepted.
 Explicitly disabling Kitty skips its probes.
+Native shared-memory probes remain readable for up to five seconds for late
+replies, then are unlinked even if the terminal never responds. Close the
+terminal session on shutdown to release pending probes immediately; legacy
+hosts can call `legacy.DefaultTerminalSession().Close()`.
 
 The `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` environment variables
 override detection. Values set explicitly in `TerminalOptions` take precedence

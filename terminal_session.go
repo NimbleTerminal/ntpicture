@@ -414,8 +414,16 @@ func (s *TerminalSession) SetKittyCapability(c KittyCapability) tea.Cmd {
 
 // Close cancels queued probe output and unlinks a pending probe immediately.
 // Close pictures separately and run their returned cleanup commands first.
+// The process-wide legacy session only releases its pending shared-memory
+// probe; it remains usable by other legacy consumers.
 func (s *TerminalSession) Close() {
-	if s.legacy || s.closed.Swap(true) {
+	if s.legacy {
+		kittyProbeMu.Lock()
+		_ = kittySharedProbe.Swap(nil).Unlink()
+		kittyProbeMu.Unlock()
+		return
+	}
+	if s.closed.Swap(true) {
 		return
 	}
 	_ = s.probe.Unlink()

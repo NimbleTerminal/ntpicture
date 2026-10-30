@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reap unanswered shared-memory probes after a five-second late-reply window,
+  and release pending legacy probes when their terminal session closes.
+
 - Synchronize complete Picture uploads, including restoration and Keep, to prevent
   black flashes during chunked same-ID replacement on Ghostty 1.4 and Rex.
 

@@ -72,6 +72,10 @@ func buildKittySharedProbeAPC(id int, transport kittyTransport) (string, *kittys
 	if err != nil {
 		return "", nil
 	}
+	// A terminal may never answer or consume this name. Reuse the native
+	// retirement grace period (five seconds), independently of the host's
+	// event loop, so late reads survive the 250 ms capability timeout.
+	obj.Retire()
 	name := base64.StdEncoding.EncodeToString([]byte(obj.Name))
 	return transport.wrap(fmt.Sprintf("\x1b_Ga=q,t=s,f=32,s=1,v=1,S=4,i=%d;%s\x1b\\", id, name)), obj
 }

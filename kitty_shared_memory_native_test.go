@@ -9,6 +9,8 @@ import (
 	"image/draw"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -127,6 +129,58 @@ func TestNativeSharedMemoryQuery(t *testing.T) {
 	recordKittyResponse(sharedProbeReply("OK"))
 	if sharedCap() != KittyCapabilitySupported || !probe.Done() || kittySharedProbe.Load() != nil {
 		t.Fatal("late probe reply did not upgrade capability and release probe object")
+	}
+}
+
+func TestNativeSharedMemoryProbesExpire(t *testing.T) {
+	resetKittySharedCap(t)
+	t.Setenv("NTPICTURE_KITTY", "")
+	synctest.Test(t, func(t *testing.T) {
+		s := NewTerminalSession(TerminalOptions{})
+		defer s.Close()
+		_ = s.Init()
+		_ = kittySharedQueryAPC()
+		probes := []*kittyshm.Object{s.probe, kittySharedProbe.Load()}
+		for _, obj := range probes {
+			if obj == nil {
+				t.Fatal("no native probe object")
+			}
+			defer func() { _ = obj.Unlink() }()
+		}
+		time.Sleep(kittyProbeTimeout)
+		s.Update(terminalSessionTick{s})
+		recordKittyTimeout()
+		for _, obj := range probes {
+			if obj.Done() {
+				t.Fatal("probe unlinked at graphics timeout before late-read window")
+			}
+		}
+		// No terminal replies and no further event-loop messages are needed.
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		for _, obj := range probes {
+			if !obj.Done() {
+				t.Fatal("unanswered probe leaked after late-read window")
+			}
+		}
+	})
+}
+
+func TestNativeLegacySessionCloseReleasesProbe(t *testing.T) {
+	resetKittySharedCap(t)
+	_ = kittySharedQueryAPC()
+	obj := kittySharedProbe.Load()
+	if obj == nil {
+		t.Fatal("no native probe object")
+	}
+	defer func() { _ = obj.Unlink() }()
+	defaultSession().Close()
+	defaultSession().Close()
+	if !obj.Done() || kittySharedProbe.Load() != nil {
+		t.Fatal("legacy session shutdown leaked its probe")
+	}
+	if defaultSession().closed.Load() {
+		t.Fatal("closing legacy probe disabled other legacy consumers")
 	}
 }
 
