@@ -2,8 +2,9 @@
 
 ## v0.1.4 (2026-10-30)
 
+- Recognize Rex, Rio, Konsole, and Warp environment hints while retaining
+  probe-based capability detection.
 - Move detailed Kitty graphics guidance into KITTY.md and simplify the README.
-
 - Update go-booba to v0.10.7, terminfo to v1.3.0, and release validation tools.
 - Reap unanswered shared-memory probes after a five-second late-reply window,
   and release pending legacy probes when their terminal session closes.

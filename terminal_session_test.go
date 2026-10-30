@@ -369,3 +369,37 @@ func TestUnknownTerminalProbesWithoutEnvironmentHint(t *testing.T) {
 		})
 	}
 }
+
+func TestKnownTerminalHintsDoNotGrantCapabilities(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"TERM_PROGRAM", "rex"},
+		{"TERM_PROGRAM", "rio"},
+		{"KONSOLE_VERSION", "260800"},
+		{"TERM_PROGRAM", "WarpTerminal"},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			clearKittyEnv(t)
+			t.Setenv(tc.key, tc.value)
+			t.Setenv("NTPICTURE_KITTY", "")
+			tmux := false
+			s := NewTerminalSession(TerminalOptions{TmuxPassthrough: &tmux})
+			defer s.Close()
+			_ = s.Init()
+			if state := s.Snapshot(); !state.EnvSignalled || state.Kitty != KittyCapabilityUnknown {
+				t.Fatalf("identity hint bypassed detection: %+v", state)
+			}
+			s.Update(uv.KittyGraphicsEvent{Options: kitty.Options{ID: s.probeID}, Payload: []byte("OK")})
+			state := s.Snapshot()
+			if state.Kitty != KittyCapabilitySupported {
+				t.Fatal("basic graphics reply did not enable graphics")
+			}
+			for _, capability := range []KittyCapability{
+				state.SharedMemory, state.VirtualPlacement, state.FrameEdits, state.FrameAppend, state.FrameSelect,
+			} {
+				if capability == KittyCapabilitySupported {
+					t.Fatalf("basic graphics reply granted optional capabilities: %+v", state)
+				}
+			}
+		})
+	}
+}

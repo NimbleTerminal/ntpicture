@@ -208,6 +208,8 @@ func kittyEnvSignal() bool {
 	return kittyEnvSignalFor(tmuxPassthroughEnabled.Load())
 }
 
+// kittyEnvSignalFor reports identity hints, not protocol conformance.
+// Capabilities still require probe replies or explicit host overrides.
 func kittyEnvSignalFor(tmux bool) bool {
 	if tmux {
 		return true
@@ -221,12 +223,15 @@ func kittyEnvSignalFor(tmux bool) bool {
 	if os.Getenv("WEZTERM_EXECUTABLE") != "" || os.Getenv("WEZTERM_PANE") != "" {
 		return true
 	}
+	if os.Getenv("KONSOLE_VERSION") != "" {
+		return true
+	}
 	switch os.Getenv("TERM") {
-	case "xterm-kitty", "xterm-ghostty":
+	case "xterm-kitty", "xterm-ghostty", "xterm-rex", "xterm-rio", "rio":
 		return true
 	}
 	switch os.Getenv("TERM_PROGRAM") {
-	case "ghostty", "WezTerm", "kitty", "iTerm.app":
+	case "ghostty", "WezTerm", "kitty", "iTerm.app", "rex", "rio", "WarpTerminal":
 		return true
 	}
 	return false

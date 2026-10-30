@@ -242,10 +242,17 @@ func TestKittyEnvSignal_RecognizedTerminals(t *testing.T) {
 		{"wezterm/WEZTERM_PANE", "WEZTERM_PANE", "0"},
 		{"TERM=xterm-kitty", "TERM", "xterm-kitty"},
 		{"TERM=xterm-ghostty", "TERM", "xterm-ghostty"},
+		{"TERM=xterm-rex", "TERM", "xterm-rex"},
+		{"TERM=xterm-rio", "TERM", "xterm-rio"},
+		{"TERM=rio", "TERM", "rio"},
+		{"konsole/KONSOLE_VERSION", "KONSOLE_VERSION", "260800"},
 		{"TERM_PROGRAM=ghostty", "TERM_PROGRAM", "ghostty"},
 		{"TERM_PROGRAM=WezTerm", "TERM_PROGRAM", "WezTerm"},
 		{"TERM_PROGRAM=kitty", "TERM_PROGRAM", "kitty"},
 		{"TERM_PROGRAM=iTerm.app", "TERM_PROGRAM", "iTerm.app"},
+		{"TERM_PROGRAM=rex", "TERM_PROGRAM", "rex"},
+		{"TERM_PROGRAM=rio", "TERM_PROGRAM", "rio"},
+		{"TERM_PROGRAM=WarpTerminal", "TERM_PROGRAM", "WarpTerminal"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -260,7 +267,7 @@ func TestKittyEnvSignal_RecognizedTerminals(t *testing.T) {
 }
 
 // TestKittyEnvSignal_UnknownTerminalReturnsFalse verifies that with
-// every recognized indicator unset, the gate is closed.
+// every recognized indicator unset, no environment hint is reported.
 func TestKittyEnvSignal_UnknownTerminalReturnsFalse(t *testing.T) {
 	clearKittyEnv(t)
 	if kittyEnvSignal() {
@@ -290,6 +297,7 @@ func clearKittyEnv(t *testing.T) {
 		"GHOSTTY_RESOURCES_DIR",
 		"WEZTERM_EXECUTABLE",
 		"WEZTERM_PANE",
+		"KONSOLE_VERSION",
 		"TERM",
 		"TERM_PROGRAM",
 	} {

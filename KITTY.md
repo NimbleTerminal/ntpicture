@@ -10,7 +10,27 @@ optional frame optimizations. For component setup and lifecycle, start with
 Kitty support is queried even when the terminal has no recognized environment
 identifier. Images stay in glyph mode until a positive response arrives; an
 unanswered probe falls back after 250 ms, and late positive replies are accepted.
-Explicitly disabling Kitty skips its probes.
+Explicitly disabling Kitty skips its probes. Environment hints are reported
+through `TerminalState.EnvSignalled`; they do not enable graphics or frame
+optimizations without positive probe replies.
+
+Additional recognized hints include:
+
+| Terminal | Environment hints |
+| --- | --- |
+| Rex | `TERM=xterm-rex` or `TERM_PROGRAM=rex` |
+| Rio | `TERM=xterm-rio`, `TERM=rio`, or `TERM_PROGRAM=rio` |
+| Konsole | Nonempty `KONSOLE_VERSION` |
+| Warp | `TERM_PROGRAM=WarpTerminal` |
+
+Recognition does not certify full protocol conformance. Support can vary by
+version and platform: [Rio documents its supported features](https://rioterm.com/docs/features/kitty-graphics-protocol),
+[Kitty lists Konsole as an implementation](https://github.com/kovidgoyal/kitty/blob/master/docs/graphics-protocol.rst),
+and [Warp documents image support on macOS and Linux](https://docs.warp.dev/terminal/more-features/files-and-links).
+Shared memory, virtual placements, and frame operations are probed separately.
+A basic graphics reply cannot enable these optional capabilities. Probe checks
+also cannot prove correct rendering; terminal acceptance checks are recorded in
+[DEVELOP.md](./DEVELOP.md).
 
 Native shared-memory probes remain readable for up to five seconds for late
 replies, then are unlinked even if the terminal never responds. Close the
