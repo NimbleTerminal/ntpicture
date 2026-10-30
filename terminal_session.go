@@ -467,3 +467,14 @@ func (t kittyTransport) wrap(seq string) string {
 	}
 	return seq
 }
+
+// synchronizedUpload prevents the terminal from presenting a partially loaded
+// replacement. Some terminals delete the old image on the first chunk of a
+// same-ID transmission. Keep both mode changes and every chunk in one RawMsg;
+// Bubble Tea's synchronized text redraw does not include raw image output.
+func (t kittyTransport) synchronizedUpload(payload string) string {
+	if payload == "" {
+		return ""
+	}
+	return t.wrap(ansi.SetModeSynchronizedOutput) + payload + t.wrap(ansi.ResetModeSynchronizedOutput)
+}

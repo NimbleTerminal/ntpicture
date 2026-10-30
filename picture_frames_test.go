@@ -1,6 +1,8 @@
 package ntpicture
 
 import (
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"image"
 	"image/color"
 	"nimbleterminal.dev/ntpicture/internal/framecache"
@@ -99,5 +101,48 @@ func testCachedSharedOwnership(t *testing.T) {
 	}
 	if !obj.Done() {
 		t.Fatal("Keep leaked shared object")
+	}
+}
+
+func TestStableReplacementSynchronizesEveryChunk(t *testing.T) {
+	for _, tmux := range []bool{false, true} {
+		opts := sessionOptions(tmux)
+		opts.FrameEdits = KittyCapabilityUnsupported
+		session := NewTerminalSession(opts)
+		p := New(Options{Session: session, StableID: true, RetireDelay: -1,
+			Render: Config{Fit: FitFill, CellPixelWidth: 1, CellPixelHeight: 1, KittyFormat: KittyFormatRGBA}})
+		p.SetSize(100, 100)
+		p.SetTerminal(true, 1, 1)
+		drivePicture(t, p, p.SetImage(randomNRGBA(100, 100)))
+		id, view := p.front.cfg.KittyID, p.View()
+		messages := drivePicture(t, p, p.SetImage(randomNRGBA(100, 100)))
+		uploads := 0
+		for _, msg := range messages {
+			raw, ok := msg.(tea.RawMsg)
+			if !ok {
+				continue
+			}
+			payload, ok := raw.Msg.(string)
+			if !ok || !strings.Contains(payload, "a=T") {
+				continue
+			}
+			uploads++
+			transport := session.transport()
+			begin, end := transport.wrap(ansi.SetModeSynchronizedOutput), transport.wrap(ansi.ResetModeSynchronizedOutput)
+			if !strings.HasPrefix(payload, begin) || !strings.HasSuffix(payload, end) || strings.Count(payload, begin) != 1 || strings.Count(payload, end) != 1 {
+				t.Fatalf("tmux=%v: upload not enclosed in one synchronized transaction", tmux)
+			}
+			if !strings.Contains(payload, "m=1") || !strings.Contains(payload, "m=0") {
+				t.Fatal("test must exercise a complete multi-chunk upload")
+			}
+		}
+		if uploads != 1 || p.front.cfg.KittyID != id || p.View() != view {
+			t.Fatal("replacement must retain ID and grid and send exactly one upload message")
+		}
+		if session.transport().synchronizedUpload("") != "" {
+			t.Fatal("empty upload emitted output")
+		}
+		drivePicture(t, p, p.Close())
+		session.Close()
 	}
 }

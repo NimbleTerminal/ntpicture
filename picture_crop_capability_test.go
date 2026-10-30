@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 )
 
@@ -56,6 +57,7 @@ func TestKittyCropAfterVirtualPlacementReply(t *testing.T) {
 					// Fresh-ID replacement also retires the old image. Decode only
 					// the upload, excluding the trailing deletion command.
 					upload, _, _ := strings.Cut(raw, "\x1b_Ga=d")
+					upload = strings.TrimSuffix(strings.TrimPrefix(upload, ansi.SetModeSynchronizedOutput), ansi.ResetModeSynchronizedOutput)
 					pixels, err := png.Decode(bytes.NewReader(decodeKittyPNG(t, upload, "a=T", "f=100", "c=20", "r=10", "U=1")))
 					if err != nil {
 						t.Fatal(err)

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Synchronize complete Picture uploads, including restoration and Keep, to prevent
+  black flashes during chunked same-ID replacement on Ghostty 1.4 and Rex.
+
 - Probe Kitty graphics support on unknown terminals instead of requiring a known
   environment identifier; preserve explicit overrides and glyph fallback.
 

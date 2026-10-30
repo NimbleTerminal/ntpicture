@@ -1007,7 +1007,10 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 			} else if !j.placement.active.Load() {
 				return nil
 			}
-			return tea.RawMsg{Msg: f.APC}
+			if j.placement.cacheSelect {
+				return tea.RawMsg{Msg: f.APC}
+			}
+			return tea.RawMsg{Msg: j.placement.transport.synchronizedUpload(f.APC)}
 		}, func() tea.Msg {
 			defer func() {
 				j.placement.lease.clearOutputDone(j.outputDone)
@@ -1291,7 +1294,7 @@ func (p *Picture) Stop() tea.Cmd {
 		}
 		front.lease.overwritten.Store(false)
 		front.lease.outputMu.Unlock()
-		return tea.RawMsg{Msg: frame.APC}
+		return tea.RawMsg{Msg: front.transport.synchronizedUpload(frame.APC)}
 	}
 	return tea.Sequence(pending, restore)
 }
@@ -1391,7 +1394,7 @@ func (p *Picture) keep(retransmit bool) tea.Cmd {
 				time.Sleep(rem)
 			}
 		}
-		return tea.RawMsg{Msg: frame.APC}
+		return tea.RawMsg{Msg: front.transport.synchronizedUpload(frame.APC)}
 	}
 	return tea.Sequence(cleanup, keep)
 }

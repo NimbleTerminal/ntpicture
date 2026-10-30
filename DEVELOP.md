@@ -541,3 +541,21 @@ with automatic detection after applying the probe-gate removal to base revision
 acceptance, not an automated terminal check. The demo was rebuilt against the
 patched local library. Full `task ci` passed on the staged patch, including race,
 no-CGO, WASM, browser lifecycle smoke checks, lint, and vulnerability checks.
+
+### Synchronized Kitty upload acceptance (2026-10-30)
+
+The user reproduced black flicker in Rex and in Ghostty 1.4 on another machine,
+while Ghostty 1.3.1 was unaffected. Disabling frame edits did not fix Rex.
+The user reported smooth output from the water diagnostic binary that wrapped
+complete uploads in synchronized-output mode on macOS (Rex version and macOS
+version not recorded). The diagnostic used ntpicture base `a863ab3` with upload
+synchronization applied; this was user-reported visual acceptance. The final
+implementation also wraps restoration and Keep uploads, and passes mode changes
+through tmux when configured; those paths have not been visually verified.
+
+Ghostty commit `e5747cf0b603e4cad0ab6642c44738c9cfb50fa5` deletes an old image
+and its placements on the first replacement chunk. Picture's raw uploads are
+outside Bubble Tea's synchronized text redraw, so they need their own bounded
+transaction. Protocol regression coverage checks that all replacement chunks
+are enclosed in one raw message, with the same image ID and placeholder grid,
+for direct and tmux transports. Empty uploads remain silent.
