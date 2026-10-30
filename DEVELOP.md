@@ -55,6 +55,21 @@ adapters. Private picture implementation tests live here after extraction.
 in environments that prohibit listening sockets. Consumer changes made in the
 copies are discarded; no dependency pin in a real checkout is changed.
 
+The harness uses Go's native CGO default and honors an explicit `CGO_ENABLED`
+from the caller. On macOS, use the default enabled configuration and a C
+compiler: Gloss's purego and goffi dependencies define conflicting fakecgo
+symbols when CGO is disabled. The checks also build the Gloss CLI to validate
+the executable's dependency graph. These are native integration checks;
+`task test-no-cgo` separately validates ntpicture's direct-transport fallback.
+
+On 2026-10-30, macOS/arm64 with Go 1.27.3 and `CGO_ENABLED=1` passed
+`task consumers` against ntpicture `19929b1` plus this harness correction.
+This included Gloss's app tests and CLI build in the temporary copy (local
+Gloss checkout based on `ffc44b4`). Gloss's normal CLI build also passed with
+`GOWORK=off -mod=readonly` and its existing published pins, and the resulting
+binary answered `--version`. ntpicture's `task ci` passed. This is build and
+automated integration coverage, not Gloss's full CI or visual acceptance.
+
 Keep `GOWORK=off` for native/release dependency checks. Do not put local sibling
 replacements in the root go.mod. The separate examples module uses a local
 replacement for this checkout so it can exercise unreleased library changes. Run

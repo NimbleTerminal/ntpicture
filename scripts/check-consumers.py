@@ -43,11 +43,12 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="ntpicture-consumers-") as temporary:
         base = Path(temporary)
-        env = os.environ | {
-            "GOWORK": "off",
-            "CGO_ENABLED": "0",
-        }
+        # Use Go's native CGO default (or the caller's explicit override).
+        # Gloss's macOS build requires cgo: its purego and goffi dependencies
+        # otherwise both provide fakecgo runtime symbols and fail to link.
+        env = os.environ | {"GOWORK": "off"}
         env.setdefault("GOCACHE", str(base / "go-cache"))
+        run(["go", "env", "GOOS", "GOARCH", "CGO_ENABLED", "GOVERSION"], ROOT, env)
         for name in ("ntcharts", "ntcharts3d", "ntqrcode", "gloss"):
             copy_checkout(args.projects / name, base / name)
         for optional in ("ntcanvas", "nt3d", "ntcharts-svg", "ntcharts-pdf"):
@@ -116,6 +117,11 @@ def main():
                 run(["go", "test", "-mod=mod", *flags, *packages], directory, env)
             except subprocess.CalledProcessError:
                 failures.append(str(directory.relative_to(base)))
+        try:
+            run(["go", "build", "-mod=mod", "-o", str(base / "gloss-consumer"),
+                 "./cmd/gloss"], base / "gloss", env)
+        except subprocess.CalledProcessError:
+            failures.append("gloss CLI build")
         if failures:
             raise SystemExit("Consumer checks failed: " + ", ".join(failures))
 
