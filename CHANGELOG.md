@@ -1,5 +1,16 @@
 # `ntpicture` CHANGELOG
 
+## Unreleased
+
+- Add `decoders/worker`: decode untrusted still images in a separate process
+  confined by ntmediabox and ntconfine. `Start` returns a reusable `Session`
+  that reports the sandbox mechanism actually applied; `Decode` is the
+  one-shot form; `Serve` runs the worker side. The host rejects any format
+  name the worker cannot produce. The subpackage keeps the sandbox stack out
+  of the plain `decoders` blank import.
+- Document the sandbox perimeter and its limits in the README, and list the
+  library's own dependencies in THIRD_PARTY_NOTICES.md.
+
 ## v0.1.4 (2026-10-30)
 
 - Recognize Rex, Rio, Konsole, and Warp environment hints while retaining

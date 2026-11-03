@@ -219,10 +219,51 @@ document or list can hold any of them behind a small interface of its own.
 [examples/animation/scroll.go](./examples/animation/scroll.go) scrolls a
 document of mixed images this way.
 
+## Sandboxed decoding
+
+`decoders/worker` decodes untrusted still images in a separate process
+confined by [ntmediabox](https://github.com/NimbleTerminal/ntmediabox) and
+[ntconfine](https://github.com/NimbleTerminal/ntconfine): Landlock plus
+seccomp on Linux, `sandbox-exec` on macOS, and no enforcement on Windows. The
+host treats the worker as hostile. Every length and dimension it sends is
+checked against caps you choose (defaults: 16 Mi pixels, 8192 per side, 10 s)
+before memory is allocated, the returned format name must be one of the six
+the worker can produce, and a timeout or protocol violation kills the worker.
+
+```go
+// Host: one worker per session; requests on a session are serialized.
+s, err := worker.Start(worker.Config{
+    WorkerPath: exe, WorkerArgs: []string{"--decode-worker"}, StagePath: exe,
+})
+if err != nil { return err }
+defer s.Close()
+if !s.Enforced() { log.Println("decoding without OS confinement:", s.Support().Detail) }
+img, format, err := s.Decode(ctx, data)
+```
+
+Your binary plays three roles: host (above), Linux stage (handle
+`ntmediabox.StageArg` in `main`, or ship `ntconfine-stage` beside the binary
+and leave `StagePath` empty), and worker (call `worker.Serve` on
+`ntmediabox.WorkerConn()` when `--decode-worker` is set). The worker binary
+must be a regular file owned by you or root and not group- or world-writable.
+After a timeout the session is closed and must be started again.
+
+What this does not cover. `Config.AllowUnsandboxed` runs the worker with no
+OS confinement when enforcement is unavailable, and nothing stops the call;
+check `Session.Support` or `ntmediabox.Probe` before relying on it. GIF and
+WebP animation decoding in the `animation` package stays in-process. The
+worker shares the host kernel; ntconfine's SECURITY.md has the full threat
+model and syscall policy.
+
+Importing `decoders/worker` links ntmediabox and ntconfine, which are
+AGPL-3.0 with a linking exception that covers MIT modules such as this one.
+The plain `decoders` blank import does not link them.
+
 ## Other packages
 
 - `nimbleterminal.dev/ntpicture/decoders` registers PNG, JPEG, GIF, WebP, BMP,
-  and TIFF with `image.Decode`.
+  and TIFF with `image.Decode`. Its `worker` subpackage decodes untrusted
+  images in an OS-confined subprocess (see [Sandboxed decoding](#sandboxed-decoding)).
 - `nimbleterminal.dev/ntpicture/legacy` provides the NTCharts `picture.Model`
   API and process-wide capability helpers, for existing NTCharts code. See
   [MIGRATION.md](./MIGRATION.md).

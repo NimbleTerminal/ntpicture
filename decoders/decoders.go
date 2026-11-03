@@ -6,6 +6,10 @@
 //
 //	import _ "nimbleterminal.dev/ntpicture/decoders"
 //
+// To decode untrusted images in an OS-confined subprocess instead, use the
+// decoders/worker subpackage; it is separate so this blank import does not
+// link the sandbox stack.
+//
 // Import individual codecs instead when only specific formats are needed.
 // Core already imports image/png for Kitty encoding, which also registers PNG
 // decoding. URL fetching and caching remain in NTCharts's picture/pictureurl;

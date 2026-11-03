@@ -41,6 +41,27 @@ For restricted environments, `CGO_ENABLED=0` on macOS tests the direct fallback.
 A race run may explicitly exclude OS-blocked shared-memory tests; report those
 exclusions and do not describe it as full native transport validation.
 
+## Sandboxed decoder worker tests
+
+`decoders/worker` tests turn the test binary into all three roles through
+`os.Args` in `init`: host (the test itself), Linux stage (`ntmediabox.StageArg`),
+and worker (`--ntpicture-test-worker`). `TestSandboxedSubprocess` starts a
+real confined worker and logs the mechanism ntconfine applied. It sets
+`AllowUnsandboxed` so it also runs where no enforcement exists; set
+`NTPICTURE_REQUIRE_SANDBOX=1` (CI does) to fail instead when the worker is not
+confined. On macOS, enforcement needs `/usr/bin/sandbox-exec` outside another
+sandbox; on Linux it needs Landlock ABI 3 or later, which Docker's default
+seccomp profile blocks, so `task test-worker-linux` runs the subprocess tests in
+`golang:1.27` with `--security-opt seccomp=unconfined`. These are protocol and
+lifecycle checks; they do not prove what a worker can or cannot reach, which
+is ntconfine's test suite's job.
+
+Record: 2026-11-03, macOS (Darwin 27.2.0), base `f6a6513` with the
+`decoders/worker` addition, `TestSandboxedSubprocess` reported `sandbox-exec`
+(`enforced=true`) and survived a corrupt image mid-session. The Linux Landlock
+path was not run locally that day (no Docker daemon); it runs on the Ubuntu CI
+runner with `NTPICTURE_REQUIRE_SANDBOX=1`.
+
 ## Consumer compatibility checks
 
 ```sh

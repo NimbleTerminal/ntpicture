@@ -55,7 +55,10 @@ GOWORK=off CGO_ENABLED=0 go test . -run '^$' -bench '^BenchmarkFitCover$' -bench
 Native POSIX shared-memory tests need `shm_open` and fail deliberately where it
 is blocked. If you must exclude them (for example in a sandbox), say so; that
 run is not full native transport validation. `NTPICTURE_SHM_TERMINAL_TEST=1`
-enables the real-terminal consumption test in a Kitty-capable terminal. CI runs
+enables the real-terminal consumption test in a Kitty-capable terminal.
+`NTPICTURE_REQUIRE_SANDBOX=1` (set in CI) makes the `decoders/worker` subprocess
+test fail when the worker runs without OS confinement; `task test-worker-linux`
+runs it under Landlock in Docker. CI runs
 Linux and macOS (distinct shared-memory implementations) and cross-compiles
 Windows (`task cross-windows`).
 
@@ -136,6 +139,17 @@ requires CGO; `task test-no-cgo` covers the fallback. `yield_js.go` /
 pattern. Tests with `_js_test.go` / `_native_test.go` suffixes carry matching
 tags.
 
+### `decoders` and `decoders/worker`
+
+`decoders` is a blank-import package that registers image formats and must
+stay free of ntmediabox and ntconfine. `decoders/worker` decodes untrusted
+stills in an OS-confined subprocess over ntmediabox: the host treats worker
+output as hostile, so never return worker bytes to callers without matching
+them against a closed set (the format allowlist), never echo them in errors,
+and keep `Session.Support` truthful about whether confinement was applied.
+`worker_test.go` turns the test binary into the stage and worker roles via
+`os.Args` in `init`.
+
 ### `legacy` package and the bridge
 
 `legacy/` exposes the NTCharts-era `Model` API and process-global capability
@@ -186,7 +200,8 @@ Breaking these breaks consumers, even if tests still pass.
   its replacement is presented. Stale or superseded results never replace
   newer state.
 - **Bounds.** Preserve the pixel caps (32 Mi source/prepared/canvas), the 64 MiB
-  pending shared-memory cap, and the animation decode limits.
+  pending shared-memory cap, the animation decode limits, and the worker's
+  16 Mi pixel and 10 s defaults.
 - **Wire compatibility.** Kitty output keeps the NTCharts wire format. The
   exact-size `FitFill` path must bypass resampling; ntqrcode relies on this for
   exact QR pixels.

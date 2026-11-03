@@ -35,3 +35,7 @@ jobs:
         with:
           version: '3.x'
       - run: task ci
+        env:
+          # Both runners enforce OS confinement (Landlock on Ubuntu,
+          # sandbox-exec on macOS); fail if the decoder worker runs without it.
+          NTPICTURE_REQUIRE_SANDBOX: '1'

@@ -6,9 +6,15 @@ require (
 	charm.land/bubbletea/v2 v2.1.1
 	github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
 	golang.org/x/image v0.47.0
+	nimbleterminal.dev/ntmediabox v0.1.0
 )
 
-require github.com/charmbracelet/x/exp/golden v0.1.0 // indirect
+require (
+	github.com/charmbracelet/x/exp/golden v0.1.0 // indirect
+	nimbleterminal.dev/ntconfine v0.1.0 // indirect
+	nimbleterminal.dev/ntconfine/pkg/confine v0.1.0 // indirect
+	nimbleterminal.dev/ntmediabox/pkg/mediabox v0.1.0 // indirect
+)
 
 require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
