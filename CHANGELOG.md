@@ -1,6 +1,6 @@
 # `ntpicture` CHANGELOG
 
-## Unreleased
+## v0.1.5 (2026-11-03)
 
 - Add `decoders/worker`: decode untrusted still images in a separate process
   confined by ntmediabox and ntconfine. `Start` returns a reusable `Session`

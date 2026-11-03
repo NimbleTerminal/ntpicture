@@ -9,7 +9,7 @@ require (
 	github.com/NimbleMarkets/go-booba v0.10.7
 	github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
 	github.com/charmbracelet/x/ansi v0.11.9
-	nimbleterminal.dev/ntpicture v0.1.3
+	nimbleterminal.dev/ntpicture v0.1.4
 )
 
 require (

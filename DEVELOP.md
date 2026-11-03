@@ -52,8 +52,12 @@ real confined worker and logs the mechanism ntconfine applied. It sets
 confined. On macOS, enforcement needs `/usr/bin/sandbox-exec` outside another
 sandbox; on Linux it needs Landlock ABI 3 or later, which Docker's default
 seccomp profile blocks, so `task test-worker-linux` runs the subprocess tests in
-`golang:1.27` with `--security-opt seccomp=unconfined`. These are protocol and
-lifecycle checks; they do not prove what a worker can or cannot reach, which
+`golang:1.27` with `--security-opt seccomp=unconfined`. On Linux x86_64,
+`go test -race` links ThreadSanitizer (`libtsan`), which reserves ~18 TiB of
+virtual address space and reads `/proc/self/maps` before `main`, so the Linux
+subprocess tests skip under `-race` and run in `task test-no-cgo` (and
+`task test-worker-linux`) with `NTPICTURE_REQUIRE_SANDBOX=1`. These are protocol
+and lifecycle checks; they do not prove what a worker can or cannot reach, which
 is ntconfine's test suite's job.
 
 Record: 2026-11-03, macOS (Darwin 27.2.0), base `f6a6513` with the

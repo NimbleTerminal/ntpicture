@@ -59,8 +59,8 @@ type Config struct {
 	// ntconfine-stage binary sits beside the host executable. Ignored elsewhere.
 	StagePath string
 	// Policy is the OS confinement policy. When ExecPaths is empty it becomes
-	// [WorkerPath]; when ReadPaths is empty it becomes
-	// ntmediabox.DefaultLibPaths(). Pass explicit ReadPaths to narrow that.
+	// WorkerPath plus ntmediabox.DefaultExecPaths(); when ReadPaths is empty it
+	// becomes ntmediabox.DefaultLibPaths(). Pass explicit paths to narrow that.
 	Policy ntmediabox.Policy
 	// AllowUnsandboxed lets the worker run with no OS confinement at all when
 	// enforcement is unavailable (always on Windows; on Linux without
@@ -111,7 +111,7 @@ func Start(cfg Config) (*Session, error) {
 	}
 	policy := cfg.Policy
 	if len(policy.ExecPaths) == 0 {
-		policy.ExecPaths = []string{cfg.WorkerPath}
+		policy.ExecPaths = append([]string{cfg.WorkerPath}, ntmediabox.DefaultExecPaths()...)
 	}
 	if len(policy.ReadPaths) == 0 {
 		policy.ReadPaths = ntmediabox.DefaultLibPaths()
