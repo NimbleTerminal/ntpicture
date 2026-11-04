@@ -13,7 +13,7 @@ The artwork is embedded in the simple demo binary, including its WASM build.
 The generated demo site includes booba and ghostty-web runtime assets.
 Go dependency and browser runtime license texts are collected in
 THIRD_PARTY_NOTICES.md, generated with `task notices` and copied into the site.
-The browser licenses in `web/licenses/` were copied from go-booba's local
+The browser licenses in `web/licenses/` were copied from booba's local
 vendored ghostty-web, Ghostty, and pako sources; review them when updating the
 pinned booba runtime. `wasm_exec.js` retains its Go BSD license header.
 

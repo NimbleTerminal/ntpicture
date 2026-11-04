@@ -63,7 +63,7 @@ Linux and macOS (distinct shared-memory implementations) and cross-compiles
 Windows (`task cross-windows`).
 
 `task consumers` and `task browser-check` need sibling checkouts (NTCharts,
-Gloss, ntqrcode, go-booba) and are not part of `task ci`.
+Gloss, ntqrcode, booba) and are not part of `task ci`.
 
 ## Module layout
 
@@ -71,7 +71,7 @@ Two Go modules plus a workspace file:
 
 - **Root module** (`nimbleterminal.dev/ntpicture`): the library. Uses upstream
   Bubble Tea. Never add local sibling `replace` directives here.
-- **`examples/`** (separate module): the five demos, which depend on `go-booba`
+- **`examples/`** (separate module): the five demos, which depend on `booba`
   so the library does not. It `replace`s ntpicture with `..` to test unreleased
   changes. Each demo runs natively and as WASM via `booba.Run`.
 - **`wasm.work`**: browser builds only. Pins a browser-capable fork of Bubble Tea
@@ -81,7 +81,7 @@ Two Go modules plus a workspace file:
   module updates.
 
 Generated output is ignored: `bin/`, `dist/`, `web/demos/`, `web/booba/`,
-`web/ghostty-web/`, `.task/`. Never commit browser build output.
+`web/ntwebterm/`, `.task/`. Never commit browser build output.
 
 ## Architecture
 

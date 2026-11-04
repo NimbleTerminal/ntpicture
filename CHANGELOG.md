@@ -1,6 +1,6 @@
 # `ntpicture` CHANGELOG
 
-## v0.1.5 (2026-11-03)
+## v0.1.5 (2026-11-04)
 
 - Add `decoders/worker`: decode untrusted still images in a separate process
   confined by ntmediabox and ntconfine. `Start` returns a reusable `Session`
@@ -10,6 +10,8 @@
   of the plain `decoders` blank import.
 - Document the sandbox perimeter and its limits in the README, and list the
   library's own dependencies in THIRD_PARTY_NOTICES.md.
+- Migrate example dependencies to `nimbleterminal.dev/booba` v0.12.1 and
+  refresh `nimbleterminal.dev/ntconfine` to v0.1.1.
 
 ## v0.1.4 (2026-10-30)
 

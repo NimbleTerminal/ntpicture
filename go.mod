@@ -11,7 +11,7 @@ require (
 
 require (
 	github.com/charmbracelet/x/exp/golden v0.1.0 // indirect
-	nimbleterminal.dev/ntconfine v0.1.0 // indirect
+	nimbleterminal.dev/ntconfine v0.1.1 // indirect
 	nimbleterminal.dev/ntconfine/pkg/confine v0.1.0 // indirect
 	nimbleterminal.dev/ntmediabox/pkg/mediabox v0.1.0 // indirect
 )

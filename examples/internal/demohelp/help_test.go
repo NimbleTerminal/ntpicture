@@ -3,7 +3,7 @@ package demohelp
 import (
 	"testing"
 
-	"github.com/NimbleMarkets/go-booba/actions/bubblehelp"
+	"nimbleterminal.dev/booba/actions/bubblehelp"
 )
 
 func TestGridActionsFollowCapabilities(t *testing.T) {

@@ -6,7 +6,7 @@ env:
 vars:
   GOVULNCHECK_VERSION: v1.9.0
   GOLANGCI_LINT_VERSION: v2.15.0
-  BOOBA_DIR: '{{.ROOT_DIR}}/../go-booba'
+  BOOBA_DIR: '{{.ROOT_DIR}}/../booba'
 
 tasks:
   default:
@@ -219,4 +219,4 @@ tasks:
       - bin/ntpicture-bench {{.CLI_ARGS}}
   clean:
     desc: Remove generated binaries and task tools
-    cmds: ['rm -rf bin dist .task web/demos web/booba web/ghostty-web web/wasm_exec.js web/LICENSE web/NOTICE.md web/THIRD_PARTY_NOTICES.md']
+    cmds: ['rm -rf bin dist .task web/demos web/booba web/ghostty-web web/ntwebterm web/wasm_exec.js web/LICENSE web/NOTICE.md web/THIRD_PARTY_NOTICES.md']

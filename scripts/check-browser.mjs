@@ -1,5 +1,5 @@
 // Exercise the actual booba bundle/WASM against Go-generated Kitty payloads.
-// Usage: node scripts/check-browser.mjs /path/to/go-booba /path/to/frames.json
+// Usage: node scripts/check-browser.mjs /path/to/booba /path/to/frames.json
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 
 const [booba, framesPath] = process.argv.slice(2);
 if (!booba || !framesPath) throw new Error('usage: check-browser.mjs BOOBA FRAMES_JSON');
-const assets = resolve(booba, 'serve/static/ghostty-web');
-const {Ghostty} = await import(pathToFileURL(resolve(assets, 'ghostty-web.js')).href);
+const assets = resolve(booba, 'serve/static/ntwebterm');
+const {Ghostty} = await import(pathToFileURL(resolve(assets, 'ntwebterm.js')).href);
 const wasm = await readFile(resolve(assets, 'ghostty-vt.wasm'));
 const ghostty = await Ghostty.load(`data:application/wasm;base64,${wasm.toString('base64')}`);
 const term = ghostty.createTerminal(80, 24);

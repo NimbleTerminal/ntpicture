@@ -285,7 +285,7 @@ task serve-wasm-site  # http://localhost:8000/web/
 | `framebuffer` | A live rendered scene with stable IDs, panning, and resolution steps |
 
 Each example runs natively and in the browser via
-[go-booba](https://github.com/NimbleMarkets/go-booba). The examples are a
+[booba](https://github.com/NimbleTerminal/booba). The examples are a
 separate Go module, so booba isn't a dependency of the library.
 
 ## Open Collaboration
