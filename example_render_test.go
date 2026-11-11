@@ -23,7 +23,7 @@ func gradient() image.Image {
 // Print an image from any Go program; no Bubble Tea program is needed.
 // The zero RenderOptions detects Kitty graphics and sizes to the terminal.
 func ExamplePrint() {
-	if err := ntpicture.Print(os.Stderr, gradient(), ntpicture.RenderOptions{Mode: ntpicture.RenderGlyph, Width: 16}); err != nil {
+	if err := ntpicture.Print(os.Stdout, gradient(), ntpicture.RenderOptions{}); err != nil {
 		fmt.Println(err)
 	}
 }

@@ -97,19 +97,22 @@ fmt.Println(out)
 | `Background` | Transparent under Kitty, black in glyphs |
 | `CellPixelWidth`, `CellPixelHeight` | Asked from the terminal, then 8x16 |
 | `Kitty` | `KittyCapabilityUnknown` (detect); `Supported` or `Unsupported` skip detection |
+| `TmuxPassthrough` | Whether to wrap Kitty sequences for tmux; from `TMUX` and `NT_TMUX` |
 | `Output` | Where cleanup writes the delete sequence; `os.Stdout` |
 
 With `RenderAuto`, the first call asks the controlling terminal whether it
-supports Kitty graphics. That briefly puts the terminal in raw mode and waits
-up to one second for a reply; the answer is cached for the process. Detection
-runs on Linux, macOS, and the BSDs. Elsewhere, and when there is no terminal,
-`RenderAuto` uses glyphs unless `Kitty` or `NT_KITTY=supported` says
-otherwise.
+supports Kitty graphics. That turns off echo, line buffering, and signal keys
+while it waits up to one second for a reply; the answer is cached for the
+process. Ctrl+C typed during the wait still interrupts the program, once the
+terminal is restored. Detection runs on Linux, macOS, and the BSDs. Elsewhere,
+in a background job, and when there is no terminal, `RenderAuto` uses glyphs
+unless `Kitty` or `NT_KITTY=supported` says otherwise.
 
 `Print` detects only when its writer is a terminal: an `*os.File`, or anything
 else with an `Fd()` method, that reports one. For a file, pipe, `bytes.Buffer`,
-or `bufio.Writer` it writes glyphs and never touches the terminal, unless
-`Kitty` is set to `KittyCapabilitySupported`. If you wrap `os.Stdout`, give the
+or `bufio.Writer` it never opens the terminal: it writes glyphs, unless `Kitty`
+is set to `KittyCapabilitySupported`, sized from `RenderOptions` alone as if
+for an 80x24 terminal with 8x16 cells. If you wrap `os.Stdout`, give the
 wrapper an `Fd()` method or write the result of `Render` yourself.
 
 To show an image in at most 56x22 cells with no letterbox padding, leave

@@ -5,7 +5,6 @@ package ntpicture
 import (
 	"time"
 
-	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/unix"
 )
 
@@ -34,24 +33,54 @@ func readTerminalGeometry() (g terminalGeometry) {
 // probeTerminal asks the controlling terminal directly, so it works when
 // stdin or stdout is redirected. It uses select because /dev/tty supports
 // neither kqueue nor poll on macOS.
+//
+// While it waits, the terminal has echo, line buffering, and signal keys off;
+// output processing stays on, so concurrent output is unaffected. A signal key
+// typed meanwhile (Ctrl+C, Ctrl+\, Ctrl+Z) ends the wait, and its signal is
+// sent once the terminal is restored. Leaving signal keys on instead would let
+// Ctrl+C kill the process with the terminal still not echoing.
 func probeTerminal(tmux bool, timeout time.Duration) ProbeResult {
-	probe := NewProbe(ProbeOptions{TmuxPassthrough: &tmux})
+	unsupported := ProbeResult{Kitty: KittyCapabilityUnsupported}
 	fd, err := openControllingTerminal()
 	if err != nil {
-		return ProbeResult{Kitty: KittyCapabilityUnsupported}
+		return unsupported
 	}
 	defer func() { _ = unix.Close(fd) }()
 	// select cannot watch a descriptor this high, and FdSet.Set would panic.
 	if fd >= unix.FD_SETSIZE {
-		return ProbeResult{Kitty: KittyCapabilityUnsupported}
+		return unsupported
 	}
-	state, err := term.MakeRaw(uintptr(fd))
+	// A background job that changes terminal settings is stopped by SIGTTOU,
+	// or, if it ignores that, changes them under the foreground program.
+	if pgrp, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP); err != nil || pgrp != unix.Getpgrp() {
+		return unsupported
+	}
+	saved, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
 	if err != nil {
-		return ProbeResult{Kitty: KittyCapabilityUnsupported}
+		return unsupported
 	}
-	defer func() { _ = term.Restore(uintptr(fd), state) }()
+	quiet := *saved
+	quiet.Lflag &^= unix.ICANON | unix.ECHO | unix.ISIG
+	quiet.Cc[unix.VMIN], quiet.Cc[unix.VTIME] = 1, 0
+	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, &quiet); err != nil {
+		return unsupported
+	}
+	probe := NewProbe(ProbeOptions{TmuxPassthrough: &tmux})
+	signal := probeReplies(fd, probe, saved, timeout)
+	_ = unix.IoctlSetTermios(fd, ioctlSetTermios, saved)
+	if signal != 0 {
+		// To the foreground process group, as the terminal would have.
+		_ = unix.Kill(0, signal)
+	}
+	return probe.Result()
+}
+
+// probeReplies writes the query and feeds replies to probe until it is done or
+// timeout passes. It returns the signal for a signal key typed meanwhile.
+func probeReplies(fd int, probe *Probe, saved *unix.Termios, timeout time.Duration) unix.Signal {
+	defer probe.Timeout()
 	if _, err := unix.Write(fd, []byte(probe.Query())); err != nil {
-		return ProbeResult{Kitty: KittyCapabilityUnsupported}
+		return 0
 	}
 	deadline := time.Now().Add(timeout)
 	chunk := make([]byte, 256)
@@ -77,9 +106,33 @@ func probeTerminal(tmux bool, timeout time.Duration) ProbeResult {
 		if err != nil || n <= 0 {
 			break
 		}
-		// Keys typed during the probe are dropped: nothing here reads them.
-		probe.Feed(chunk[:n])
+		// Other keys typed during the probe are dropped: nothing here reads them.
+		keys, _ := probe.Feed(chunk[:n])
+		if signal := signalKey(keys, saved); signal != 0 {
+			return signal
+		}
 	}
-	probe.Timeout()
-	return probe.Result()
+	return 0
+}
+
+// signalKey returns the signal the terminal would have raised for the first
+// signal key in keys, going by the settings in force before the probe.
+func signalKey(keys []byte, saved *unix.Termios) unix.Signal {
+	if saved.Lflag&unix.ISIG == 0 {
+		return 0
+	}
+	for _, key := range keys {
+		if key == 0 || key == 0xff { // disabled control characters
+			continue
+		}
+		switch key {
+		case saved.Cc[unix.VINTR]:
+			return unix.SIGINT
+		case saved.Cc[unix.VQUIT]:
+			return unix.SIGQUIT
+		case saved.Cc[unix.VSUSP]:
+			return unix.SIGTSTP
+		}
+	}
+	return 0
 }

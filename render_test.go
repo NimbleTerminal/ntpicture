@@ -311,3 +311,109 @@ func TestPrint(t *testing.T) {
 		t.Fatalf("want one probe for a terminal writer, got %d", *probes)
 	}
 }
+
+// A semi-transparent background must be composited once, whatever the cells'
+// shape: twice would darken the padding only for cells that are not 1:2.
+func TestRenderGlyphCompositesBackgroundOnce(t *testing.T) {
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
+	half := color.RGBA{B: 128, A: 128} // premultiplied: shown as 0;0;128
+	for _, cell := range [][2]int{{8, 16}, {10, 30}, {16, 16}} {
+		for _, fit := range []FitMode{FitContain, FitCover} {
+			opts := RenderOptions{Width: 12, Height: 12, Fit: fit, Mode: RenderGlyph, Background: half, CellPixelWidth: cell[0], CellPixelHeight: cell[1]}
+			out, _, err := Render(image.NewRGBA(image.Rect(0, 0, 40, 10)), opts) // fully transparent image
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(out, "\x1b[48;2;0;0;128m") != 12 || strings.Contains(out, "0;0;191m") {
+				t.Errorf("cell %v fit %v: background not composited exactly once: %q", cell, fit, out[:min(len(out), 60)])
+			}
+		}
+	}
+}
+
+func TestRenderGlyphCoverFillsNonSquareCells(t *testing.T) {
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
+	red := image.NewRGBA(image.Rect(0, 0, 90, 30))
+	for i := 0; i < len(red.Pix); i += 4 {
+		red.Pix[i], red.Pix[i+3] = 255, 255
+	}
+	opts := RenderOptions{Width: 10, Height: 10, Fit: FitCover, Mode: RenderGlyph, Background: color.RGBA{B: 255, A: 255}, CellPixelWidth: 10, CellPixelHeight: 30}
+	out, _, err := Render(red, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "0;0;255m") || strings.Count(out, "▄") != 100 {
+		t.Errorf("cover left background showing: %q", out[:min(len(out), 80)])
+	}
+}
+
+// Output that does not go to the terminal must not depend on the terminal.
+func TestPrintToNonTerminalIgnoresTerminalGeometry(t *testing.T) {
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilitySupported, CellPixelWidth: 10, CellPixelHeight: 30}, terminalGeometry{cols: 200, rows: 60, cellW: 10, cellH: 30})
+	asked := 0
+	terminalGeometryFn = func() terminalGeometry { asked++; return terminalGeometry{cols: 200, rows: 60, cellW: 10, cellH: 30} }
+	isTerminalFn = func(uintptr) bool { return false }
+	var buf bytes.Buffer
+	if err := Print(&buf, renderTestImage(400, 400), RenderOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+	if cols := strings.Count(lines[0], "▄"); asked != 0 || cols != 48 || len(lines) != 24 {
+		t.Fatalf("asked the terminal %d times; got %dx%d, want the 80x24 default box of 48x24", asked, cols, len(lines))
+	}
+	isTerminalFn = func(uintptr) bool { return true }
+	var tty fdWriter
+	if err := Print(&tty, renderTestImage(400, 400), RenderOptions{Mode: RenderGlyph}); err != nil || asked != 1 {
+		t.Fatalf("terminal writer: asked %d times, err %v", asked, err)
+	}
+}
+
+func TestRenderTmuxPassthroughOption(t *testing.T) {
+	stubRenderTerminal(t, ProbeResult{}, terminalGeometry{})
+	on, off := true, false
+	img := renderTestImage(16, 16)
+	var sink bytes.Buffer
+	wrapped, cleanup, err := Render(img, RenderOptions{Width: 2, Height: 1, Mode: RenderKitty, TmuxPassthrough: &on, Output: &sink})
+	if err != nil || !strings.HasPrefix(wrapped, "\x1bPtmux;") {
+		t.Fatalf("passthrough on: %q %v", wrapped[:min(len(wrapped), 20)], err)
+	}
+	cleanup()
+	if !strings.HasPrefix(sink.String(), "\x1bPtmux;") {
+		t.Fatalf("cleanup not wrapped: %q", sink.String())
+	}
+	t.Setenv("NT_TMUX", "1")
+	plain, _, err := Render(img, RenderOptions{Width: 2, Height: 1, Mode: RenderKitty, TmuxPassthrough: &off, Output: &sink})
+	if err != nil || !strings.HasPrefix(plain, "\x1b_G") {
+		t.Fatalf("passthrough off overrides the environment: %q %v", plain[:min(len(plain), 20)], err)
+	}
+}
+
+func TestRenderOneRowTerminal(t *testing.T) {
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{cols: 40, rows: 1})
+	out, _, err := Render(renderTestImage(400, 400), RenderOptions{Mode: RenderGlyph})
+	if err != nil || strings.Contains(out, "\n") {
+		t.Fatalf("want one row in a one-row terminal, got %d: %v", strings.Count(out, "\n")+1, err)
+	}
+}
+
+// A cell size learned by the probe applies to later explicit-mode calls too.
+func TestRenderReusesProbedCellSize(t *testing.T) {
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported, CellPixelWidth: 10, CellPixelHeight: 30}, terminalGeometry{})
+	img := renderTestImage(90, 90)
+	rows := func(opts RenderOptions) int {
+		out, _, err := Render(img, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(out, "\n") + 1
+	}
+	if got := rows(RenderOptions{Width: 30, Mode: RenderGlyph}); got != 15 {
+		t.Fatalf("before any probe: got %d rows, want 15 for 8x16 cells", got)
+	}
+	if got := rows(RenderOptions{Width: 30}); got != 10 {
+		t.Fatalf("probing call: got %d rows, want 10 for 10x30 cells", got)
+	}
+	if got := rows(RenderOptions{Width: 30, Mode: RenderGlyph}); got != 10 {
+		t.Fatalf("after the probe: got %d rows, want 10 for 10x30 cells", got)
+	}
+}

@@ -34,7 +34,9 @@ func applyEnvOverrides() {
 	tmux, kitty, kittyForced := envTerminalConfig()
 	tmuxPassthroughEnabled.Store(tmux)
 	if kittyForced {
-		forceKittyCapability(kitty)
+		// Not forceKittyCapability: it calls ensureLegacyEnv, which is running
+		// this function inside its sync.Once and would wait on itself forever.
+		setLegacyKittyCapability(kitty)
 	}
 }
 

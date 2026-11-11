@@ -48,15 +48,21 @@ func TestProbeFeed(t *testing.T) {
 		want  ProbeResult
 		done  bool
 	}{
-		"kitty terminal":   {ProbeOptions{}, probeOK + "\x1b[6;20;10t\x1b[?62;4c", "", ProbeResult{KittyCapabilitySupported, 10, 20}, true},
-		"plain terminal":   {ProbeOptions{}, "\x1b[?1;2c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
-		"no answer yet":    {ProbeOptions{}, probeOK, "", ProbeResult{Kitty: KittyCapabilitySupported}, false},
-		"probe error":      {ProbeOptions{}, fmt.Sprintf("\x1b_Gi=%d;ENOTSUPPORTED\x1b\\\x1b[?6c", kittyProbeID), "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
-		"keys kept":        {ProbeOptions{}, "a\x1b[A" + probeOK + "b\x1b[?6cc\x1b[B", "a\x1b[Abc\x1b[B", ProbeResult{Kitty: KittyCapabilitySupported}, true},
-		"foreign replies":  {ProbeOptions{}, "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", ProbeResult{}, false},
-		"bad cell size":    {ProbeOptions{}, "\x1b[6;0;0t\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
-		"tmux reply order": {ProbeOptions{}, "\x1b[6;32;16t" + probeOK + "\x1b[?62;4c", "", ProbeResult{KittyCapabilitySupported, 16, 32}, true},
-		"override wins":    {ProbeOptions{Kitty: KittyCapabilityUnsupported}, probeOK + "\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"kitty terminal":     {ProbeOptions{}, probeOK + "\x1b[6;20;10t\x1b[?62;4c", "", ProbeResult{KittyCapabilitySupported, 10, 20}, true},
+		"plain terminal":     {ProbeOptions{}, "\x1b[?1;2c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"no answer yet":      {ProbeOptions{}, probeOK, "", ProbeResult{Kitty: KittyCapabilitySupported}, false},
+		"probe error":        {ProbeOptions{}, fmt.Sprintf("\x1b_Gi=%d;ENOTSUPPORTED\x1b\\\x1b[?6c", kittyProbeID), "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"keys kept":          {ProbeOptions{}, "a\x1b[A" + probeOK + "b\x1b[?6cc\x1b[B", "a\x1b[Abc\x1b[B", ProbeResult{Kitty: KittyCapabilitySupported}, true},
+		"foreign replies":    {ProbeOptions{}, "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", ProbeResult{}, false},
+		"bad cell size":      {ProbeOptions{}, "\x1b[6;0;0t\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"tmux reply order":   {ProbeOptions{}, "\x1b[6;32;16t" + probeOK + "\x1b[?62;4c", "", ProbeResult{KittyCapabilitySupported, 16, 32}, true},
+		"alt+_ then plain":   {ProbeOptions{}, "\x1b_\x1b[?1;2c", "\x1b_", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"alt+_ then kitty":   {ProbeOptions{}, "\x1b_" + probeOK + "\x1b[?6c", "\x1b_", ProbeResult{Kitty: KittyCapabilitySupported}, true},
+		"alt+[ then reply":   {ProbeOptions{}, "\x1b[\x1b[?1;2c", "\x1b[", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"alt+[ then kitty":   {ProbeOptions{}, "\x1b[" + probeOK + "\x1b[6;20;10t\x1b[?6c", "\x1b[", ProbeResult{KittyCapabilitySupported, 10, 20}, true},
+		"broken apc":         {ProbeOptions{}, "\x1b_Gi=1" + probeOK + "\x1b[?6c", "\x1b_Gi=1", ProbeResult{Kitty: KittyCapabilitySupported}, true},
+		"intermediate bytes": {ProbeOptions{}, "\x1b[?2026;1$y\x1b[?6c", "\x1b[?2026;1$y", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"override wins":      {ProbeOptions{Kitty: KittyCapabilityUnsupported}, probeOK + "\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
 	} {
 		// Whole, then one byte per read: the result must not depend on framing.
 		for _, step := range []int{len(tc.input), 1} {

@@ -15,8 +15,13 @@
   derived from the aspect ratio. `Print` detects only when its writer is a
   terminal, so writing to a buffer or file never touches the terminal.
   Glyph output is fitted in the cells' real proportions, so it keeps its
+  Its size then comes from `RenderOptions` alone. `TmuxPassthrough` overrides
+  the tmux wrapping. A background job is never probed, and Ctrl+C typed
+  during detection still interrupts the program.
   shape when cells are not exactly twice as tall as wide.
 - Add `Probe`, the same detection with no I/O, for programs with their own
+- Fix a deadlock on first use of the `legacy` helpers when `NT_KITTY` (formerly
+  `NTPICTURE_KITTY`) is set in the environment.
   event loop: write `Query`, pass input to `Feed`, read `Result`. The
   `eventloop` example is a raw-mode viewer built on it.
 

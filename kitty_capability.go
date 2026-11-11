@@ -101,6 +101,12 @@ func kittyUnavailable() error {
 
 func forceKittyCapability(c KittyCapability) {
 	ensureLegacyEnv()
+	setLegacyKittyCapability(c)
+}
+
+// setLegacyKittyCapability must not read the environment: applyEnvOverrides
+// calls it while ensureLegacyEnv's sync.Once is still running.
+func setLegacyKittyCapability(c KittyCapability) {
 	defaultTerminalSession.setKittyForced(c != KittyCapabilityUnknown)
 	kittyCap.Store(int32(c))
 	switch c {

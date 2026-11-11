@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi/kitty"
@@ -402,4 +404,30 @@ func TestKnownTerminalHintsDoNotGrantCapabilities(t *testing.T) {
 			}
 		})
 	}
+}
+
+// NT_KITTY in the environment must not deadlock the first use of the legacy
+// session: applying it used to re-enter the sync.Once that was applying it.
+func TestLegacyEnvKittyOverrideDoesNotDeadlock(t *testing.T) {
+	for _, value := range []string{"supported", "unsupported"} {
+		t.Setenv("NT_KITTY", value)
+		legacyEnvOnce = sync.Once{}
+		done := make(chan KittyCapability, 1)
+		go func() { done <- kittySupported() }()
+		select {
+		case got := <-done:
+			want := KittyCapabilitySupported
+			if value == "unsupported" {
+				want = KittyCapabilityUnsupported
+			}
+			if got != want {
+				t.Errorf("NT_KITTY=%s: got %v", value, got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("NT_KITTY=%s: first use of the legacy environment deadlocked", value)
+		}
+	}
+	t.Setenv("NT_KITTY", "")
+	forceKittyCapability(KittyCapabilityUnknown)
+	resetKittyProbeState()
 }

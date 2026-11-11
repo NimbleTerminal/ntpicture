@@ -147,7 +147,26 @@ func (p *Probe) reply(b []byte) (n int, ours bool) {
 	}
 	switch b[1] {
 	case '_': // APC: Kitty graphics replies are ESC _ G <keys> ; <message> ESC \
-		end := bytes.Index(b, []byte("\x1b\\"))
+		if len(b) < 3 {
+			return 0, false
+		}
+		if b[2] != 'G' {
+			return 2, false // Alt+_ or another program's APC, not a graphics reply
+		}
+		end := -1
+		for j := 3; j < len(b) && end < 0; j++ {
+			switch {
+			case b[j] != 0x1b:
+			case j+1 == len(b):
+				j = len(b) // the terminator may be split across reads
+			case b[j+1] == '\\':
+				end = j
+			default:
+				// A new escape sequence began before any terminator, so this
+				// was not a reply. Leave that sequence to be examined itself.
+				return j, false
+			}
+		}
 		if end < 0 {
 			if len(b) > probeMaxAPC {
 				return 1, false
@@ -155,11 +174,8 @@ func (p *Probe) reply(b []byte) (n int, ours bool) {
 			return 0, false
 		}
 		n = end + 2
-		keys, message, _ := strings.Cut(string(b[2:end]), ";")
-		if !strings.HasPrefix(keys, "G") {
-			return n, false
-		}
-		for key := range strings.SplitSeq(keys[1:], ",") {
+		keys, message, _ := strings.Cut(string(b[3:end]), ";")
+		for key := range strings.SplitSeq(keys, ",") {
 			if key == "i="+strconv.Itoa(kittyProbeID) {
 				p.answered = p.answered || message == "OK"
 				return n, true
@@ -176,6 +192,10 @@ func (p *Probe) reply(b []byte) (n int, ours bool) {
 				return 1, false
 			}
 			return 0, false
+		}
+		if b[end] == 0x1b {
+			// Alt+[ followed by another sequence: do not swallow its ESC.
+			return end, false
 		}
 		n = end + 1
 		params := string(b[2:end])

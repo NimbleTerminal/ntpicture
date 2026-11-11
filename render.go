@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"golang.org/x/image/draw"
+	"nimbleterminal.dev/ntpicture/internal/imageview"
 )
 
 // RenderMode selects the output of Render and Print. The zero value detects.
@@ -57,6 +59,10 @@ type RenderOptions struct {
 	// variable is used when it is KittyCapabilityUnknown.
 	Kitty KittyCapability
 
+	// TmuxPassthrough wraps Kitty sequences for tmux. Nil reads TMUX and
+	// NT_TMUX.
+	TmuxPassthrough *bool
+
 	// Output is where the cleanup function returned by Render writes. It
 	// must reach the terminal the image was written to. Nil means os.Stdout.
 	Output io.Writer
@@ -87,6 +93,14 @@ var renderProbe struct {
 	result ProbeResult
 }
 
+// cachedProbeCellSize returns the cell size an earlier probe learned, if any,
+// without probing.
+func cachedProbeCellSize() (w, h int) {
+	renderProbe.Lock()
+	defer renderProbe.Unlock()
+	return renderProbe.result.CellPixelWidth, renderProbe.result.CellPixelHeight
+}
+
 func cachedTerminalProbe(tmux bool) ProbeResult {
 	renderProbe.Lock()
 	defer renderProbe.Unlock()
@@ -101,9 +115,12 @@ func cachedTerminalProbe(tmux bool) ProbeResult {
 // to write to a terminal: Kitty graphics where supported, half-block glyphs
 // elsewhere. It needs no Bubble Tea program.
 //
-// With RenderAuto, the first call may briefly put the controlling terminal in
-// raw mode to ask whether it supports Kitty graphics. Set Mode or
-// RenderOptions.Kitty to avoid that. Detection reads terminal input, so inside
+// With RenderAuto, the first call may ask the controlling terminal whether it
+// supports Kitty graphics, turning off echo, line buffering, and signal keys
+// while it waits up to a second for the reply. A signal key such as Ctrl+C
+// typed meanwhile takes effect once the terminal is restored; other keys are
+// lost. A background job is never probed. Set Mode or RenderOptions.Kitty to
+// avoid detection. Detection reads terminal input, so inside
 // a Bubble Tea program use Picture instead, and in another event loop use Probe. Detection is available on Linux,
 // macOS, and the BSDs; other platforms use glyphs unless told otherwise.
 //
@@ -112,7 +129,7 @@ func cachedTerminalProbe(tmux bool) ProbeResult {
 // glyph output and is safe to call more than once. To leave the image in the
 // scrollback, as Print does, do not call it.
 func Render(img image.Image, opts RenderOptions) (output string, cleanup func(), err error) {
-	return render(img, opts)
+	return render(img, opts, true)
 }
 
 // Print renders img and writes it to w, followed by a newline. The image stays
@@ -120,15 +137,17 @@ func Render(img image.Image, opts RenderOptions) (output string, cleanup func(),
 //
 // RenderAuto detects Kitty graphics only when w is a terminal, meaning it has
 // an Fd method, as *os.File does, that reports one. For any other writer,
-// such as a file, pipe, bytes.Buffer, or bufio.Writer, it writes glyphs
-// without touching the terminal, unless RenderOptions.Kitty says the
-// destination supports Kitty graphics. To detect for a wrapped terminal
-// writer, give the wrapper an Fd method or write the result of Render.
+// such as a file, pipe, bytes.Buffer, or bufio.Writer, it never opens the
+// terminal: it writes glyphs, unless RenderOptions.Kitty says the destination
+// supports Kitty graphics, and sizes them from RenderOptions alone, assuming
+// an 80x24 terminal with 8x16 cells. To detect for a wrapped terminal writer,
+// give the wrapper an Fd method or write the result of Render.
 func Print(w io.Writer, img image.Image, opts RenderOptions) error {
-	if opts.Mode == RenderAuto && opts.Kitty != KittyCapabilitySupported && !isTerminalWriter(w) {
+	terminal := isTerminalWriter(w)
+	if opts.Mode == RenderAuto && opts.Kitty != KittyCapabilitySupported && !terminal {
 		opts.Mode = RenderGlyph
 	}
-	out, _, err := render(img, opts)
+	out, _, err := render(img, opts, terminal)
 	if err != nil {
 		return err
 	}
@@ -141,7 +160,10 @@ func isTerminalWriter(w io.Writer) bool {
 	return ok && isTerminalFn(f.Fd())
 }
 
-func render(img image.Image, opts RenderOptions) (string, func(), error) {
+// render does the work of Render and Print. terminal reports that the output
+// goes to the controlling terminal, which may then be asked for its size and,
+// in RenderAuto, its capabilities.
+func render(img image.Image, opts RenderOptions, terminal bool) (string, func(), error) {
 	noop := func() {}
 	if img == nil {
 		return "", noop, errors.New("ntpicture: nil image")
@@ -155,8 +177,18 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 	}
 
 	tmux, envKitty, _ := envTerminalConfig()
-	geom := terminalGeometryFn()
+	if opts.TmuxPassthrough != nil {
+		tmux = *opts.TmuxPassthrough
+	}
+	var geom terminalGeometry
+	if terminal {
+		geom = terminalGeometryFn()
+	}
 	cellW, cellH := geom.cellW, geom.cellH
+	if terminal && (cellW <= 0 || cellH <= 0) {
+		// Some terminals report their cell size only to the probe.
+		cellW, cellH = cachedProbeCellSize()
+	}
 
 	mode := PictureGlyph
 	switch opts.Mode {
@@ -197,8 +229,8 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 	if geom.cols > 0 {
 		maxCols = geom.cols
 	}
-	if geom.rows > 1 {
-		maxRows = geom.rows - 1 // leave the prompt's line
+	if geom.rows > 0 {
+		maxRows = max(geom.rows-1, 1) // leave the prompt's line
 	}
 	if opts.MaxWidth > 0 {
 		maxCols = opts.MaxWidth
@@ -247,28 +279,56 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 
 // prepareGlyphSource fits img into the two-pixels-per-cell glyph raster. A
 // glyph pixel is square only when cells are twice as tall as wide. For other
-// cells the image is fitted in the cell rectangle's real proportions first and
-// then stretched onto the raster, so what is displayed keeps its shape and
-// agrees with the size renderSize derived.
+// cells the fit is computed in the cell rectangle's real proportions, so what
+// is displayed keeps its shape and agrees with the size renderSize derived.
+// The image is resampled once, straight onto the cols x 2*rows raster.
 func prepareGlyphSource(img image.Image, cfg Config, cols, rows int) image.Image {
-	w, h := cfg.CellPixelWidth, cfg.CellPixelHeight
-	if cfg.Fit == FitFill || h == 2*w {
+	cellW, cellH := cfg.CellPixelWidth, cfg.CellPixelHeight
+	if cfg.Fit == FitFill || cellH == 2*cellW {
 		return prepareSourceCrop(img, cfg.Crop, cfg.Fit, cols, rows, 1, 2, cfg.Background, cfg.Anchor)
 	}
-	// The smallest raster with the cell's proportions and at least glyph resolution.
-	a, b := w, h
-	for b != 0 {
-		a, b = b, a%b
+	src := imageview.Unwrap(img)
+	sb := src.Bounds()
+	target := image.Rect(0, 0, cols, 2*rows)
+	out := image.NewRGBA(target)
+	draw.Draw(out, target, &image.Uniform{C: cfg.Background}, image.Point{}, draw.Src)
+
+	// A raster pixel is cellW wide and cellH/2 tall on screen, so the image
+	// measured in raster pixels is proportionally vw wide and vh tall.
+	vw := float64(sb.Dx()) * float64(cellH)
+	vh := float64(sb.Dy()) * 2 * float64(cellW)
+	tw, th := float64(target.Dx()), float64(target.Dy())
+	wider := vw*th > vh*tw // the image is wider than the raster, proportionally
+	span := func(full int, fraction float64) int {
+		return int(math.Max(1, math.Min(math.Round(float64(full)*fraction), float64(full))))
 	}
-	w, h = w/a, h/a
-	if h < 2 {
-		w, h = 2*w, 2*h
+	if cfg.Fit == FitCover {
+		// Crop the source, centered, to the raster's shape.
+		crop := sb
+		if wider {
+			keep := span(sb.Dx(), (vh*tw)/(vw*th))
+			crop.Min.X += (sb.Dx() - keep) / 2
+			crop.Max.X = crop.Min.X + keep
+		} else {
+			keep := span(sb.Dy(), (vw*th)/(vh*tw))
+			crop.Min.Y += (sb.Dy() - keep) / 2
+			crop.Max.Y = crop.Min.Y + keep
+		}
+		place(out, target, src, crop, nil)
+		return out
 	}
-	fitted := prepareSourceCrop(img, cfg.Crop, cfg.Fit, cols, rows, w, h, cfg.Background, cfg.Anchor)
-	if fitted == nil {
-		return nil
+	dst := target
+	if wider {
+		keep := span(target.Dy(), (vh*tw)/(vw*th))
+		dst.Min.Y = (target.Dy() - keep) / 2
+		dst.Max.Y = dst.Min.Y + keep
+	} else {
+		keep := span(target.Dx(), (vw*th)/(vh*tw))
+		dst.Min.X = (target.Dx() - keep) / 2
+		dst.Max.X = dst.Min.X + keep
 	}
-	return prepareSource(fitted, FitFill, cols, rows, 1, 2, cfg.Background, cfg.Anchor)
+	place(out, dst, src, sb, nil)
+	return out
 }
 
 // renderSize resolves the cell rectangle. A dimension given as zero is
