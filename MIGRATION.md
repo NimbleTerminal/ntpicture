@@ -253,7 +253,7 @@ published module.
   `nimbleterminal.dev/ntpicture/legacy` for aliases, keeping the root
   `ntpicture` package focused on `Picture`, `TerminalSession`, and `GridImage`
   with no `init()` environment side effects. Environment overrides use
-  `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH`.
+  `NT_KITTY` and `NT_TMUX`.
 - Picture owns immutable/copying submissions, retained fronts, one active job,
   latest-request coalescing, transmission ordering, retirement, visibility and
   late cleanup. Presentation state is private.

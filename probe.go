@@ -9,12 +9,12 @@ import (
 // ProbeOptions configures a Probe. The zero value reads the environment.
 type ProbeOptions struct {
 	// Kitty states Kitty graphics support, so the probe does not ask. When
-	// it is KittyCapabilityUnknown the NTPICTURE_KITTY environment variable
+	// it is KittyCapabilityUnknown the NT_KITTY environment variable
 	// is used, and the terminal is asked if that is unset too.
 	Kitty KittyCapability
 
 	// TmuxPassthrough wraps the Kitty query for tmux. Nil reads TMUX and
-	// NTPICTURE_TMUX_PASSTHROUGH.
+	// NT_TMUX.
 	TmuxPassthrough *bool
 }
 

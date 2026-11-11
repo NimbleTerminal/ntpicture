@@ -48,7 +48,7 @@ exclusions and do not describe it as full native transport validation.
 and worker (`--ntpicture-test-worker`). `TestSandboxedSubprocess` starts a
 real confined worker and logs the mechanism ntconfine applied. It sets
 `AllowUnsandboxed` so it also runs where no enforcement exists; set
-`NTPICTURE_REQUIRE_SANDBOX=1` (CI does) to fail instead when the worker is not
+`NT_REQUIRE_SANDBOX=1` (CI does) to fail instead when the worker is not
 confined. On macOS, enforcement needs `/usr/bin/sandbox-exec` outside another
 sandbox; on Linux it needs Landlock ABI 3 or later, which Docker's default
 seccomp profile blocks, so `task test-worker-linux` runs the subprocess tests in
@@ -56,7 +56,7 @@ seccomp profile blocks, so `task test-worker-linux` runs the subprocess tests in
 `go test -race` links ThreadSanitizer (`libtsan`), which reserves ~18 TiB of
 virtual address space and reads `/proc/self/maps` before `main`, so the Linux
 subprocess tests skip under `-race` and run in `task test-no-cgo` (and
-`task test-worker-linux`) with `NTPICTURE_REQUIRE_SANDBOX=1`. These are protocol
+`task test-worker-linux`) with `NT_REQUIRE_SANDBOX=1`. These are protocol
 and lifecycle checks; they do not prove what a worker can or cannot reach, which
 is ntconfine's test suite's job.
 
@@ -64,7 +64,7 @@ Record: 2026-11-03, macOS (Darwin 27.2.0), base `f6a6513` with the
 `decoders/worker` addition, `TestSandboxedSubprocess` reported `sandbox-exec`
 (`enforced=true`) and survived a corrupt image mid-session. The Linux Landlock
 path was not run locally that day (no Docker daemon); it runs on the Ubuntu CI
-runner with `NTPICTURE_REQUIRE_SANDBOX=1`.
+runner with `NT_REQUIRE_SANDBOX=1`.
 
 ## Consumer compatibility checks
 
@@ -142,7 +142,7 @@ and result for these checks:
   and confirm no new transmission (the status generation is unchanged and the
   yellow raster border scrolls into view), toggle `g`, then exit with `Q`
   (frame retained) and separately with `q` (cleared). Repeat with
-  `NTPICTURE_KITTY=unsupported` and confirm resolution controls disappear.
+  `NT_KITTY=unsupported` and confirm resolution controls disappear.
 
 Unit tests cover stale results, geometry, encoding, and cleanup. Animation
 acceptance also covers GIF/WebP pause/resume, loop completion, frame seeking,
@@ -274,7 +274,7 @@ open the local site in this session and no Kitty terminal was driven
 interactively. Automated evidence: `task check-site` (Node smoke of all five
 demos including framebuffer pause, pan, and keep-screen exit), native and WASM
 unit tests with the race detector, and a pseudo-terminal run of
-`bin/ntpicture-framebuffer`. With `NTPICTURE_KITTY=supported` and an answered
+`bin/ntpicture-framebuffer`. With `NT_KITTY=supported` and an answered
 cell-size query, that run transmitted 57 zlib frames under one stable image ID
 at 480×248 px for 120×31 cells, used a fresh ID at 720×372 px with the same
 cells after `]`, another after a resize to 150×39 cells, and deleted all three
@@ -287,7 +287,7 @@ For a native operator check, first run `task build-examples` from the repository
 root. Then run `./bin/ntpicture-animation` in Kitty (or record Ghostty
 separately), resize while playing, alternate Space and comma/period/Home, then
 press `Q` and verify both images remain. Run again and press `q`, verifying
-cleanup. Use `NTPICTURE_KITTY=unsupported ./bin/ntpicture-animation` for the
+cleanup. Use `NT_KITTY=unsupported ./bin/ntpicture-animation` for the
 glyph case. Record terminal version and actual transport before marking native
 coverage done.
 

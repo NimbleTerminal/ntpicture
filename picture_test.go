@@ -853,7 +853,7 @@ func TestPictureAutoModeAndSetModePictureAuto(t *testing.T) {
 
 	// 2. Session starting Unknown begins in PictureGlyph and switches to PictureKitty on probe reply.
 	t.Setenv("TERM", "xterm-kitty")
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	probingSession := NewTerminalSession(TerminalOptions{
 		CellPixelWidth:  8,
 		CellPixelHeight: 16,
@@ -896,7 +896,7 @@ func TestPictureAutoModeAndSetModePictureAuto(t *testing.T) {
 }
 
 func TestPictureOwnedSessionToggleModeAndSetters(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "unsupported")
+	t.Setenv("NT_KITTY", "unsupported")
 
 	// Nil Options.Session allocates an owned session initialized from Render cell dimensions.
 	p := New(Options{

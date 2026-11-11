@@ -37,7 +37,7 @@ replies, then are unlinked even if the terminal never responds. Close the
 terminal session on shutdown to release pending probes immediately; legacy
 hosts can call `legacy.DefaultTerminalSession().Close()`.
 
-The `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` environment variables
+The `NT_KITTY` and `NT_TMUX` environment variables
 override detection. Values set explicitly in `TerminalOptions` take precedence
 over them.
 

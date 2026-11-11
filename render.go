@@ -47,7 +47,7 @@ type RenderOptions struct {
 	CellPixelWidth, CellPixelHeight int
 
 	// Kitty states whether the terminal supports Kitty graphics and skips
-	// detection. RenderAuto consults it; the NTPICTURE_KITTY environment
+	// detection. RenderAuto consults it; the NT_KITTY environment
 	// variable is used when it is KittyCapabilityUnknown.
 	Kitty KittyCapability
 

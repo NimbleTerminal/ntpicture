@@ -102,7 +102,7 @@ With `RenderAuto`, the first call asks the controlling terminal whether it
 supports Kitty graphics. That briefly puts the terminal in raw mode and waits
 up to one second for a reply; the answer is cached for the process. Detection
 runs on Linux, macOS, and the BSDs. Elsewhere, and when there is no terminal,
-`RenderAuto` uses glyphs unless `Kitty` or `NTPICTURE_KITTY=supported` says
+`RenderAuto` uses glyphs unless `Kitty` or `NT_KITTY=supported` says
 otherwise. `Print` to a file that is not a terminal also uses glyphs.
 
 Detection reads terminal input, so inside a Bubble Tea program use `Picture`
@@ -133,7 +133,7 @@ out, cleanup, err := ntpicture.Render(img, ntpicture.RenderOptions{
 })
 ```
 
-`Probe` handles the tmux wrapping, the `NTPICTURE_KITTY` override, replies
+`Probe` handles the tmux wrapping, the `NT_KITTY` override, replies
 split across reads, and ending promptly on terminals without Kitty graphics.
 Because `res.Kitty` is always decided once the probe is done, `Render` then
 does no detection of its own. The `eventloop` example is a complete program.

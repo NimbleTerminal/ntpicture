@@ -56,7 +56,7 @@ Native POSIX shared-memory tests need `shm_open` and fail deliberately where it
 is blocked. If you must exclude them (for example in a sandbox), say so; that
 run is not full native transport validation. `NTPICTURE_SHM_TERMINAL_TEST=1`
 enables the real-terminal consumption test in a Kitty-capable terminal.
-`NTPICTURE_REQUIRE_SANDBOX=1` (set in CI) makes the `decoders/worker` subprocess
+`NT_REQUIRE_SANDBOX=1` (set in CI) makes the `decoders/worker` subprocess
 test fail when the worker runs without OS confinement; `task test-worker-linux`
 runs it under Landlock in Docker. CI runs
 Linux and macOS (distinct shared-memory implementations) and cross-compiles
@@ -112,7 +112,7 @@ replacement:
 `TerminalSession` (`terminal_session.go`) discovers Kitty support, cell size,
 and shared-memory/tmux transport once per terminal connection. Pictures without
 `Options.Session` own a private one; sharing a session across pictures means one
-probe. `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` override detection.
+probe. `NT_KITTY` and `NT_TMUX` override detection.
 The root package has no `init()` environment side effects; keep it that way.
 
 Rendering pipeline:

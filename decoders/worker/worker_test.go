@@ -213,10 +213,10 @@ func TestSandboxedSubprocess(t *testing.T) {
 		t.Fatalf("Support().Available = %v, Probe says %v", sup.Available, ntmediabox.Available())
 	}
 	t.Logf("sandbox mechanism: %s (enforced=%v) %s", sup.Mechanism, s.Enforced(), sup.Detail)
-	// CI sets NTPICTURE_REQUIRE_SANDBOX=1 so a runner without Landlock or
+	// CI sets NT_REQUIRE_SANDBOX=1 so a runner without Landlock or
 	// sandbox-exec fails loudly instead of silently passing unsandboxed.
-	if os.Getenv("NTPICTURE_REQUIRE_SANDBOX") == "1" && !s.Enforced() {
-		t.Fatalf("NTPICTURE_REQUIRE_SANDBOX=1 but worker is not confined: %s", sup.Detail)
+	if os.Getenv("NT_REQUIRE_SANDBOX") == "1" && !s.Enforced() {
+		t.Fatalf("NT_REQUIRE_SANDBOX=1 but worker is not confined: %s", sup.Detail)
 	}
 
 	for i := 0; i < 2; i++ { // the session is reusable

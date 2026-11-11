@@ -8,8 +8,8 @@ import (
 
 func newTestProbe(t *testing.T, opts ProbeOptions) *Probe {
 	t.Helper()
-	t.Setenv("NTPICTURE_KITTY", "")
-	t.Setenv("NTPICTURE_TMUX_PASSTHROUGH", "0")
+	t.Setenv("NT_KITTY", "")
+	t.Setenv("NT_TMUX", "0")
 	return NewProbe(opts)
 }
 
@@ -27,7 +27,7 @@ func TestProbeQuery(t *testing.T) {
 	if q := newTestProbe(t, ProbeOptions{TmuxPassthrough: &on}).Query(); !strings.HasPrefix(q, "\x1bPtmux;") {
 		t.Errorf("tmux query not wrapped: %q", q)
 	}
-	t.Setenv("NTPICTURE_KITTY", "unsupported")
+	t.Setenv("NT_KITTY", "unsupported")
 	p := NewProbe(ProbeOptions{})
 	if strings.Contains(p.Query(), "\x1b_G") || p.Result().Kitty != KittyCapabilityUnsupported {
 		t.Errorf("environment override ignored: %q %+v", p.Query(), p.Result())

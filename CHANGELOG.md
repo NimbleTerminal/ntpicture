@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Rename the environment overrides to the shared `NT_` prefix: `NT_KITTY`
+  (was `NTPICTURE_KITTY`) and `NT_TMUX` (was `NTPICTURE_TMUX_PASSTHROUGH`).
+  The test-only `NTPICTURE_REQUIRE_SANDBOX` is now `NT_REQUIRE_SANDBOX`. The
+  old names are no longer read.
 - Add `Render` and `Print`, which draw one image without a Bubble Tea program:
   Kitty graphics where the terminal supports them, half-block glyphs
   elsewhere. `RenderOptions` sets the size, fit, mode, background, cell size,
