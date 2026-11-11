@@ -79,12 +79,19 @@ func NewProbe(opts ProbeOptions) *Probe {
 // device attributes: every terminal answers the last, which ends the probe
 // without waiting for a timeout. The terminal must not echo or line-buffer its
 // replies, so put it in raw mode first.
+//
+// Under tmux the Kitty query reaches the outer terminal by passthrough. The
+// device-attributes query then goes the same way, because tmux would answer
+// it itself before the outer terminal's Kitty reply arrives and end the probe
+// early. When tmux has allow-passthrough off, neither is answered and the
+// probe ends only by Timeout.
 func (p *Probe) Query() string {
-	var kitty string
-	if p.known == KittyCapabilityUnknown {
-		kitty = kittyTransport{tmux: p.tmux}.wrap(buildKittyQueryAPC(kittyProbeID))
+	const cellSize, deviceAttributes = "\x1b[16t", "\x1b[c"
+	if p.known != KittyCapabilityUnknown {
+		return cellSize + deviceAttributes
 	}
-	return kitty + "\x1b[16t\x1b[c"
+	transport := kittyTransport{tmux: p.tmux}
+	return transport.wrap(buildKittyQueryAPC(kittyProbeID)) + cellSize + transport.wrap(deviceAttributes)
 }
 
 // Feed takes terminal input as it arrives and returns it with the probe's
