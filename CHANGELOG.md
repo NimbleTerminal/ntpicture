@@ -11,7 +11,9 @@
   elsewhere. `RenderOptions` sets the size, fit, mode, background, cell size,
   and Kitty capability. `Render` returns a cleanup function that deletes the
   Kitty image. Detection is synchronous and runs on Linux, macOS, and the BSDs.
-  The `print` example shows both.
+  The `print` example shows both. `MaxWidth` and `MaxHeight` bound a size
+  derived from the aspect ratio. `Print` detects only when its writer is a
+  terminal, so writing to a buffer or file never touches the terminal.
 - Add `Probe`, the same detection with no I/O, for programs with their own
   event loop: write `Query`, pass input to `Feed`, read `Result`. The
   `eventloop` example is a raw-mode viewer built on it.

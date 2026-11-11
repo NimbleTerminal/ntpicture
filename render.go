@@ -28,9 +28,15 @@ const (
 type RenderOptions struct {
 	// Width and Height are the size of the result in terminal cells. When one
 	// is zero it follows from the other and the image's aspect ratio. When both
-	// are zero the image is shown at its own size, shrunk to fit the terminal
-	// (80x24 when the terminal size is unknown).
+	// are zero the image is shown at its own size, shrunk to fit MaxWidth x
+	// MaxHeight.
 	Width, Height int
+
+	// MaxWidth and MaxHeight bound a dimension that Width or Height leaves
+	// at zero, in cells. With both Width and Height zero they form a box the
+	// image is shrunk to fit, keeping its aspect ratio, so nothing is
+	// letterboxed. Zero means the terminal's size (its height less one line).
+	MaxWidth, MaxHeight int
 
 	// Fit maps the image onto Width x Height. The zero value is FitContain.
 	Fit FitMode
@@ -70,6 +76,7 @@ type terminalGeometry struct {
 // Replaced in tests, which must not talk to the terminal running them.
 var (
 	probeTerminalFn    = probeTerminal
+	isTerminalFn       = term.IsTerminal
 	terminalGeometryFn = readTerminalGeometry
 )
 
@@ -109,10 +116,16 @@ func Render(img image.Image, opts RenderOptions) (output string, cleanup func(),
 }
 
 // Print renders img and writes it to w, followed by a newline. The image stays
-// on screen; use Render to delete it later. When w is a file that is not a
-// terminal, RenderAuto writes glyphs.
+// on screen; use Render to delete it later.
+//
+// RenderAuto detects Kitty graphics only when w is a terminal, meaning it has
+// an Fd method, as *os.File does, that reports one. For any other writer,
+// such as a file, pipe, bytes.Buffer, or bufio.Writer, it writes glyphs
+// without touching the terminal, unless RenderOptions.Kitty says the
+// destination supports Kitty graphics. To detect for a wrapped terminal
+// writer, give the wrapper an Fd method or write the result of Render.
 func Print(w io.Writer, img image.Image, opts RenderOptions) error {
-	if f, ok := w.(interface{ Fd() uintptr }); ok && opts.Mode == RenderAuto && !term.IsTerminal(f.Fd()) {
+	if opts.Mode == RenderAuto && opts.Kitty != KittyCapabilitySupported && !isTerminalWriter(w) {
 		opts.Mode = RenderGlyph
 	}
 	out, _, err := render(img, opts)
@@ -121,6 +134,11 @@ func Print(w io.Writer, img image.Image, opts RenderOptions) error {
 	}
 	_, err = io.WriteString(w, out+"\n")
 	return err
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	f, ok := w.(interface{ Fd() uintptr })
+	return ok && isTerminalFn(f.Fd())
 }
 
 func render(img image.Image, opts RenderOptions) (string, func(), error) {
@@ -175,7 +193,20 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 	})
 	cellW, cellH = cfg.CellPixelWidth, cfg.CellPixelHeight
 
-	cols, rows := renderSize(opts.Width, opts.Height, b, mode, cellW, cellH, geom.cols, geom.rows)
+	maxCols, maxRows := 80, 24
+	if geom.cols > 0 {
+		maxCols = geom.cols
+	}
+	if geom.rows > 1 {
+		maxRows = geom.rows - 1 // leave the prompt's line
+	}
+	if opts.MaxWidth > 0 {
+		maxCols = opts.MaxWidth
+	}
+	if opts.MaxHeight > 0 {
+		maxRows = opts.MaxHeight
+	}
+	cols, rows := renderSize(opts.Width, opts.Height, b, mode, cellW, cellH, maxCols, maxRows)
 	if err := geometryError(cols, rows, cellW, cellH, mode); err != nil {
 		return "", noop, err
 	}
@@ -214,10 +245,11 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 	return apc + buildKittyGrid(cols, rows, id), cleanup, nil
 }
 
-// renderSize resolves the cell rectangle. Derived dimensions keep the image's
-// aspect ratio on screen. With neither given, the image is shown at its own
-// size (one image pixel per cell column in glyphs), shrunk to the terminal.
-func renderSize(width, height int, b image.Rectangle, mode PictureMode, cellW, cellH, termCols, termRows int) (cols, rows int) {
+// renderSize resolves the cell rectangle. A dimension given as zero is
+// derived from the image's aspect ratio on screen and bounded by maxCols or
+// maxRows. With neither given, the image is shown at its own size (one image
+// pixel per cell column in glyphs), shrunk to fit maxCols x maxRows.
+func renderSize(width, height int, b image.Rectangle, mode PictureMode, cellW, cellH, maxCols, maxRows int) (cols, rows int) {
 	aspect := float64(b.Dy()) / float64(b.Dx()) * float64(cellW) / float64(cellH) // rows per column
 	rowsFor := func(cols int) int { return clampCells(float64(cols) * aspect) }
 	colsFor := func(rows int) int { return clampCells(float64(rows) / aspect) }
@@ -225,16 +257,9 @@ func renderSize(width, height int, b image.Rectangle, mode PictureMode, cellW, c
 	case width > 0 && height > 0:
 		return width, height
 	case width > 0:
-		return width, rowsFor(width)
+		return width, min(rowsFor(width), maxRows)
 	case height > 0:
-		return colsFor(height), height
-	}
-	maxCols, maxRows := 80, 24
-	if termCols > 0 {
-		maxCols = termCols
-	}
-	if termRows > 1 {
-		maxRows = termRows - 1 // leave the prompt's line
+		return min(colsFor(height), maxCols), height
 	}
 	cols = b.Dx()
 	if mode == PictureKitty {

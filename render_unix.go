@@ -41,6 +41,10 @@ func probeTerminal(tmux bool, timeout time.Duration) ProbeResult {
 		return ProbeResult{Kitty: KittyCapabilityUnsupported}
 	}
 	defer func() { _ = unix.Close(fd) }()
+	// select cannot watch a descriptor this high, and FdSet.Set would panic.
+	if fd >= unix.FD_SETSIZE {
+		return ProbeResult{Kitty: KittyCapabilityUnsupported}
+	}
 	state, err := term.MakeRaw(uintptr(fd))
 	if err != nil {
 		return ProbeResult{Kitty: KittyCapabilityUnsupported}

@@ -90,7 +90,8 @@ fmt.Println(out)
 
 | Field | Default |
 | --- | --- |
-| `Width`, `Height` | Cells. One follows from the other; with neither, the image's own size, shrunk to the terminal |
+| `Width`, `Height` | Cells. One follows from the other; with neither, the image's own size, shrunk to fit `MaxWidth` x `MaxHeight` |
+| `MaxWidth`, `MaxHeight` | Bounds for a dimension left at zero; the terminal's size (80x24 if unknown) |
 | `Fit` | `FitContain` |
 | `Mode` | `RenderAuto`; `RenderGlyph` and `RenderKitty` skip detection |
 | `Background` | Transparent under Kitty, black in glyphs |
@@ -103,7 +104,16 @@ supports Kitty graphics. That briefly puts the terminal in raw mode and waits
 up to one second for a reply; the answer is cached for the process. Detection
 runs on Linux, macOS, and the BSDs. Elsewhere, and when there is no terminal,
 `RenderAuto` uses glyphs unless `Kitty` or `NT_KITTY=supported` says
-otherwise. `Print` to a file that is not a terminal also uses glyphs.
+otherwise.
+
+`Print` detects only when its writer is a terminal: an `*os.File`, or anything
+else with an `Fd()` method, that reports one. For a file, pipe, `bytes.Buffer`,
+or `bufio.Writer` it writes glyphs and never touches the terminal, unless
+`Kitty` is set to `KittyCapabilitySupported`. If you wrap `os.Stdout`, give the
+wrapper an `Fd()` method or write the result of `Render` yourself.
+
+To show an image in at most 56x22 cells with no letterbox padding, leave
+`Width` and `Height` zero and set `MaxWidth: 56, MaxHeight: 22`.
 
 Detection reads terminal input, so inside a Bubble Tea program use `Picture`
 (below) instead, and in any other event loop use `Probe` (next). These functions render one still image; animation, live
