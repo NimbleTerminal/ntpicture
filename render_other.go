@@ -8,4 +8,6 @@ import "time"
 // RenderOptions.Kitty or NTPICTURE_KITTY says otherwise.
 func readTerminalGeometry() terminalGeometry { return terminalGeometry{} }
 
-func probeTerminal(bool, time.Duration) terminalProbe { return terminalProbe{} }
+func probeTerminal(bool, time.Duration) ProbeResult {
+	return ProbeResult{Kitty: KittyCapabilityUnsupported}
+}

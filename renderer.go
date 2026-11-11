@@ -19,6 +19,9 @@
 //	defer cleanup()
 //	fmt.Println(out)
 //
+// A program with its own input loop detects support with Probe, which does no
+// I/O, and passes the result to RenderOptions.
+//
 // # Bubble Tea
 //
 // Picture owns asynchronous replacement and cleanup, and

@@ -8,6 +8,9 @@
   and Kitty capability. `Render` returns a cleanup function that deletes the
   Kitty image. Detection is synchronous and runs on Linux, macOS, and the BSDs.
   The `print` example shows both.
+- Add `Probe`, the same detection with no I/O, for programs with their own
+  event loop: write `Query`, pass input to `Feed`, read `Result`. The
+  `eventloop` example is a raw-mode viewer built on it.
 
 ## v0.1.5 (2026-11-04)
 
