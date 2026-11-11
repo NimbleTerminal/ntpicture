@@ -86,13 +86,13 @@ var (
 	ErrKittyProbePending = errors.New("kitty graphics probe has not resolved yet; try again shortly")
 
 	// ErrKittyNotDetected means capability was explicitly set to unsupported
-	// by NTPICTURE_KITTY or TerminalOptions.Kitty.
-	ErrKittyNotDetected = errors.New("kitty graphics support explicitly disabled; set NTPICTURE_KITTY=supported or configure TerminalOptions.Kitty to override")
+	// by NT_KITTY or TerminalOptions.Kitty.
+	ErrKittyNotDetected = errors.New("kitty graphics support explicitly disabled; set NT_KITTY=supported or configure TerminalOptions.Kitty to override")
 
 	// ErrKittyProbeTimeout means a probe was sent but the terminal did not
 	// answer in time, which usually points to a multiplexer or transport
 	// that drops the query.
-	ErrKittyProbeTimeout = errors.New("terminal did not answer the Kitty graphics probe; set NTPICTURE_KITTY=supported or configure TerminalOptions.Kitty to override")
+	ErrKittyProbeTimeout = errors.New("terminal did not answer the Kitty graphics probe; set NT_KITTY=supported or configure TerminalOptions.Kitty to override")
 )
 
 func kittyUnavailable() error {

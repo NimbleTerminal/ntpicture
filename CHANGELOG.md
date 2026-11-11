@@ -1,5 +1,33 @@
 # `ntpicture` CHANGELOG
 
+## Unreleased
+
+- Rename the environment overrides to the shared `NT_` prefix: `NT_KITTY`
+  (was `NTPICTURE_KITTY`) and `NT_TMUX` (was `NTPICTURE_TMUX_PASSTHROUGH`).
+  The test-only `NTPICTURE_REQUIRE_SANDBOX` is now `NT_REQUIRE_SANDBOX`. The
+  old names are no longer read.
+- Add `Render` and `Print`, which draw one image without a Bubble Tea program:
+  Kitty graphics where the terminal supports them, half-block glyphs
+  elsewhere. `RenderOptions` sets the size, fit, mode, background, cell size,
+  and Kitty capability. `Render` returns a cleanup function that deletes the
+  Kitty image. Detection is synchronous and runs on Linux, macOS, and the BSDs.
+  The `print` example shows both. `MaxWidth` and `MaxHeight` bound a size
+  derived from the aspect ratio. `Print` detects only when its writer is a
+  terminal, so writing to a buffer or file never touches the terminal.
+  Glyph output is fitted in the cells' real proportions, so it keeps its
+  shape when cells are not exactly twice as tall as wide.
+- Add `Probe`, the same detection with no I/O, for programs with their own
+  event loop: write `Query`, pass input to `Feed`, read `Result`. The
+  `eventloop` example is a raw-mode viewer built on it.
+- Add `TerminalState.DisplayScale`, the display's device pixels per point, for
+  hosts that lay out in points or CSS pixels. Explicit sessions take it from
+  `TerminalOptions.DisplayScale`, then the `NT_DISPLAY_SCALE` environment
+  variable, then the terminal's `OSC 1337 ; ReportCellSize` reply (or
+  `devicePixelRatio` in the browser). It stays 0 when unknown and does not
+  change rendering.
+- Explicit sessions now send the `OSC 1337 ; ReportCellSize` query from `Init`
+  unless the scale is already set.
+
 ## v0.1.5 (2026-11-04)
 
 - Add `decoders/worker`: decode untrusted still images in a separate process

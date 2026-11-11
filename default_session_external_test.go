@@ -25,7 +25,7 @@ func collectBatchMsgs(cmd tea.Cmd) []tea.Msg {
 }
 
 func TestDefaultSessionPictureEmitsExportedKittyCapabilityMsg(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 
 	p := ntpicture.New(ntpicture.Options{})
@@ -57,7 +57,7 @@ func TestDefaultSessionPictureEmitsExportedKittyCapabilityMsg(t *testing.T) {
 }
 
 func TestOwnedSessionPictureEmitsTerminalSessionMsg(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 
 	p := ntpicture.New(ntpicture.Options{})

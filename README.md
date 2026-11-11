@@ -10,6 +10,10 @@ Show still images, GIF/WebP animations, and live framebuffers in a
 [Bubble Tea v2](https://github.com/charmbracelet/bubbletea) app. ntpicture uses
 Kitty graphics where available and colored half-block glyphs everywhere else.
 
+No Bubble Tea program yet? `ntpicture.Print(os.Stdout, img, ntpicture.RenderOptions{})`
+shows an image from any Go program: see
+[Rendering without Bubble Tea](#rendering-without-bubble-tea).
+
 - **`Picture`** keeps the current image on screen while its replacement is
   prepared, coalesces rapid updates, drops stale results, and cleans up
   terminal placements.
@@ -32,6 +36,121 @@ go get nimbleterminal.dev/ntpicture@latest
 ```
 
 Requires Go 1.26 or later.
+
+## Rendering without Bubble Tea
+
+Use ntpicture instead of writing your own half-block or Kitty renderer. You do
+not need a Bubble Tea program to use the basic rendering functions.
+
+```go
+package main
+
+import (
+    "image"
+    _ "image/png"
+    "log"
+    "os"
+
+    "nimbleterminal.dev/ntpicture"
+)
+
+func main() {
+    f, err := os.Open("photo.png")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer f.Close()
+    img, _, err := image.Decode(f)
+    if err != nil {
+        log.Fatal(err)
+    }
+    // Kitty graphics where the terminal supports them, half-block glyphs elsewhere.
+    if err := ntpicture.Print(os.Stdout, img, ntpicture.RenderOptions{}); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+`Print` leaves the image in the scrollback. `Render` returns the output as a
+string of `Height` lines, plus a cleanup function that deletes a Kitty image:
+
+```go
+out, cleanup, err := ntpicture.Render(img, ntpicture.RenderOptions{
+    Width: 40,                   // cells; Height follows from the aspect ratio
+    Fit:   ntpicture.FitContain, // or FitFill, FitCover
+})
+if err != nil {
+    return err
+}
+defer cleanup() // removes the image; skip it to keep the image on screen
+fmt.Println(out)
+```
+
+`RenderOptions`:
+
+| Field | Default |
+| --- | --- |
+| `Width`, `Height` | Cells. One follows from the other; with neither, the image's own size, shrunk to fit `MaxWidth` x `MaxHeight` |
+| `MaxWidth`, `MaxHeight` | Bounds for a dimension left at zero; the terminal's size (80x24 if unknown) |
+| `Fit` | `FitContain` |
+| `Mode` | `RenderAuto`; `RenderGlyph` and `RenderKitty` skip detection |
+| `Background` | Transparent under Kitty, black in glyphs |
+| `CellPixelWidth`, `CellPixelHeight` | Asked from the terminal, then 8x16 |
+| `Kitty` | `KittyCapabilityUnknown` (detect); `Supported` or `Unsupported` skip detection |
+| `Output` | Where cleanup writes the delete sequence; `os.Stdout` |
+
+With `RenderAuto`, the first call asks the controlling terminal whether it
+supports Kitty graphics. That briefly puts the terminal in raw mode and waits
+up to one second for a reply; the answer is cached for the process. Detection
+runs on Linux, macOS, and the BSDs. Elsewhere, and when there is no terminal,
+`RenderAuto` uses glyphs unless `Kitty` or `NT_KITTY=supported` says
+otherwise.
+
+`Print` detects only when its writer is a terminal: an `*os.File`, or anything
+else with an `Fd()` method, that reports one. For a file, pipe, `bytes.Buffer`,
+or `bufio.Writer` it writes glyphs and never touches the terminal, unless
+`Kitty` is set to `KittyCapabilitySupported`. If you wrap `os.Stdout`, give the
+wrapper an `Fd()` method or write the result of `Render` yourself.
+
+To show an image in at most 56x22 cells with no letterbox padding, leave
+`Width` and `Height` zero and set `MaxWidth: 56, MaxHeight: 22`.
+
+Under tmux, detection needs `set -g allow-passthrough on`. Without it the
+terminal's answer never arrives, so the first call waits out the one-second
+timeout and uses glyphs.
+
+Detection reads terminal input, so inside a Bubble Tea program use `Picture`
+(below) instead, and in any other event loop use `Probe` (next). These functions render one still image; animation, live
+replacement, and shared memory need `Picture`.
+
+### Detection in your own event loop
+
+A program that already owns the terminal (its own raw mode and input loop)
+should not let `Render` read input. `Probe` does the same detection without
+any I/O: you write its query, pass it the input you read, and it hands back
+that input with the terminal's replies removed.
+
+```go
+p := ntpicture.NewProbe(ntpicture.ProbeOptions{})
+io.WriteString(tty, p.Query()) // terminal already in raw mode
+
+// In your input loop, until p.Done():
+input, _ = p.Feed(input) // then handle input as usual
+// If a second passes without p.Done():
+input = p.Timeout()
+
+res := p.Result()
+out, cleanup, err := ntpicture.Render(img, ntpicture.RenderOptions{
+    Kitty:           res.Kitty,
+    CellPixelWidth:  res.CellPixelWidth,
+    CellPixelHeight: res.CellPixelHeight,
+})
+```
+
+`Probe` handles the tmux wrapping, the `NT_KITTY` override, replies
+split across reads, and ending promptly on terminals without Kitty graphics.
+Because `res.Kitty` is always decided once the probe is done, `Render` then
+does no detection of its own. The `eventloop` example is a complete program.
 
 ## Quick start
 
@@ -147,6 +266,27 @@ If the host already knows the terminal's capabilities, call
 `SetTerminal(kitty, cellWidth, cellHeight)`, `SetCellSize`, or
 `SetKittyCapability`; these skip probing. `ToggleMode()` switches between glyphs
 and Kitty when Kitty is supported.
+
+### Display scale
+
+`session.Snapshot().DisplayScale` is the display's device pixels per point: 2
+on a Retina display, and 0 when nobody has stated it. Hosts that lay out
+content in points or CSS pixels can use it as their device pixel ratio.
+ntpicture never guesses it from the cell size and never changes its own
+rendering because of it; cell dimensions are already device pixels.
+
+An explicit session takes the value from the first of these that is set:
+
+1. `TerminalOptions.DisplayScale`.
+2. The `NT_DISPLAY_SCALE` environment variable, a plain decimal such as `2`
+   or `1.5`.
+3. The terminal's answer to iTerm2's `OSC 1337 ; ReportCellSize` query, or
+   `devicePixelRatio` in the browser.
+
+Values outside 0.5 to 8 are ignored. Most terminals do not answer the query,
+so expect 0 unless the variable is set. A change arrives as a
+`TerminalSessionMsg`. Pictures created without `Options.Session` do not
+detect the display scale.
 
 With `AutoMode`, pictures use glyphs until the terminal confirms Kitty support.
 Explicitly disabling Kitty skips its probes. Close a shared session on shutdown
@@ -271,9 +411,11 @@ The plain `decoders` blank import does not link them.
 ## Examples
 
 ```sh
-task build-examples   # bin/ntpicture-{still,simple,grid,animation,framebuffer}
+task build-examples   # bin/ntpicture-{still,simple,grid,animation,framebuffer,print,eventloop}
 task run-still
 task serve-wasm-site  # http://localhost:8000/web/
+GOWORK=off go -C examples run ./print photo.png      # no Bubble Tea: Print and Render
+GOWORK=off go -C examples run ./eventloop photo.png  # no Bubble Tea: Probe in a hand-written input loop
 ```
 
 | Example | Shows |
@@ -283,8 +425,13 @@ task serve-wasm-site  # http://localhost:8000/web/
 | `grid` | An interactive `GridImage` board |
 | `animation` | GIF and WebP playback, plus `--composite` layers and `--scroll` mixed documents |
 | `framebuffer` | A live rendered scene with stable IDs, panning, and resolution steps |
+| `print` | An image printed without Bubble Tea, with `Print` or `Render` |
+| `eventloop` | A raw-mode viewer with its own input loop, using `Probe` and `Render` |
 
-Each example runs natively and in the browser via
+`print` and `eventloop` are plain command-line programs without Bubble Tea.
+`print` shows an image with `Print`, or with `Render` and its cleanup
+function under `--transient`. `eventloop` owns raw mode and stdin itself and
+detects support with `Probe`. Every other example runs natively and in the browser via
 [booba](https://github.com/NimbleTerminal/booba). The examples are a
 separate Go module, so booba isn't a dependency of the library.
 

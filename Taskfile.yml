@@ -46,7 +46,7 @@ tasks:
   test-worker-linux:
     desc: Run the sandboxed decoder worker tests under Linux Landlock in Docker
     cmds:
-      - docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 -e GOWORK=off -e NTPICTURE_REQUIRE_SANDBOX=1 --security-opt seccomp=unconfined golang:1.27 go test -mod=readonly -count=1 -v -run 'Sandboxed|ClosedSession' ./decoders/worker
+      - docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 -e GOWORK=off -e NT_REQUIRE_SANDBOX=1 --security-opt seccomp=unconfined golang:1.27 go test -mod=readonly -count=1 -v -run 'Sandboxed|ClosedSession' ./decoders/worker
   vet:
     desc: Run Go vet
     cmds: ['go vet -mod=readonly ./...', 'go -C examples vet -mod=readonly ./...']
@@ -97,7 +97,7 @@ tasks:
     desc: Build all native demos
     cmds:
       - mkdir -p bin
-      - for: [still, simple, grid, animation, framebuffer]
+      - for: [still, simple, grid, animation, framebuffer, print, eventloop]
         cmd: go -C examples build -mod=readonly -o ../bin/ntpicture-{{.ITEM}} ./{{.ITEM}}
   build-wasm:
     desc: Build all browser demos

@@ -19,6 +19,7 @@ import (
 // SharedMemory is independently probed unless explicitly overridden. Creation
 // failures still fall back to direct transport even when support is forced.
 // Zero cell dimensions default to 8x16. Nil TmuxPassthrough reads the environment.
+// Zero DisplayScale reads NT_DISPLAY_SCALE, then asks the terminal.
 // Background, fit, encoding, and selection of glyph/Kitty remain picture policy.
 type TerminalOptions struct {
 	Kitty, SharedMemory KittyCapability
@@ -29,6 +30,10 @@ type TerminalOptions struct {
 	FrameEdits, FrameAppend, FrameSelect KittyCapability
 	CellPixelWidth, CellPixelHeight      int
 	TmuxPassthrough                      *bool
+	// DisplayScale states the display's device pixels per point (2 on a
+	// Retina display) and suppresses detection. Zero, or a value outside
+	// 0.5..8, means not set.
+	DisplayScale float64
 }
 
 // TerminalState is a value snapshot, never mutable shared configuration.
@@ -40,6 +45,11 @@ type TerminalState struct {
 	CellPixelWidth, CellPixelHeight      int
 	TmuxPassthrough                      bool
 	EnvSignalled                         bool
+	// DisplayScale is the display's device pixels per point (2 on a Retina
+	// display), or 0 when neither the host, NT_DISPLAY_SCALE, nor the
+	// terminal has stated it. It is never inferred from the cell size and
+	// does not affect rendering: cell dimensions are already device pixels.
+	DisplayScale float64
 }
 
 // TerminalSessionMsg announces a discovery or geometry change. Match Session
@@ -67,6 +77,7 @@ type TerminalSession struct {
 	started                   bool
 	closed                    atomic.Bool
 	kittyForced, sharedForced bool
+	scaleForced               bool
 	probeID                   int
 	featureSent               bool
 	virtualForced             bool
@@ -139,13 +150,13 @@ func (s *TerminalSession) setTerminalKitty(kitty bool) {
 
 func envTerminalConfig() (tmux bool, kitty KittyCapability, kittyForced bool) {
 	tmux = os.Getenv("TMUX") != ""
-	switch os.Getenv("NTPICTURE_TMUX_PASSTHROUGH") {
+	switch os.Getenv("NT_TMUX") {
 	case "1", "true", "on", "yes":
 		tmux = true
 	case "0", "false", "off", "no":
 		tmux = false
 	}
-	switch os.Getenv("NTPICTURE_KITTY") {
+	switch os.Getenv("NT_KITTY") {
 	case "supported", "true", "1", "on", "yes":
 		kitty, kittyForced = KittyCapabilitySupported, true
 	case "unsupported", "false", "0", "off", "no":
@@ -161,6 +172,7 @@ func NewTerminalSession(opts TerminalOptions) *TerminalSession {
 		Kitty: opts.Kitty, SharedMemory: opts.SharedMemory, VirtualPlacement: opts.VirtualPlacement,
 		FrameEdits: opts.FrameEdits, FrameAppend: opts.FrameAppend, FrameSelect: opts.FrameSelect,
 		CellPixelWidth: opts.CellPixelWidth, CellPixelHeight: opts.CellPixelHeight,
+		DisplayScale: opts.DisplayScale,
 	}}
 	if s.state.CellPixelWidth <= 0 {
 		s.state.CellPixelWidth = defaultCellPixelW
@@ -177,6 +189,10 @@ func NewTerminalSession(opts TerminalOptions) *TerminalSession {
 		s.state.Kitty = envKitty
 	}
 	s.kittyForced = s.state.Kitty != KittyCapabilityUnknown
+	if !validDisplayScale(opts.DisplayScale) {
+		s.state.DisplayScale = envDisplayScale()
+	}
+	s.scaleForced = s.state.DisplayScale != 0
 	s.sharedForced = s.state.SharedMemory != KittyCapabilityUnknown
 	s.virtualForced = opts.VirtualPlacement != KittyCapabilityUnknown
 	for i, cap := range s.state.frameCapabilities() {
@@ -204,6 +220,9 @@ func (s *TerminalSession) Snapshot() TerminalState {
 		state.EnvSignalled = kittyEnvSignalledFn()
 	} else {
 		state = s.state
+		if runtime.GOOS == "js" && !s.scaleForced {
+			state.DisplayScale = browserDisplayScale()
+		}
 	}
 	if runtime.GOOS == "js" && !s.sharedForced {
 		state.SharedMemory = KittyCapabilityUnsupported
@@ -230,7 +249,7 @@ func (s *TerminalSession) notification() tea.Cmd {
 	}
 }
 
-// Init queries cell geometry and graphics/transport support once. It never reads
+// Init queries cell geometry, display scale, and graphics/transport support once. It never reads
 // stdin; the host delivers terminal replies through Update. Run its command.
 func (s *TerminalSession) Init() tea.Cmd {
 	if s.legacy {
@@ -263,6 +282,15 @@ func (s *TerminalSession) Init() tea.Cmd {
 		}
 		return requestCellSize()()
 	}}
+	if !s.scaleForced && runtime.GOOS != "js" {
+		scaleQuery := transport.wrap(displayScaleQuery)
+		cmds = append(cmds, func() tea.Msg {
+			if s.closed.Load() {
+				return nil
+			}
+			return tea.RawMsg{Msg: scaleQuery}
+		})
+	}
 	if query != "" {
 		cmds = append(cmds, func() tea.Msg {
 			if s.closed.Load() {
@@ -290,6 +318,17 @@ func (s *TerminalSession) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		s.setCellSize(v.Width, v.Height)
+	case uv.UnknownOscEvent:
+		// Only an answer to this session's own query counts; the legacy
+		// session never asks.
+		if s.legacy || !s.started || s.scaleForced || runtime.GOOS == "js" {
+			return nil
+		}
+		scale, ok := parseDisplayScaleReply(v)
+		if !ok {
+			return nil
+		}
+		s.state.DisplayScale = scale
 	case uv.KittyGraphicsEvent:
 		if s.legacy {
 			legacy = recordKittyResponse(v)

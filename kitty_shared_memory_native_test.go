@@ -134,7 +134,7 @@ func TestNativeSharedMemoryQuery(t *testing.T) {
 
 func TestNativeSharedMemoryProbesExpire(t *testing.T) {
 	resetKittySharedCap(t)
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	synctest.Test(t, func(t *testing.T) {
 		s := NewTerminalSession(TerminalOptions{})
 		defer s.Close()

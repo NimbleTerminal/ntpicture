@@ -742,22 +742,27 @@ func (p *Picture) changedWith(fromConfig bool) tea.Cmd {
 }
 
 func (p *Picture) geometryError() error {
-	c := p.opts.Render
-	if p.cols > MaxImagePixels/c.CellPixelWidth || p.rows > MaxImagePixels/c.CellPixelHeight {
+	return geometryError(p.cols, p.rows, p.opts.Render.CellPixelWidth, p.opts.Render.CellPixelHeight, p.mode)
+}
+
+// geometryError reports a cell rectangle whose prepared raster or placeholder
+// grid would exceed the limits. Cell dimensions must be positive.
+func geometryError(cols, rows, cellW, cellH int, mode PictureMode) error {
+	if cols > MaxImagePixels/cellW || rows > MaxImagePixels/cellH {
 		return errors.New("ntpicture: cell geometry exceeds pixel limit")
 	}
-	w, h := p.cols*c.CellPixelWidth, p.rows*c.CellPixelHeight
+	w, h := cols*cellW, rows*cellH
 	if h <= 0 || w > MaxImagePixels/h {
 		return errors.New("ntpicture: prepared image exceeds pixel limit")
 	}
 	// Glyph preparation uses two pixel rows per cell regardless of terminal
 	// geometry. Check before multiplication, including on 32-bit platforms.
-	if p.mode == PictureGlyph && (p.rows > MaxImagePixels/2 || p.cols > MaxImagePixels/(2*p.rows)) {
+	if mode == PictureGlyph && (rows > MaxImagePixels/2 || cols > MaxImagePixels/(2*rows)) {
 		return errors.New("ntpicture: glyph raster exceeds pixel limit")
 	}
 	// Every placeholder needs a distinct row/column diacritic. The low-level
 	// legacy model leaves this to its caller; Picture validates before allocating.
-	if p.mode == PictureKitty && (kitty.Diacritic(p.cols-1) == kitty.Diacritic(0) && p.cols > 1 || kitty.Diacritic(p.rows-1) == kitty.Diacritic(0) && p.rows > 1) {
+	if mode == PictureKitty && (kitty.Diacritic(cols-1) == kitty.Diacritic(0) && cols > 1 || kitty.Diacritic(rows-1) == kitty.Diacritic(0) && rows > 1) {
 		return errors.New("ntpicture: placement exceeds Kitty placeholder grid")
 	}
 	return nil
@@ -900,7 +905,7 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	if p.opts.HostGeometry {
 		switch msg.(type) {
-		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg, TerminalSessionMsg, KittyCapabilityMsg:
+		case uv.CellSizeEvent, uv.KittyGraphicsEvent, uv.UnknownOscEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg, TerminalSessionMsg, KittyCapabilityMsg:
 			return nil
 		}
 	}
@@ -908,6 +913,12 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	terminal := false
 	switch v := msg.(type) {
 	case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg:
+		terminal = true
+	case uv.UnknownOscEvent:
+		// Hosts forward every message; only a display-scale reply is ours.
+		if _, ok := parseDisplayScaleReply(v); !ok {
+			return nil
+		}
 		terminal = true
 	case TerminalSessionMsg:
 		if v.Session != sess {

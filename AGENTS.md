@@ -5,7 +5,7 @@ Guidance for coding agents working in this repository.
 ## What this is
 
 `nimbleterminal.dev/ntpicture` is a Go library that renders images in Bubble Tea
-v2 apps, using Kitty graphics where supported and colored half-block glyphs
+v2 apps (and, through `Render`/`Print`, in any Go program), using Kitty graphics where supported and colored half-block glyphs
 elsewhere. It was extracted from NTCharts and Gloss, which (along with ntqrcode)
 are its main consumers. Develop with Go 1.27.2; the module minimum is Go 1.26.
 
@@ -27,7 +27,7 @@ task test-no-cgo         # CGO_ENABLED=0: exercises the direct-transport fallbac
 task test-wasm           # GOOS=js GOARCH=wasm under Node, root + examples
 task lint                # golangci-lint v2 (installed into .task/bin)
 task vet fmt fmt-check go-tidy-check
-task build-examples      # bin/ntpicture-{still,simple,grid,animation,framebuffer}
+task build-examples      # bin/ntpicture-{still,simple,grid,animation,framebuffer,print,eventloop}
 task run-still           # or: GOWORK=off go -C examples run ./animation -- --composite
 task build-wasm-site     # web/demos/*.wasm + booba runtime, then check-site smoke tests
 task serve-wasm-site     # http://localhost:8000/web/?demo=framebuffer
@@ -56,7 +56,7 @@ Native POSIX shared-memory tests need `shm_open` and fail deliberately where it
 is blocked. If you must exclude them (for example in a sandbox), say so; that
 run is not full native transport validation. `NTPICTURE_SHM_TERMINAL_TEST=1`
 enables the real-terminal consumption test in a Kitty-capable terminal.
-`NTPICTURE_REQUIRE_SANDBOX=1` (set in CI) makes the `decoders/worker` subprocess
+`NT_REQUIRE_SANDBOX=1` (set in CI) makes the `decoders/worker` subprocess
 test fail when the worker runs without OS confinement; `task test-worker-linux`
 runs it under Landlock in Docker. CI runs
 Linux and macOS (distinct shared-memory implementations) and cross-compiles
@@ -72,7 +72,8 @@ Two Go modules plus a workspace file:
 - **Root module** (`nimbleterminal.dev/ntpicture`): the library. Uses upstream
   Bubble Tea. Never add local sibling `replace` directives here.
 - **`examples/`** (separate module): the five demos, which depend on `booba`
-  so the library does not. It `replace`s ntpicture with `..` to test unreleased
+  so the library does not, plus `print` (`Render`/`Print`) and `eventloop` (`Probe` in a
+  hand-written input loop), plain CLIs that are not built for the browser. It `replace`s ntpicture with `..` to test unreleased
   changes. Each demo runs natively and as WASM via `booba.Run`.
 - **`wasm.work`**: browser builds only. Pins a browser-capable fork of Bubble Tea
   (`neomantra/bubbletea/v2`). The fork's `@latest` does not compile for
@@ -111,7 +112,11 @@ replacement:
 `TerminalSession` (`terminal_session.go`) discovers Kitty support, cell size,
 and shared-memory/tmux transport once per terminal connection. Pictures without
 `Options.Session` own a private one; sharing a session across pictures means one
-probe. `NTPICTURE_KITTY` and `NTPICTURE_TMUX_PASSTHROUGH` override detection.
+probe. `NT_KITTY` and `NT_TMUX` override detection.
+`TerminalState.DisplayScale` (device pixels per point) comes from
+`TerminalOptions`, `NT_DISPLAY_SCALE`, an `OSC 1337 ; ReportCellSize` reply, or
+the browser's `devicePixelRatio`; it is reported, never inferred, and never
+changes rendering (`display_scale.go`).
 The root package has no `init()` environment side effects; keep it that way.
 
 Rendering pipeline:
@@ -128,6 +133,8 @@ Rendering pipeline:
 | `viewport.go` | cell window into the prepared image, no retransmission |
 | `submit.go` | atomic `Frame` submit with `Exact` |
 | `grid.go` | `GridImage` |
+| `render.go`, `render_unix.go`, `render_other.go` | `Render`/`Print`: one-shot output without Bubble Tea, with a synchronous `/dev/tty` probe |
+| `probe.go` | `Probe`: I/O-free Kitty and cell-size detection for non-Bubble Tea event loops; `Render` uses it |
 
 ### Platform-specific code
 
@@ -196,6 +203,9 @@ Breaking these breaks consumers, even if tests still pass.
   probe synchronously. Hosts forward every message to `Update` and run every
   returned command. `Close()` (or `Keep`) is the only thing that deletes or
   finalizes placements. No component clears other images globally.
+  `Render` and `Print` are the one exception: they exist for programs with no
+  event loop, so `RenderAuto` probes the controlling terminal synchronously.
+  Keep that probe out of every component.
 - **Replacement.** Unless `ClearOnReplace` is set, the old front stays until
   its replacement is presented. Stale or superseded results never replace
   newer state.
