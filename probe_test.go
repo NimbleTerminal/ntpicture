@@ -24,8 +24,14 @@ func TestProbeQuery(t *testing.T) {
 		t.Errorf("known capability still asked: %q", q)
 	}
 	on := true
-	if q := newTestProbe(t, ProbeOptions{TmuxPassthrough: &on}).Query(); !strings.HasPrefix(q, "\x1bPtmux;") {
-		t.Errorf("tmux query not wrapped: %q", q)
+	// tmux answers an unwrapped device-attributes query itself, ahead of the
+	// outer terminal's Kitty reply, so both must use passthrough.
+	wrappedDA := "\x1bPtmux;\x1b\x1b[c\x1b\\"
+	if q := newTestProbe(t, ProbeOptions{TmuxPassthrough: &on}).Query(); !strings.HasPrefix(q, "\x1bPtmux;\x1b\x1b_Ga=q") || !strings.HasSuffix(q, "\x1b[16t"+wrappedDA) || strings.Count(q, "[c") != 1 {
+		t.Errorf("tmux query not routed through passthrough: %q", q)
+	}
+	if q := newTestProbe(t, ProbeOptions{TmuxPassthrough: &on, Kitty: KittyCapabilitySupported}).Query(); q != "\x1b[16t\x1b[c" {
+		t.Errorf("tmux query with a known capability: %q", q)
 	}
 	t.Setenv("NT_KITTY", "unsupported")
 	p := NewProbe(ProbeOptions{})
@@ -42,14 +48,15 @@ func TestProbeFeed(t *testing.T) {
 		want  ProbeResult
 		done  bool
 	}{
-		"kitty terminal":  {ProbeOptions{}, probeOK + "\x1b[6;20;10t\x1b[?62;4c", "", ProbeResult{KittyCapabilitySupported, 10, 20}, true},
-		"plain terminal":  {ProbeOptions{}, "\x1b[?1;2c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
-		"no answer yet":   {ProbeOptions{}, probeOK, "", ProbeResult{Kitty: KittyCapabilitySupported}, false},
-		"probe error":     {ProbeOptions{}, fmt.Sprintf("\x1b_Gi=%d;ENOTSUPPORTED\x1b\\\x1b[?6c", kittyProbeID), "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
-		"keys kept":       {ProbeOptions{}, "a\x1b[A" + probeOK + "b\x1b[?6cc\x1b[B", "a\x1b[Abc\x1b[B", ProbeResult{Kitty: KittyCapabilitySupported}, true},
-		"foreign replies": {ProbeOptions{}, "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", ProbeResult{}, false},
-		"bad cell size":   {ProbeOptions{}, "\x1b[6;0;0t\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
-		"override wins":   {ProbeOptions{Kitty: KittyCapabilityUnsupported}, probeOK + "\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"kitty terminal":   {ProbeOptions{}, probeOK + "\x1b[6;20;10t\x1b[?62;4c", "", ProbeResult{KittyCapabilitySupported, 10, 20}, true},
+		"plain terminal":   {ProbeOptions{}, "\x1b[?1;2c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"no answer yet":    {ProbeOptions{}, probeOK, "", ProbeResult{Kitty: KittyCapabilitySupported}, false},
+		"probe error":      {ProbeOptions{}, fmt.Sprintf("\x1b_Gi=%d;ENOTSUPPORTED\x1b\\\x1b[?6c", kittyProbeID), "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"keys kept":        {ProbeOptions{}, "a\x1b[A" + probeOK + "b\x1b[?6cc\x1b[B", "a\x1b[Abc\x1b[B", ProbeResult{Kitty: KittyCapabilitySupported}, true},
+		"foreign replies":  {ProbeOptions{}, "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", "\x1b_Gi=7;OK\x1b\\\x1b[4;600;800t\x1b[1;5R\x1bOP", ProbeResult{}, false},
+		"bad cell size":    {ProbeOptions{}, "\x1b[6;0;0t\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
+		"tmux reply order": {ProbeOptions{}, "\x1b[6;32;16t" + probeOK + "\x1b[?62;4c", "", ProbeResult{KittyCapabilitySupported, 16, 32}, true},
+		"override wins":    {ProbeOptions{Kitty: KittyCapabilityUnsupported}, probeOK + "\x1b[?6c", "", ProbeResult{Kitty: KittyCapabilityUnsupported}, true},
 	} {
 		// Whole, then one byte per read: the result must not depend on framing.
 		for _, step := range []int{len(tc.input), 1} {

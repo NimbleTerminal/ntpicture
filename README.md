@@ -115,6 +115,10 @@ wrapper an `Fd()` method or write the result of `Render` yourself.
 To show an image in at most 56x22 cells with no letterbox padding, leave
 `Width` and `Height` zero and set `MaxWidth: 56, MaxHeight: 22`.
 
+Under tmux, detection needs `set -g allow-passthrough on`. Without it the
+terminal's answer never arrives, so the first call waits out the one-second
+timeout and uses glyphs.
+
 Detection reads terminal input, so inside a Bubble Tea program use `Picture`
 (below) instead, and in any other event loop use `Probe` (next). These functions render one still image; animation, live
 replacement, and shared memory need `Picture`.
