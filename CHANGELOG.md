@@ -26,6 +26,10 @@
   event loop: write `Query`, pass input to `Feed`, read `Result`. The
   `eventloop` example is a raw-mode viewer built on it; the browser demo site
   runs it beside its source.
+- The `decoders/worker` subprocess tests now skip in a Linux test binary that
+  links cgo, where they used to fail with "connection reset by peer": such a
+  binary cannot act as its own confinement stage. Run them with
+  `CGO_ENABLED=0`, as `task test-no-cgo` does.
 - Refresh dependencies: `nimbleterminal.dev/ntmediabox` and
   `nimbleterminal.dev/ntconfine` v0.2.0, `golang.org/x/image` v0.48.0,
   `golang.org/x/sys` v0.50.0, and `charm.land/lipgloss/v2` v2.1.0 in the

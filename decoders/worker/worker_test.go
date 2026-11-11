@@ -191,6 +191,9 @@ func TestSandboxedSubprocess(t *testing.T) {
 	if runtime.GOOS == "linux" && raceEnabled {
 		t.Skip("Linux Landlock+RLIMIT_AS subprocess test requires a non-race worker binary (covered by task test-no-cgo)")
 	}
+	if stageLinkedWithCgo() {
+		t.Skip("this test binary is its own Linux stage and links cgo, which a stage cannot (covered by task test-no-cgo)")
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
@@ -254,6 +257,9 @@ func TestClosedSessionReportsError(t *testing.T) {
 	}
 	if runtime.GOOS == "linux" && raceEnabled {
 		t.Skip("Linux Landlock+RLIMIT_AS subprocess test requires a non-race worker binary (covered by task test-no-cgo)")
+	}
+	if stageLinkedWithCgo() {
+		t.Skip("this test binary is its own Linux stage and links cgo, which a stage cannot (covered by task test-no-cgo)")
 	}
 	exe, err := os.Executable()
 	if err != nil {

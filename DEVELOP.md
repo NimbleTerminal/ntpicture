@@ -56,7 +56,11 @@ seccomp profile blocks, so `task test-worker-linux` runs the subprocess tests in
 `go test -race` links ThreadSanitizer (`libtsan`), which reserves ~18 TiB of
 virtual address space and reads `/proc/self/maps` before `main`, so the Linux
 subprocess tests skip under `-race` and run in `task test-no-cgo` (and
-`task test-worker-linux`) with `NT_REQUIRE_SANDBOX=1`. These are protocol
+`task test-worker-linux`) with `NT_REQUIRE_SANDBOX=1`. They also skip in any
+Linux test binary that links cgo, as a plain `go test` does there: the test
+binary is its own stage, and a stage linked with cgo cannot confine its
+threads. ntconfine also refuses a test binary that is group- or world-writable,
+which `go test` produces under a umask of 002. These are protocol
 and lifecycle checks; they do not prove what a worker can or cannot reach, which
 is ntconfine's test suite's job.
 
