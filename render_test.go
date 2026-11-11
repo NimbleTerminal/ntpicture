@@ -2,7 +2,6 @@ package ntpicture
 
 import (
 	"bytes"
-	"fmt"
 	"image"
 	"image/color"
 	"strings"
@@ -12,17 +11,17 @@ import (
 
 // stubRenderTerminal keeps Render away from the terminal running the tests
 // and returns a pointer to the number of probes sent.
-func stubRenderTerminal(t *testing.T, probe terminalProbe, geom terminalGeometry) *int {
+func stubRenderTerminal(t *testing.T, probe ProbeResult, geom terminalGeometry) *int {
 	t.Helper()
 	t.Setenv("NTPICTURE_KITTY", "")
 	t.Setenv("NTPICTURE_TMUX_PASSTHROUGH", "0")
 	probes := new(int)
 	oldProbe, oldGeom := probeTerminalFn, terminalGeometryFn
-	probeTerminalFn = func(bool, time.Duration) terminalProbe { *probes++; return probe }
+	probeTerminalFn = func(bool, time.Duration) ProbeResult { *probes++; return probe }
 	terminalGeometryFn = func() terminalGeometry { return geom }
 	reset := func() {
 		renderProbe.Lock()
-		renderProbe.done, renderProbe.result = false, terminalProbe{}
+		renderProbe.done, renderProbe.result = false, ProbeResult{}
 		renderProbe.Unlock()
 	}
 	reset()
@@ -44,7 +43,7 @@ func renderTestImage(w, h int) *image.RGBA {
 }
 
 func TestRenderGlyph(t *testing.T) {
-	probes := stubRenderTerminal(t, terminalProbe{kitty: true}, terminalGeometry{})
+	probes := stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilitySupported}, terminalGeometry{})
 	img := renderTestImage(8, 8)
 	out, cleanup, err := Render(img, RenderOptions{Width: 4, Height: 2, Mode: RenderGlyph, Fit: FitFill})
 	if err != nil {
@@ -68,7 +67,7 @@ func TestRenderGlyph(t *testing.T) {
 }
 
 func TestRenderAutoFallsBackToGlyph(t *testing.T) {
-	probes := stubRenderTerminal(t, terminalProbe{}, terminalGeometry{})
+	probes := stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
 	for range 2 {
 		out, cleanup, err := Render(renderTestImage(4, 4), RenderOptions{Width: 4, Height: 2})
 		if err != nil {
@@ -85,7 +84,7 @@ func TestRenderAutoFallsBackToGlyph(t *testing.T) {
 }
 
 func TestRenderAutoKittyAndCleanup(t *testing.T) {
-	stubRenderTerminal(t, terminalProbe{kitty: true, cellW: 10, cellH: 20}, terminalGeometry{})
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilitySupported, CellPixelWidth: 10, CellPixelHeight: 20}, terminalGeometry{})
 	var term bytes.Buffer
 	out, cleanup, err := Render(renderTestImage(40, 40), RenderOptions{Width: 4, Height: 2, Output: &term})
 	if err != nil {
@@ -113,7 +112,7 @@ func TestRenderAutoKittyAndCleanup(t *testing.T) {
 }
 
 func TestRenderKittyOverrides(t *testing.T) {
-	probes := stubRenderTerminal(t, terminalProbe{}, terminalGeometry{})
+	probes := stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
 	img := renderTestImage(16, 16)
 	var sink bytes.Buffer
 	for name, opts := range map[string]RenderOptions{
@@ -170,7 +169,7 @@ func TestRenderSize(t *testing.T) {
 }
 
 func TestRenderRejectsBadInput(t *testing.T) {
-	stubRenderTerminal(t, terminalProbe{}, terminalGeometry{})
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
 	for name, tc := range map[string]struct {
 		img  image.Image
 		opts RenderOptions
@@ -192,35 +191,12 @@ func TestRenderRejectsBadInput(t *testing.T) {
 }
 
 func TestPrint(t *testing.T) {
-	stubRenderTerminal(t, terminalProbe{}, terminalGeometry{})
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
 	var buf bytes.Buffer
 	if err := Print(&buf, renderTestImage(4, 4), RenderOptions{Width: 4}); err != nil {
 		t.Fatal(err)
 	}
 	if out := buf.String(); !strings.HasSuffix(out, "\x1b[0m\n") || strings.Count(out, "\n") != 2 {
 		t.Fatalf("want two glyph lines ending in a newline, got %q", out)
-	}
-}
-
-func TestParseProbeReply(t *testing.T) {
-	ok := fmt.Sprintf("\x1b_Gi=%d;OK\x1b\\", kittyProbeID)
-	for _, tc := range []struct {
-		reply string
-		want  terminalProbe
-		done  bool
-	}{
-		{"", terminalProbe{}, false},
-		{ok, terminalProbe{kitty: true}, false},
-		{ok + "\x1b[6;20;10t\x1b[?62;4c", terminalProbe{kitty: true, cellW: 10, cellH: 20}, true},
-		{"\x1b[?1;2c", terminalProbe{}, true},
-		{"\x1b_Gi=7;OK\x1b\\\x1b[6;0;0t\x1b[?6", terminalProbe{}, false},
-	} {
-		got, done := parseProbeReply([]byte(tc.reply))
-		if got != tc.want || done != tc.done {
-			t.Errorf("%q: got %+v done=%v, want %+v done=%v", tc.reply, got, done, tc.want, tc.done)
-		}
-	}
-	if q := renderProbeQuery(false); !strings.HasSuffix(q, "\x1b[16t\x1b[c") || !strings.HasPrefix(q, "\x1b_Ga=q") {
-		t.Errorf("unexpected probe query %q", q)
 	}
 }

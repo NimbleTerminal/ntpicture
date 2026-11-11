@@ -34,24 +34,24 @@ func readTerminalGeometry() (g terminalGeometry) {
 // probeTerminal asks the controlling terminal directly, so it works when
 // stdin or stdout is redirected. It uses select because /dev/tty supports
 // neither kqueue nor poll on macOS.
-func probeTerminal(tmux bool, timeout time.Duration) (p terminalProbe) {
+func probeTerminal(tmux bool, timeout time.Duration) ProbeResult {
+	probe := NewProbe(ProbeOptions{TmuxPassthrough: &tmux})
 	fd, err := openControllingTerminal()
 	if err != nil {
-		return p
+		return ProbeResult{Kitty: KittyCapabilityUnsupported}
 	}
 	defer func() { _ = unix.Close(fd) }()
 	state, err := term.MakeRaw(uintptr(fd))
 	if err != nil {
-		return p
+		return ProbeResult{Kitty: KittyCapabilityUnsupported}
 	}
 	defer func() { _ = term.Restore(uintptr(fd), state) }()
-	if _, err := unix.Write(fd, []byte(renderProbeQuery(tmux))); err != nil {
-		return p
+	if _, err := unix.Write(fd, []byte(probe.Query())); err != nil {
+		return ProbeResult{Kitty: KittyCapabilityUnsupported}
 	}
 	deadline := time.Now().Add(timeout)
-	var reply []byte
 	chunk := make([]byte, 256)
-	for len(reply) < 4096 {
+	for !probe.Done() {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			break
@@ -73,11 +73,9 @@ func probeTerminal(tmux bool, timeout time.Duration) (p terminalProbe) {
 		if err != nil || n <= 0 {
 			break
 		}
-		reply = append(reply, chunk[:n]...)
-		var done bool
-		if p, done = parseProbeReply(reply); done {
-			break
-		}
+		// Keys typed during the probe are dropped: nothing here reads them.
+		probe.Feed(chunk[:n])
 	}
-	return p
+	probe.Timeout()
+	return probe.Result()
 }

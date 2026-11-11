@@ -27,7 +27,7 @@ task test-no-cgo         # CGO_ENABLED=0: exercises the direct-transport fallbac
 task test-wasm           # GOOS=js GOARCH=wasm under Node, root + examples
 task lint                # golangci-lint v2 (installed into .task/bin)
 task vet fmt fmt-check go-tidy-check
-task build-examples      # bin/ntpicture-{still,simple,grid,animation,framebuffer,print}
+task build-examples      # bin/ntpicture-{still,simple,grid,animation,framebuffer,print,eventloop}
 task run-still           # or: GOWORK=off go -C examples run ./animation -- --composite
 task build-wasm-site     # web/demos/*.wasm + booba runtime, then check-site smoke tests
 task serve-wasm-site     # http://localhost:8000/web/?demo=framebuffer
@@ -72,8 +72,8 @@ Two Go modules plus a workspace file:
 - **Root module** (`nimbleterminal.dev/ntpicture`): the library. Uses upstream
   Bubble Tea. Never add local sibling `replace` directives here.
 - **`examples/`** (separate module): the five demos, which depend on `booba`
-  so the library does not, plus `print`, a plain CLI for `Render`/`Print`
-  that is not built for the browser. It `replace`s ntpicture with `..` to test unreleased
+  so the library does not, plus `print` (`Render`/`Print`) and `eventloop` (`Probe` in a
+  hand-written input loop), plain CLIs that are not built for the browser. It `replace`s ntpicture with `..` to test unreleased
   changes. Each demo runs natively and as WASM via `booba.Run`.
 - **`wasm.work`**: browser builds only. Pins a browser-capable fork of Bubble Tea
   (`neomantra/bubbletea/v2`). The fork's `@latest` does not compile for
@@ -130,6 +130,7 @@ Rendering pipeline:
 | `submit.go` | atomic `Frame` submit with `Exact` |
 | `grid.go` | `GridImage` |
 | `render.go`, `render_unix.go`, `render_other.go` | `Render`/`Print`: one-shot output without Bubble Tea, with a synchronous `/dev/tty` probe |
+| `probe.go` | `Probe`: I/O-free Kitty and cell-size detection for non-Bubble Tea event loops; `Render` uses it |
 
 ### Platform-specific code
 

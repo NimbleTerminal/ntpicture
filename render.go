@@ -1,7 +1,6 @@
 package ntpicture
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"image"
@@ -9,8 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"regexp"
-	"strconv"
 	"sync"
 	"time"
 
@@ -64,12 +61,6 @@ type RenderOptions struct {
 // nothing at all waits this long.
 const renderProbeTimeout = time.Second
 
-// terminalProbe is what synchronous detection learned. Zero fields are unknown.
-type terminalProbe struct {
-	kitty        bool
-	cellW, cellH int
-}
-
 // terminalGeometry is the controlling terminal's size. Zero fields are unknown.
 type terminalGeometry struct {
 	cols, rows   int
@@ -86,10 +77,10 @@ var (
 var renderProbe struct {
 	sync.Mutex
 	done   bool
-	result terminalProbe
+	result ProbeResult
 }
 
-func cachedTerminalProbe(tmux bool) terminalProbe {
+func cachedTerminalProbe(tmux bool) ProbeResult {
 	renderProbe.Lock()
 	defer renderProbe.Unlock()
 	if !renderProbe.done {
@@ -99,31 +90,6 @@ func cachedTerminalProbe(tmux bool) terminalProbe {
 	return renderProbe.result
 }
 
-var (
-	probeCellSizeReply = regexp.MustCompile(`\x1b\[6;(\d+);(\d+)t`)
-	probeDeviceReply   = regexp.MustCompile(`\x1b\[\?[\d;]*c`)
-)
-
-// renderProbeQuery asks for Kitty graphics support and the cell size, then
-// for device attributes, which every terminal answers: its reply ends the wait.
-func renderProbeQuery(tmux bool) string {
-	return kittyTransport{tmux: tmux}.wrap(buildKittyQueryAPC(kittyProbeID)) + "\x1b[16t\x1b[c"
-}
-
-// parseProbeReply reads the replies collected so far. done reports that the
-// device-attributes reply arrived, so nothing further is coming.
-func parseProbeReply(buf []byte) (p terminalProbe, done bool) {
-	p.kitty = bytes.Contains(buf, []byte("\x1b_Gi="+strconv.Itoa(kittyProbeID)+";OK\x1b\\"))
-	if m := probeCellSizeReply.FindSubmatch(buf); m != nil {
-		h, _ := strconv.Atoi(string(m[1]))
-		w, _ := strconv.Atoi(string(m[2]))
-		if w > 0 && h > 0 && w <= 1024 && h <= 1024 {
-			p.cellW, p.cellH = w, h
-		}
-	}
-	return p, probeDeviceReply.Match(buf)
-}
-
 // Render draws img as a string of Height lines, each Width cells wide, ready
 // to write to a terminal: Kitty graphics where supported, half-block glyphs
 // elsewhere. It needs no Bubble Tea program.
@@ -131,7 +97,7 @@ func parseProbeReply(buf []byte) (p terminalProbe, done bool) {
 // With RenderAuto, the first call may briefly put the controlling terminal in
 // raw mode to ask whether it supports Kitty graphics. Set Mode or
 // RenderOptions.Kitty to avoid that. Detection reads terminal input, so inside
-// a Bubble Tea program use Picture instead. Detection is available on Linux,
+// a Bubble Tea program use Picture instead, and in another event loop use Probe. Detection is available on Linux,
 // macOS, and the BSDs; other platforms use glyphs unless told otherwise.
 //
 // cleanup deletes the Kitty image from the terminal and is never nil. Call it
@@ -186,11 +152,9 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 		}
 		if capability == KittyCapabilityUnknown {
 			probe := cachedTerminalProbe(tmux)
-			if probe.kitty {
-				capability = KittyCapabilitySupported
-			}
-			if probe.cellW > 0 && probe.cellH > 0 {
-				cellW, cellH = probe.cellW, probe.cellH
+			capability = probe.Kitty
+			if probe.CellPixelWidth > 0 && probe.CellPixelHeight > 0 {
+				cellW, cellH = probe.CellPixelWidth, probe.CellPixelHeight
 			}
 		}
 		if capability == KittyCapabilitySupported {
