@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func stubRenderTerminal(t *testing.T, probe ProbeResult, geom terminalGeometry) 
 	t.Setenv("NT_KITTY", "")
 	t.Setenv("NT_TMUX", "0")
 	probes := new(int)
-	oldProbe, oldGeom := probeTerminalFn, terminalGeometryFn
+	oldProbe, oldGeom, oldIsTerminal := probeTerminalFn, terminalGeometryFn, isTerminalFn
 	probeTerminalFn = func(bool, time.Duration) ProbeResult { *probes++; return probe }
 	terminalGeometryFn = func() terminalGeometry { return geom }
 	reset := func() {
@@ -26,7 +27,7 @@ func stubRenderTerminal(t *testing.T, probe ProbeResult, geom terminalGeometry) 
 	}
 	reset()
 	t.Cleanup(func() {
-		probeTerminalFn, terminalGeometryFn = oldProbe, oldGeom
+		probeTerminalFn, terminalGeometryFn, isTerminalFn = oldProbe, oldGeom, oldIsTerminal
 		reset()
 	})
 	return probes
@@ -142,28 +143,55 @@ func TestRenderKittyOverrides(t *testing.T) {
 }
 
 func TestRenderSize(t *testing.T) {
-	square, wide := image.Rect(0, 0, 100, 100), image.Rect(0, 0, 4000, 1000)
+	square, wide, page := image.Rect(0, 0, 100, 100), image.Rect(0, 0, 4000, 1000), image.Rect(0, 0, 520, 1600)
 	for _, tc := range []struct {
 		name               string
 		w, h               int
 		b                  image.Rectangle
 		mode               PictureMode
-		termCols, termRows int
+		maxCols, maxRows   int
 		wantCols, wantRows int
 	}{
-		{"explicit", 7, 3, square, PictureGlyph, 0, 0, 7, 3},
-		{"width only", 40, 0, square, PictureGlyph, 0, 0, 40, 20},
-		{"height only", 0, 10, square, PictureGlyph, 0, 0, 20, 10},
-		{"glyph natural size", 0, 0, image.Rect(0, 0, 20, 20), PictureGlyph, 0, 0, 20, 10},
-		{"kitty natural size", 0, 0, square, PictureKitty, 0, 0, 13, 7},
-		{"shrinks to default width", 0, 0, wide, PictureGlyph, 0, 0, 80, 10},
-		{"shrinks to terminal width", 0, 0, wide, PictureGlyph, 120, 50, 120, 15},
-		{"shrinks to terminal height", 0, 0, image.Rect(0, 0, 100, 400), PictureGlyph, 80, 11, 5, 10},
-		{"never empty", 1, 0, image.Rect(0, 0, 1000, 1), PictureGlyph, 0, 0, 1, 1},
+		{"explicit", 7, 3, square, PictureGlyph, 80, 24, 7, 3},
+		{"explicit ignores bounds", 90, 30, square, PictureGlyph, 80, 24, 90, 30},
+		{"width only", 40, 0, square, PictureGlyph, 80, 24, 40, 20},
+		{"width only, height bounded", 80, 0, square, PictureGlyph, 80, 24, 80, 24},
+		{"height only", 0, 10, square, PictureGlyph, 80, 24, 20, 10},
+		{"height only, width bounded", 0, 10, wide, PictureGlyph, 30, 24, 30, 10},
+		{"glyph natural size", 0, 0, image.Rect(0, 0, 20, 20), PictureGlyph, 80, 24, 20, 10},
+		{"kitty natural size", 0, 0, square, PictureKitty, 80, 24, 13, 7},
+		{"shrinks to width", 0, 0, wide, PictureGlyph, 80, 24, 80, 10},
+		{"shrinks to height", 0, 0, image.Rect(0, 0, 100, 400), PictureGlyph, 80, 10, 5, 10},
+		{"tall page in a box", 0, 0, page, PictureGlyph, 56, 22, 14, 22},
+		{"never empty", 1, 0, image.Rect(0, 0, 1000, 1), PictureGlyph, 80, 24, 1, 1},
 	} {
-		cols, rows := renderSize(tc.w, tc.h, tc.b, tc.mode, 8, 16, tc.termCols, tc.termRows)
+		cols, rows := renderSize(tc.w, tc.h, tc.b, tc.mode, 8, 16, tc.maxCols, tc.maxRows)
 		if cols != tc.wantCols || rows != tc.wantRows {
 			t.Errorf("%s: got %dx%d, want %dx%d", tc.name, cols, rows, tc.wantCols, tc.wantRows)
+		}
+	}
+}
+
+func TestRenderBounds(t *testing.T) {
+	for name, tc := range map[string]struct {
+		geom       terminalGeometry
+		opts       RenderOptions
+		cols, rows int
+	}{
+		"default box":       {terminalGeometry{}, RenderOptions{}, 48, 24},
+		"terminal box":      {terminalGeometry{cols: 120, rows: 41}, RenderOptions{}, 80, 40},
+		"max box":           {terminalGeometry{cols: 120, rows: 41}, RenderOptions{MaxWidth: 56, MaxHeight: 22}, 44, 22},
+		"max width only":    {terminalGeometry{cols: 120, rows: 41}, RenderOptions{MaxWidth: 30}, 30, 15},
+		"width, max height": {terminalGeometry{}, RenderOptions{Width: 60, MaxHeight: 9}, 60, 9},
+	} {
+		stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, tc.geom)
+		out, _, err := Render(renderTestImage(400, 400), tc.opts)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		lines := strings.Split(out, "\n")
+		if cols := strings.Count(lines[0], "▄"); cols != tc.cols || len(lines) != tc.rows {
+			t.Errorf("%s: got %dx%d, want %dx%d", name, cols, len(lines), tc.cols, tc.rows)
 		}
 	}
 }
@@ -190,13 +218,53 @@ func TestRenderRejectsBadInput(t *testing.T) {
 	}
 }
 
+// fdWriter is a writer with a file descriptor, like *os.File.
+type fdWriter struct{ bytes.Buffer }
+
+func (*fdWriter) Fd() uintptr { return 3 }
+
 func TestPrint(t *testing.T) {
-	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
+	img := renderTestImage(4, 4)
+	probes := stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilitySupported}, terminalGeometry{})
+
+	// Not a terminal: glyphs, and the terminal is never asked.
+	isTerminalFn = func(uintptr) bool { return false }
 	var buf bytes.Buffer
-	if err := Print(&buf, renderTestImage(4, 4), RenderOptions{Width: 4}); err != nil {
-		t.Fatal(err)
+	var file fdWriter
+	for name, w := range map[string]interface {
+		io.Writer
+		String() string
+	}{"buffer": &buf, "file": &file} {
+		if err := Print(w, img, RenderOptions{Width: 4}); err != nil {
+			t.Fatal(err)
+		}
+		if out := w.String(); !strings.HasSuffix(out, "\x1b[0m\n") || strings.Count(out, "\n") != 2 || strings.Contains(out, "\x1b_G") {
+			t.Fatalf("%s: want two glyph lines ending in a newline, got %q", name, out)
+		}
 	}
-	if out := buf.String(); !strings.HasSuffix(out, "\x1b[0m\n") || strings.Count(out, "\n") != 2 {
-		t.Fatalf("want two glyph lines ending in a newline, got %q", out)
+	if *probes != 0 {
+		t.Fatalf("Print to a non-terminal probed %d times", *probes)
+	}
+	t.Setenv("NT_KITTY", "supported")
+	buf.Reset()
+	if err := Print(&buf, img, RenderOptions{Width: 4}); err != nil || strings.Contains(buf.String(), "\x1b_G") {
+		t.Fatalf("NT_KITTY applied to a non-terminal writer: %q %v", buf.String(), err)
+	}
+	t.Setenv("NT_KITTY", "")
+
+	// The caller vouches for the destination.
+	buf.Reset()
+	if err := Print(&buf, img, RenderOptions{Width: 4, Kitty: KittyCapabilitySupported}); err != nil || !strings.HasPrefix(buf.String(), "\x1b_G") {
+		t.Fatalf("explicit capability: %q %v", buf.String(), err)
+	}
+
+	// A terminal: detection runs.
+	isTerminalFn = func(uintptr) bool { return true }
+	var tty fdWriter
+	if err := Print(&tty, img, RenderOptions{Width: 4}); err != nil || !strings.HasPrefix(tty.String(), "\x1b_G") {
+		t.Fatalf("terminal writer: %q %v", tty.String(), err)
+	}
+	if *probes != 1 {
+		t.Fatalf("want one probe for a terminal writer, got %d", *probes)
 	}
 }
