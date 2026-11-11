@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,48 @@ func TestRenderGlyph(t *testing.T) {
 	}
 	if lines := strings.Split(out, "\n"); len(lines) != 2 || strings.Count(lines[0], "▄") != 4 {
 		t.Fatalf("want 2 lines of 4 cells, got %q", out)
+	}
+}
+
+// Glyph pixels are square only for 1:2 cells. For other cells the fit must use
+// the cell rectangle's real proportions, or an image that exactly fills the
+// derived grid would be letterboxed and shown distorted.
+func TestRenderGlyphFitsInCellProportions(t *testing.T) {
+	stubRenderTerminal(t, ProbeResult{Kitty: KittyCapabilityUnsupported}, terminalGeometry{})
+	red := image.NewRGBA(image.Rect(0, 0, 90, 90))
+	for i := 0; i < len(red.Pix); i += 4 {
+		red.Pix[i], red.Pix[i+3] = 255, 255
+	}
+	blue := color.RGBA{B: 255, A: 255}
+	const padding = "0;0;255m"
+	for _, cell := range [][2]int{{10, 30}, {8, 16}, {9, 19}, {16, 16}, {20, 10}} {
+		// Width only: the derived grid has the image's shape, so nothing is padded.
+		opts := RenderOptions{Width: 30, MaxHeight: 100, Mode: RenderGlyph, Background: blue, CellPixelWidth: cell[0], CellPixelHeight: cell[1]}
+		out, _, err := Render(red, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantRows := int(math.Round(30 * float64(cell[0]) / float64(cell[1])))
+		if rows := strings.Count(out, "\n") + 1; rows != wantRows {
+			t.Errorf("cell %v: got %d rows, want %d", cell, rows, wantRows)
+		}
+		if strings.Contains(out, padding) {
+			t.Errorf("cell %v: square image padded in its own derived grid", cell)
+		}
+	}
+	// A 30x30 grid of 10x30 cells is 300x900 px: the square occupies the middle third.
+	out, _, err := Render(red, RenderOptions{Width: 30, Height: 30, Mode: RenderGlyph, Background: blue, CellPixelWidth: 10, CellPixelHeight: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imageRows int
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, padding) {
+			imageRows++
+		}
+	}
+	if imageRows != 10 {
+		t.Errorf("want the square on 10 of 30 rows, got %d", imageRows)
 	}
 }
 

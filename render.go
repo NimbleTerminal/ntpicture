@@ -212,7 +212,7 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 	}
 
 	if mode == PictureGlyph {
-		prepared := prepareSourceCrop(img, cfg.Crop, cfg.Fit, cols, rows, 1, 2, cfg.Background, cfg.Anchor)
+		prepared := prepareGlyphSource(img, cfg, cols, rows)
 		if prepared == nil {
 			return "", noop, errors.New("ntpicture: could not prepare image")
 		}
@@ -243,6 +243,32 @@ func render(img image.Image, opts RenderOptions) (string, func(), error) {
 		})
 	}
 	return apc + buildKittyGrid(cols, rows, id), cleanup, nil
+}
+
+// prepareGlyphSource fits img into the two-pixels-per-cell glyph raster. A
+// glyph pixel is square only when cells are twice as tall as wide. For other
+// cells the image is fitted in the cell rectangle's real proportions first and
+// then stretched onto the raster, so what is displayed keeps its shape and
+// agrees with the size renderSize derived.
+func prepareGlyphSource(img image.Image, cfg Config, cols, rows int) image.Image {
+	w, h := cfg.CellPixelWidth, cfg.CellPixelHeight
+	if cfg.Fit == FitFill || h == 2*w {
+		return prepareSourceCrop(img, cfg.Crop, cfg.Fit, cols, rows, 1, 2, cfg.Background, cfg.Anchor)
+	}
+	// The smallest raster with the cell's proportions and at least glyph resolution.
+	a, b := w, h
+	for b != 0 {
+		a, b = b, a%b
+	}
+	w, h = w/a, h/a
+	if h < 2 {
+		w, h = 2*w, 2*h
+	}
+	fitted := prepareSourceCrop(img, cfg.Crop, cfg.Fit, cols, rows, w, h, cfg.Background, cfg.Anchor)
+	if fitted == nil {
+		return nil
+	}
+	return prepareSource(fitted, FitFill, cols, rows, 1, 2, cfg.Background, cfg.Anchor)
 }
 
 // renderSize resolves the cell rectangle. A dimension given as zero is
