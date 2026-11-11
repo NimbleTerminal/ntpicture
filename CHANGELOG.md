@@ -14,6 +14,8 @@
   The `print` example shows both. `MaxWidth` and `MaxHeight` bound a size
   derived from the aspect ratio. `Print` detects only when its writer is a
   terminal, so writing to a buffer or file never touches the terminal.
+  Glyph output is fitted in the cells' real proportions, so it keeps its
+  shape when cells are not exactly twice as tall as wide.
 - Add `Probe`, the same detection with no I/O, for programs with their own
   event loop: write `Query`, pass input to `Feed`, read `Result`. The
   `eventloop` example is a raw-mode viewer built on it.
