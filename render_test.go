@@ -13,8 +13,8 @@ import (
 // and returns a pointer to the number of probes sent.
 func stubRenderTerminal(t *testing.T, probe ProbeResult, geom terminalGeometry) *int {
 	t.Helper()
-	t.Setenv("NTPICTURE_KITTY", "")
-	t.Setenv("NTPICTURE_TMUX_PASSTHROUGH", "0")
+	t.Setenv("NT_KITTY", "")
+	t.Setenv("NT_TMUX", "0")
 	probes := new(int)
 	oldProbe, oldGeom := probeTerminalFn, terminalGeometryFn
 	probeTerminalFn = func(bool, time.Duration) ProbeResult { *probes++; return probe }
@@ -132,7 +132,7 @@ func TestRenderKittyOverrides(t *testing.T) {
 	if err != nil || strings.Contains(out, "\x1b_G") {
 		t.Fatalf("unsupported override: out=%q err=%v", out, err)
 	}
-	t.Setenv("NTPICTURE_KITTY", "supported")
+	t.Setenv("NT_KITTY", "supported")
 	if out, _, err = Render(img, RenderOptions{Width: 2, Height: 1}); err != nil || !strings.HasPrefix(out, "\x1b_G") {
 		t.Fatalf("environment override: out=%q err=%v", out, err)
 	}

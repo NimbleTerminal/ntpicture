@@ -31,7 +31,7 @@ func TestLegacyDefaultSessionPictureEmitsExportedKittyCapabilityMsg(t *testing.T
 	origCap := legacy.KittySupported()
 	defer legacy.ForceKittyCapability(origCap)
 
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 	legacy.ForceKittyCapability(ntpicture.KittyCapabilityUnknown)
 

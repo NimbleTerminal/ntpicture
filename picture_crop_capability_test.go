@@ -15,7 +15,7 @@ import (
 
 // U=1 reports placeholder support, not source rectangles on virtual placements.
 func TestKittyCropAfterVirtualPlacementReply(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	t.Setenv("TMUX", "")
 	for _, stable := range []bool{false, true} {
 		for _, fit := range []FitMode{FitFill, FitContain, FitCover} {

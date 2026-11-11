@@ -46,7 +46,7 @@ func TestTerminalSessionIndependentTransport(t *testing.T) {
 }
 
 func TestTerminalSessionProbeRouting(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 	opts := sessionOptions(false)
 	opts.Kitty = KittyCapabilityUnknown
@@ -137,7 +137,7 @@ func TestTerminalSessionSharedPicturesGeometry(t *testing.T) {
 }
 
 func TestTerminalSessionCloseSuppressesQueuedProbe(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 	opts := sessionOptions(false)
 	opts.Kitty = KittyCapabilityUnknown
@@ -195,8 +195,8 @@ func TestTerminalSessionSharedCapabilityIsScoped(t *testing.T) {
 }
 
 func TestTerminalSessionOverridesEnvironment(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "unsupported")
-	t.Setenv("NTPICTURE_TMUX_PASSTHROUGH", "true")
+	t.Setenv("NT_KITTY", "unsupported")
+	t.Setenv("NT_TMUX", "true")
 	s := NewTerminalSession(sessionOptions(false))
 	defer s.Close()
 	state := s.Snapshot()
@@ -290,7 +290,7 @@ func probeMessages(cmd tea.Cmd) []tea.Msg {
 }
 
 func TestTerminalSessionFeatureDetection(t *testing.T) {
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	t.Setenv("TERM", "xterm-kitty")
 	for _, tmux := range []bool{false, true} {
 		opts := sessionOptions(tmux)
@@ -330,10 +330,10 @@ func TestTerminalSessionFeatureDetection(t *testing.T) {
 
 func TestUnknownTerminalProbesWithoutEnvironmentHint(t *testing.T) {
 	clearKittyEnv(t)
-	t.Setenv("NTPICTURE_KITTY", "")
+	t.Setenv("NT_KITTY", "")
 	for _, override := range []string{"", "unsupported", "supported"} {
 		t.Run(override, func(t *testing.T) {
-			t.Setenv("NTPICTURE_KITTY", override)
+			t.Setenv("NT_KITTY", override)
 			opts := sessionOptions(false)
 			opts.Kitty = KittyCapabilityUnknown
 			s := NewTerminalSession(opts)
@@ -380,7 +380,7 @@ func TestKnownTerminalHintsDoNotGrantCapabilities(t *testing.T) {
 		t.Run(tc.value, func(t *testing.T) {
 			clearKittyEnv(t)
 			t.Setenv(tc.key, tc.value)
-			t.Setenv("NTPICTURE_KITTY", "")
+			t.Setenv("NT_KITTY", "")
 			tmux := false
 			s := NewTerminalSession(TerminalOptions{TmuxPassthrough: &tmux})
 			defer s.Close()

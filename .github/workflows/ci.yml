@@ -38,4 +38,4 @@ jobs:
         env:
           # Both runners enforce OS confinement (Landlock on Ubuntu,
           # sandbox-exec on macOS); fail if the decoder worker runs without it.
-          NTPICTURE_REQUIRE_SANDBOX: '1'
+          NT_REQUIRE_SANDBOX: '1'

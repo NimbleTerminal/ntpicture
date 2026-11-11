@@ -139,13 +139,13 @@ func (s *TerminalSession) setTerminalKitty(kitty bool) {
 
 func envTerminalConfig() (tmux bool, kitty KittyCapability, kittyForced bool) {
 	tmux = os.Getenv("TMUX") != ""
-	switch os.Getenv("NTPICTURE_TMUX_PASSTHROUGH") {
+	switch os.Getenv("NT_TMUX") {
 	case "1", "true", "on", "yes":
 		tmux = true
 	case "0", "false", "off", "no":
 		tmux = false
 	}
-	switch os.Getenv("NTPICTURE_KITTY") {
+	switch os.Getenv("NT_KITTY") {
 	case "supported", "true", "1", "on", "yes":
 		kitty, kittyForced = KittyCapabilitySupported, true
 	case "unsupported", "false", "0", "off", "no":

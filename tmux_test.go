@@ -138,21 +138,21 @@ func TestEnvironmentOverrides(t *testing.T) {
 		expectKittyCap    KittyCapability
 		checkKittyCap     bool
 	}{
-		{"NTPICTURE_TMUX_PASSTHROUGH", "true", true, KittyCapabilityUnknown, false},
-		{"NTPICTURE_TMUX_PASSTHROUGH", "1", true, KittyCapabilityUnknown, false},
-		{"NTPICTURE_TMUX_PASSTHROUGH", "false", false, KittyCapabilityUnknown, false},
-		{"NTPICTURE_TMUX_PASSTHROUGH", "0", false, KittyCapabilityUnknown, false},
+		{"NT_TMUX", "true", true, KittyCapabilityUnknown, false},
+		{"NT_TMUX", "1", true, KittyCapabilityUnknown, false},
+		{"NT_TMUX", "false", false, KittyCapabilityUnknown, false},
+		{"NT_TMUX", "0", false, KittyCapabilityUnknown, false},
 		{"TMUX", "/tmp/tmux-501/default,1,0", true, KittyCapabilityUnknown, false},
 		{"TMUX", "", false, KittyCapabilityUnknown, false},
-		{"NTPICTURE_KITTY", "supported", false, KittyCapabilitySupported, true},
-		{"NTPICTURE_KITTY", "unsupported", false, KittyCapabilityUnsupported, true},
+		{"NT_KITTY", "supported", false, KittyCapabilitySupported, true},
+		{"NT_KITTY", "unsupported", false, KittyCapabilityUnsupported, true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.envName+"="+tc.envVal, func(t *testing.T) {
 			// Clear checked variables
-			t.Setenv("NTPICTURE_TMUX_PASSTHROUGH", "")
-			t.Setenv("NTPICTURE_KITTY", "")
+			t.Setenv("NT_TMUX", "")
+			t.Setenv("NT_KITTY", "")
 			t.Setenv("TMUX", "")
 			ForceKittyCapability(KittyCapabilityUnknown)
 
