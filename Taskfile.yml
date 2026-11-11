@@ -108,8 +108,10 @@ tasks:
       CGO_ENABLED: '0'
     cmds:
       - mkdir -p web/demos
-      - for: [still, simple, grid, animation, framebuffer]
+      - for: [still, simple, grid, animation, framebuffer, eventloop]
         cmd: go -C examples build -mod=readonly -o ../web/demos/{{.ITEM}}.wasm ./{{.ITEM}}
+      # The eventloop demo shows its own source beside the terminal.
+      - cp examples/eventloop/main.go web/demos/eventloop.go.txt
   notices:
     desc: Regenerate dependency and browser runtime notices
     cmds: ['go run ./internal/tools/notices > THIRD_PARTY_NOTICES.md']
@@ -130,9 +132,12 @@ tasks:
     desc: Check JavaScript syntax and required site assets
     cmds:
       - node --check web/site.js
+      - node --check web/highlight.js
       - node scripts/check-site.mjs
       - for: [still, simple, grid, animation, framebuffer]
         cmd: node scripts/smoke-demo.mjs {{.ITEM}}
+      - node scripts/smoke-eventloop.mjs
+      - node scripts/smoke-eventloop.mjs kitty
       - node scripts/smoke-demo.mjs animation keep
       - node scripts/smoke-demo.mjs animation composite
       - node scripts/smoke-demo.mjs animation scroll

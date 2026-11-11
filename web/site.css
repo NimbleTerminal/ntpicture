@@ -22,3 +22,13 @@ a:focus-visible { outline: 2px solid #8de3b6; outline-offset: 4px; }
 
 #controls { margin-bottom: 12px; }
 .booba-action { min-height: 42px; }
+
+.stage.with-code { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+#code { margin: 0; height: clamp(300px, 58vh, 680px); overflow: auto; padding: 12px 14px; border: 1px solid #333c4b; border-radius: 10px; background: #161b23; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; white-space: pre; }
+#code:focus-visible { outline: 2px solid #8de3b6; outline-offset: 2px; }
+@media (max-width: 900px) { .stage.with-code { grid-template-columns: minmax(0, 1fr); } }
+.tok-comment { color: #7f8b9c; font-style: italic; }
+.tok-string { color: #a5d6a7; }
+.tok-number { color: #f2c38b; }
+.tok-keyword { color: #c4a7f5; }
+.tok-builtin { color: #7fc8e8; }

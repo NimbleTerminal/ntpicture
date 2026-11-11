@@ -72,9 +72,11 @@ Two Go modules plus a workspace file:
 - **Root module** (`nimbleterminal.dev/ntpicture`): the library. Uses upstream
   Bubble Tea. Never add local sibling `replace` directives here.
 - **`examples/`** (separate module): the five demos, which depend on `booba`
-  so the library does not, plus `print` (`Render`/`Print`) and `eventloop` (`Probe` in a
-  hand-written input loop), plain CLIs that are not built for the browser. It `replace`s ntpicture with `..` to test unreleased
-  changes. Each demo runs natively and as WASM via `booba.Run`.
+  so the library does not, plus two programs without Bubble Tea: `print`
+  (`Render`/`Print`, native only) and `eventloop` (`Probe` in a hand-written
+  input loop). It `replace`s ntpicture with `..` to test unreleased
+  changes. Each demo runs natively and as WASM via `booba.Run`; `eventloop`
+  instead implements booba's JavaScript bridge itself in `terminal_js.go`.
 - **`wasm.work`**: browser builds only. Pins a browser-capable fork of Bubble Tea
   (`neomantra/bubbletea/v2`). The fork's `@latest` does not compile for
   js/wasm; keep the pinned revision until a newer one passes `task check-site`.
@@ -187,8 +189,12 @@ keeps the root free of exported legacy surface without an import cycle.
 
 `examples/*/main.go` use `booba.Run` and `examples/internal/demohelp` for shared
 key bindings, native help, and OSC 7501 action snapshots. `scripts/smoke-demo.mjs`
-runs each real WASM demo under Node through the booba input/resize bridge; these
-are lifecycle smoke checks, not pixel checks. `web/` holds the tracked site
+runs each real WASM demo under Node through the booba input/resize bridge, and
+`scripts/smoke-eventloop.mjs` does the same for `eventloop`, with and without
+answering its probe; these are lifecycle smoke checks, not pixel checks. The
+site shows `examples/eventloop/main.go` beside that demo, copied into
+`web/demos/` at build time and coloured by the small Go tokenizer in
+`web/highlight.js` (no highlighting library). `web/` holds the tracked site
 source; `task build-wasm-site` fills in generated assets.
 
 ## Invariants

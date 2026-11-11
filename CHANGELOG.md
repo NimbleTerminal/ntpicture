@@ -23,7 +23,8 @@
 - Fix a deadlock on first use of the `legacy` helpers when `NT_KITTY` (formerly
   `NTPICTURE_KITTY`) is set in the environment.
   event loop: write `Query`, pass input to `Feed`, read `Result`. The
-  `eventloop` example is a raw-mode viewer built on it.
+  `eventloop` example is a raw-mode viewer built on it; the browser demo site
+  runs it beside its source.
 
 ## v0.1.5 (2026-11-04)
 

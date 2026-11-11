@@ -320,7 +320,14 @@ into `bin/`. To run one without building all five, use
 native and browser execution and `Picture` for ownership, command routing, and
 cleanup.
 
-`task build-wasm-site` compiles all five into `web/demos/`, exports the booba
+The `eventloop` example has no Bubble Tea program. It reaches the page's
+terminal by installing the same `bubbletea_*` JavaScript functions booba does
+(`examples/eventloop/terminal_js.go`), and the site shows its `main.go` beside
+the terminal, copied to `web/demos/eventloop.go.txt` at build time.
+`scripts/smoke-eventloop.mjs` runs it under Node twice: once answering its
+probe as a Kitty-capable terminal would, once with no answer.
+
+`task build-wasm-site` compiles those five and `eventloop` into `web/demos/`, exports the booba
 and ghostty-web runtime using the pinned `go tool booba-assets` in the examples
 module, and copies license notices. The exporter uses the active toolchain's
 wasm_exec.js. Source HTML/CSS/JS and browser license texts are tracked;

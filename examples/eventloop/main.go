@@ -3,10 +3,14 @@
 //
 //	go run ./eventloop [image]
 //
-// The program owns raw mode and reads stdin itself, so it detects Kitty
-// graphics with ntpicture.Probe, which does no I/O, and then draws with
+// The program owns the terminal and reads its input itself, so it detects
+// Kitty graphics with ntpicture.Probe, which does no I/O, and then draws with
 // ntpicture.Render. Press m to switch between Kitty graphics and glyphs, and
 // q to quit.
+//
+// The loop below is the whole program. openTerminal, in terminal_native.go and
+// terminal_js.go, only supplies raw input, output, and the size: a real
+// terminal natively, the page's terminal in the browser.
 package main
 
 import (
@@ -18,10 +22,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/x/term"
 	picture "nimbleterminal.dev/ntpicture"
 	_ "nimbleterminal.dev/ntpicture/decoders" // PNG, JPEG, GIF, WebP, BMP, TIFF
 )
+
+// terminal is a raw terminal: this program, not ntpicture, owns it.
+type terminal struct {
+	in      <-chan []byte           // input as it arrives; closed at end of input
+	out     io.Writer               // output to the terminal
+	resized <-chan struct{}         // signals a new size, where the platform reports it
+	size    func() (cols, rows int) // current size in cells
+	close   func()                  // restores the terminal
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -39,45 +51,29 @@ func run() error {
 	if err != nil {
 		return err
 	}
-
-	// This program, not ntpicture, owns the terminal.
-	fd := os.Stdin.Fd()
-	state, err := term.MakeRaw(fd)
+	tty, err := openTerminal()
 	if err != nil {
-		return fmt.Errorf("stdin is not a terminal: %w", err)
+		return err
 	}
-	defer func() { _ = term.Restore(fd, state) }()
-	fmt.Print("\x1b[?1049h\x1b[?25l") // alternate screen, hide cursor
-	defer fmt.Print("\x1b[?25h\x1b[?1049l")
-
-	input := make(chan []byte)
-	go func() {
-		buf := make([]byte, 256)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if n > 0 {
-				input <- append([]byte(nil), buf[:n]...)
-			}
-			if err != nil {
-				close(input)
-				return
-			}
-		}
-	}()
+	defer tty.close()
+	if _, err := io.WriteString(tty.out, "\x1b[?1049h\x1b[?25l"); err != nil { // alternate screen, hide cursor
+		return err
+	}
+	defer func() { _, _ = io.WriteString(tty.out, "\x1b[?25h\x1b[?1049l") }()
 
 	// 1. Write the probe's query.
 	probe := picture.NewProbe(picture.ProbeOptions{})
-	if _, err := io.WriteString(os.Stdout, probe.Query()); err != nil {
+	if _, err := io.WriteString(tty.out, probe.Query()); err != nil {
 		return err
 	}
 	timeout := time.After(time.Second)
 
-	v := viewer{img: img, fd: fd}
+	v := viewer{img: img, tty: tty}
 	defer v.clear()
 	for {
 		var keys []byte
 		select {
-		case b, ok := <-input:
+		case b, ok := <-tty.in:
 			if !ok {
 				return nil
 			}
@@ -87,10 +83,14 @@ func run() error {
 		case <-timeout:
 			// 3. A terminal that never answered: stop waiting.
 			keys = probe.Timeout()
+		case <-tty.resized:
+			if err := v.draw(); err != nil {
+				return err
+			}
 		}
 		if probe.Done() && !v.ready {
 			// 4. The result feeds RenderOptions, so Render never probes.
-			v.ready, v.terminal, timeout = true, probe.Result(), nil
+			v.ready, v.detected, timeout = true, probe.Result(), nil
 			if err := v.draw(); err != nil {
 				return err
 			}
@@ -111,10 +111,10 @@ func run() error {
 
 type viewer struct {
 	img      image.Image
-	fd       uintptr
+	tty      *terminal
 	ready    bool
 	glyphs   bool
-	terminal picture.ProbeResult
+	detected picture.ProbeResult
 	cleanup  func()
 }
 
@@ -130,16 +130,14 @@ func (v *viewer) draw() error {
 	if !v.ready {
 		return nil
 	}
-	cols, rows, err := term.GetSize(v.fd)
-	if err != nil || cols <= 0 || rows <= 1 {
-		cols, rows = 80, 24
-	}
+	cols, rows := v.tty.size()
 	opts := picture.RenderOptions{
 		Width:           cols,
 		Height:          rows - 1, // the last line is the status line
-		Kitty:           v.terminal.Kitty,
-		CellPixelWidth:  v.terminal.CellPixelWidth,
-		CellPixelHeight: v.terminal.CellPixelHeight,
+		Kitty:           v.detected.Kitty,
+		CellPixelWidth:  v.detected.CellPixelWidth,
+		CellPixelHeight: v.detected.CellPixelHeight,
+		Output:          v.tty.out, // where cleanup deletes the image
 	}
 	if v.glyphs {
 		opts.Mode = picture.RenderGlyph
@@ -152,12 +150,12 @@ func (v *viewer) draw() error {
 	v.cleanup = cleanup
 
 	mode := "glyphs"
-	if !v.glyphs && v.terminal.Kitty == picture.KittyCapabilitySupported {
+	if !v.glyphs && v.detected.Kitty == picture.KittyCapabilitySupported {
 		mode = "Kitty graphics"
 	}
-	// Raw mode does not translate newlines.
-	fmt.Print("\x1b[2J\x1b[H", strings.ReplaceAll(out, "\n", "\r\n"), "\r\n", mode, " | m: switch mode | q: quit")
-	return nil
+	// A raw terminal does not translate newlines.
+	_, err = fmt.Fprint(v.tty.out, "\x1b[2J\x1b[H", strings.ReplaceAll(out, "\n", "\r\n"), "\r\n", mode, " | m: switch mode | q: quit")
+	return err
 }
 
 func load(path string) (image.Image, error) {

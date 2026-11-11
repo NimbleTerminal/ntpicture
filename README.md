@@ -410,10 +410,12 @@ GOWORK=off go -C examples run ./eventloop photo.png  # no Bubble Tea: Probe in a
 | `print` | An image printed without Bubble Tea, with `Print` or `Render` |
 | `eventloop` | A raw-mode viewer with its own input loop, using `Probe` and `Render` |
 
-`print` and `eventloop` are plain command-line programs without Bubble Tea.
-`print` shows an image with `Print`, or with `Render` and its cleanup
-function under `--transient`. `eventloop` owns raw mode and stdin itself and
-detects support with `Probe`. Every other example runs natively and in the browser via
+`print` and `eventloop` are programs without Bubble Tea. `print` is a
+command-line tool that shows an image with `Print`, or with `Render` and its
+cleanup function under `--transient`. `eventloop` owns its input loop and
+detects support with `Probe`; in the browser demo it runs beside its own
+source. The other examples are Bubble Tea programs, and all but `print` run
+natively and in the browser via
 [booba](https://github.com/NimbleTerminal/booba). The examples are a
 separate Go module, so booba isn't a dependency of the library.
 

@@ -1,4 +1,5 @@
 import { BoobaTerminal, installActionBar, installRendererHud, parseRendererFromURL } from './booba/booba.js';
+import { highlightGo } from './highlight.js';
 
 const demos = {
   still: 'Still image',
@@ -6,6 +7,7 @@ const demos = {
   grid: 'Interactive grid',
   animation: 'GIF & WebP playback',
   framebuffer: 'Live framebuffer',
+  eventloop: 'Without Bubble Tea',
 };
 const requested = new URLSearchParams(location.search).get('demo');
 const demo = Object.hasOwn(demos, requested) ? requested : 'still';
@@ -35,6 +37,18 @@ if (demo === 'animation') {
 }
 if (demo === 'framebuffer') {
   document.querySelector('#help').textContent = 'Space pauses/plays · arrows/WASD/HJKL pan the viewport · c recenters · [ and ] change Kitty resolution · g toggles glyph/Kitty · Q keeps the screen and quits · q clears and quits. Pause, then pan: the image is re-addressed, not retransmitted.';
+}
+if (demo === 'eventloop') {
+  document.querySelector('#help').textContent = 'No Bubble Tea here: the program on the right owns the input loop, detects Kitty graphics with Probe, and draws with Render. m switches between Kitty graphics and glyphs · q quits. Click the terminal to focus.';
+  // Show the panel before the terminal measures itself, then fill it in.
+  const code = document.querySelector('#code');
+  code.hidden = false;
+  code.textContent = 'Loading source…';
+  document.querySelector('.stage').classList.add('with-code');
+  fetch('demos/eventloop.go.txt')
+    .then(response => response.ok ? response.text() : Promise.reject(new Error(`status ${response.status}`)))
+    .then(text => highlightGo(code, text))
+    .catch(() => { code.textContent = 'Could not load the source. Use the Example source link above.'; });
 }
 function failed(error) {
   status.dataset.error = '';
