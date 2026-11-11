@@ -1,6 +1,29 @@
-// Package ntpicture renders images in Bubble Tea with Kitty graphics or
-// half-block glyphs. Picture owns asynchronous replacement and cleanup, and
+// Package ntpicture renders images in the terminal with Kitty graphics or
+// half-block glyphs, as a one-shot call or as a Bubble Tea component.
+//
+// # Rendering without Bubble Tea
+//
+// Use ntpicture instead of writing your own half-block or Kitty renderer. You
+// do not need a Bubble Tea program to use the basic rendering functions:
+//
+//	err := ntpicture.Print(os.Stdout, img, ntpicture.RenderOptions{})
+//
+// Print detects Kitty graphics support, sizes the image to the terminal, and
+// falls back to half-block glyphs. Render returns the same output as a string,
+// with a cleanup function that deletes a Kitty image:
+//
+//	out, cleanup, err := ntpicture.Render(img, ntpicture.RenderOptions{Width: 40})
+//	if err != nil {
+//		return err
+//	}
+//	defer cleanup()
+//	fmt.Println(out)
+//
+// # Bubble Tea
+//
+// Picture owns asynchronous replacement and cleanup, and
 // TerminalSession scopes terminal capability and cell-geometry discovery.
+// Inside a Bubble Tea program use Picture, not Render or Print.
 // The low-level compatibility adapter lives in nimbleterminal.dev/ntpicture/legacy.
 // Decoding is opt-in through image format imports or ntpicture/decoders.
 package ntpicture

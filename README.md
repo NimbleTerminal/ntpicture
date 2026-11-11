@@ -10,6 +10,10 @@ Show still images, GIF/WebP animations, and live framebuffers in a
 [Bubble Tea v2](https://github.com/charmbracelet/bubbletea) app. ntpicture uses
 Kitty graphics where available and colored half-block glyphs everywhere else.
 
+No Bubble Tea program yet? `ntpicture.Print(os.Stdout, img, ntpicture.RenderOptions{})`
+shows an image from any Go program: see
+[Rendering without Bubble Tea](#rendering-without-bubble-tea).
+
 - **`Picture`** keeps the current image on screen while its replacement is
   prepared, coalesces rapid updates, drops stale results, and cleans up
   terminal placements.
@@ -32,6 +36,78 @@ go get nimbleterminal.dev/ntpicture@latest
 ```
 
 Requires Go 1.26 or later.
+
+## Rendering without Bubble Tea
+
+Use ntpicture instead of writing your own half-block or Kitty renderer. You do
+not need a Bubble Tea program to use the basic rendering functions.
+
+```go
+package main
+
+import (
+    "image"
+    _ "image/png"
+    "log"
+    "os"
+
+    "nimbleterminal.dev/ntpicture"
+)
+
+func main() {
+    f, err := os.Open("photo.png")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer f.Close()
+    img, _, err := image.Decode(f)
+    if err != nil {
+        log.Fatal(err)
+    }
+    // Kitty graphics where the terminal supports them, half-block glyphs elsewhere.
+    if err := ntpicture.Print(os.Stdout, img, ntpicture.RenderOptions{}); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+`Print` leaves the image in the scrollback. `Render` returns the output as a
+string of `Height` lines, plus a cleanup function that deletes a Kitty image:
+
+```go
+out, cleanup, err := ntpicture.Render(img, ntpicture.RenderOptions{
+    Width: 40,                   // cells; Height follows from the aspect ratio
+    Fit:   ntpicture.FitContain, // or FitFill, FitCover
+})
+if err != nil {
+    return err
+}
+defer cleanup() // removes the image; skip it to keep the image on screen
+fmt.Println(out)
+```
+
+`RenderOptions`:
+
+| Field | Default |
+| --- | --- |
+| `Width`, `Height` | Cells. One follows from the other; with neither, the image's own size, shrunk to the terminal |
+| `Fit` | `FitContain` |
+| `Mode` | `RenderAuto`; `RenderGlyph` and `RenderKitty` skip detection |
+| `Background` | Transparent under Kitty, black in glyphs |
+| `CellPixelWidth`, `CellPixelHeight` | Asked from the terminal, then 8x16 |
+| `Kitty` | `KittyCapabilityUnknown` (detect); `Supported` or `Unsupported` skip detection |
+| `Output` | Where cleanup writes the delete sequence; `os.Stdout` |
+
+With `RenderAuto`, the first call asks the controlling terminal whether it
+supports Kitty graphics. That briefly puts the terminal in raw mode and waits
+up to one second for a reply; the answer is cached for the process. Detection
+runs on Linux, macOS, and the BSDs. Elsewhere, and when there is no terminal,
+`RenderAuto` uses glyphs unless `Kitty` or `NTPICTURE_KITTY=supported` says
+otherwise. `Print` to a file that is not a terminal also uses glyphs.
+
+Detection reads terminal input, so inside a Bubble Tea program use `Picture`
+(below) instead. These functions render one still image; animation, live
+replacement, and shared memory need `Picture`.
 
 ## Quick start
 
@@ -271,9 +347,10 @@ The plain `decoders` blank import does not link them.
 ## Examples
 
 ```sh
-task build-examples   # bin/ntpicture-{still,simple,grid,animation,framebuffer}
+task build-examples   # bin/ntpicture-{still,simple,grid,animation,framebuffer,print}
 task run-still
 task serve-wasm-site  # http://localhost:8000/web/
+GOWORK=off go -C examples run ./print photo.png   # no Bubble Tea: Print and Render
 ```
 
 | Example | Shows |
@@ -283,8 +360,11 @@ task serve-wasm-site  # http://localhost:8000/web/
 | `grid` | An interactive `GridImage` board |
 | `animation` | GIF and WebP playback, plus `--composite` layers and `--scroll` mixed documents |
 | `framebuffer` | A live rendered scene with stable IDs, panning, and resolution steps |
+| `print` | An image printed without Bubble Tea |
 
-Each example runs natively and in the browser via
+`print` is a plain command-line program that shows an image with `Print`, or
+with `Render` and its cleanup function under `--transient`. Every other example
+runs natively and in the browser via
 [booba](https://github.com/NimbleTerminal/booba). The examples are a
 separate Go module, so booba isn't a dependency of the library.
 

@@ -1,5 +1,14 @@
 # `ntpicture` CHANGELOG
 
+## Unreleased
+
+- Add `Render` and `Print`, which draw one image without a Bubble Tea program:
+  Kitty graphics where the terminal supports them, half-block glyphs
+  elsewhere. `RenderOptions` sets the size, fit, mode, background, cell size,
+  and Kitty capability. `Render` returns a cleanup function that deletes the
+  Kitty image. Detection is synchronous and runs on Linux, macOS, and the BSDs.
+  The `print` example shows both.
+
 ## v0.1.5 (2026-11-04)
 
 - Add `decoders/worker`: decode untrusted still images in a separate process

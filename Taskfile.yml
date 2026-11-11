@@ -97,7 +97,7 @@ tasks:
     desc: Build all native demos
     cmds:
       - mkdir -p bin
-      - for: [still, simple, grid, animation, framebuffer]
+      - for: [still, simple, grid, animation, framebuffer, print]
         cmd: go -C examples build -mod=readonly -o ../bin/ntpicture-{{.ITEM}} ./{{.ITEM}}
   build-wasm:
     desc: Build all browser demos
