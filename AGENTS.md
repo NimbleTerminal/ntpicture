@@ -5,7 +5,7 @@ Guidance for coding agents working in this repository.
 ## What this is
 
 `nimbleterminal.dev/ntpicture` is a Go library that renders images in Bubble Tea
-v2 apps, using Kitty graphics where supported and colored half-block glyphs
+v2 apps (and, through `Render`/`Print`, in any Go program), using Kitty graphics where supported and colored half-block glyphs
 elsewhere. It was extracted from NTCharts and Gloss, which (along with ntqrcode)
 are its main consumers. Develop with Go 1.27.2; the module minimum is Go 1.26.
 
@@ -27,7 +27,7 @@ task test-no-cgo         # CGO_ENABLED=0: exercises the direct-transport fallbac
 task test-wasm           # GOOS=js GOARCH=wasm under Node, root + examples
 task lint                # golangci-lint v2 (installed into .task/bin)
 task vet fmt fmt-check go-tidy-check
-task build-examples      # bin/ntpicture-{still,simple,grid,animation,framebuffer}
+task build-examples      # bin/ntpicture-{still,simple,grid,animation,framebuffer,print}
 task run-still           # or: GOWORK=off go -C examples run ./animation -- --composite
 task build-wasm-site     # web/demos/*.wasm + booba runtime, then check-site smoke tests
 task serve-wasm-site     # http://localhost:8000/web/?demo=framebuffer
@@ -72,7 +72,8 @@ Two Go modules plus a workspace file:
 - **Root module** (`nimbleterminal.dev/ntpicture`): the library. Uses upstream
   Bubble Tea. Never add local sibling `replace` directives here.
 - **`examples/`** (separate module): the five demos, which depend on `booba`
-  so the library does not. It `replace`s ntpicture with `..` to test unreleased
+  so the library does not, plus `print`, a plain CLI for `Render`/`Print`
+  that is not built for the browser. It `replace`s ntpicture with `..` to test unreleased
   changes. Each demo runs natively and as WASM via `booba.Run`.
 - **`wasm.work`**: browser builds only. Pins a browser-capable fork of Bubble Tea
   (`neomantra/bubbletea/v2`). The fork's `@latest` does not compile for
@@ -128,6 +129,7 @@ Rendering pipeline:
 | `viewport.go` | cell window into the prepared image, no retransmission |
 | `submit.go` | atomic `Frame` submit with `Exact` |
 | `grid.go` | `GridImage` |
+| `render.go`, `render_unix.go`, `render_other.go` | `Render`/`Print`: one-shot output without Bubble Tea, with a synchronous `/dev/tty` probe |
 
 ### Platform-specific code
 
@@ -196,6 +198,9 @@ Breaking these breaks consumers, even if tests still pass.
   probe synchronously. Hosts forward every message to `Update` and run every
   returned command. `Close()` (or `Keep`) is the only thing that deletes or
   finalizes placements. No component clears other images globally.
+  `Render` and `Print` are the one exception: they exist for programs with no
+  event loop, so `RenderAuto` probes the controlling terminal synchronously.
+  Keep that probe out of every component.
 - **Replacement.** Unless `ClearOnReplace` is set, the old front stays until
   its replacement is presented. Stale or superseded results never replace
   newer state.
