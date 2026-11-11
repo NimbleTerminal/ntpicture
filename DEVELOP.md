@@ -283,6 +283,30 @@ terminal answered no probe. Glyph mode produced half-block rows at
 cols × 2 rows. Visual verification of the framebuffer in a real Kitty terminal
 and in the browser renderers remains outstanding.
 
+#### 2026-11-11, v0.2.0: Render, Print and Probe (automated only)
+
+Checked on macOS (Darwin 27.2.0) with Go 1.27.3 at revision `526e1db`, without
+a visual pass. `bin/ntpicture-print` and `bin/ntpicture-eventloop` were driven
+through a scripted pseudo-terminal: with the Kitty, cell-size and
+device-attributes queries answered, `print` emitted a Kitty transmission and
+placeholder grid, and `--transient` wrote the delete sequence; with no answer
+it wrote glyphs after the one-second timeout. `eventloop` kept a key typed
+before the reply, including a reply split across reads, switched modes, and
+deleted its image and restored the screen on `q`. Inside tmux 3.8 with a
+scripted outer terminal, `print` transmitted a Kitty image with
+`allow-passthrough on` and wrote glyphs after the timeout with it off; the
+earlier false "unsupported" result under tmux was reproduced there first.
+A Ctrl+C typed during an unanswered probe killed `print` by SIGINT at once with
+echo and line mode restored, and a background job wrote no query and was not
+stopped. The same pseudo-terminal, signal, background-job and tmux checks were
+repeated from the working tree on Linux 7.0.0 (aarch64) with Go 1.27.3 and
+tmux 3.4, with the same results, along with the native tests for the root,
+`legacy`, `animation` and `playback` packages.
+`task ci` passed. `task consumers` passed for Gloss, NTCharts and ntcharts3d
+and failed for ntqrcode, whose test sets `NTPICTURE_KITTY`, a name this release
+no longer reads. Visual verification of `Render`, `Print` and `Probe` output in
+a real terminal remains outstanding.
+
 For a native operator check, first run `task build-examples` from the repository
 root. Then run `./bin/ntpicture-animation` in Kitty (or record Ghostty
 separately), resize while playing, alternate Space and comma/period/Home, then

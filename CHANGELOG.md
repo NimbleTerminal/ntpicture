@@ -1,11 +1,12 @@
 # `ntpicture` CHANGELOG
 
-## Unreleased
+## v0.2.0 (2026-11-11)
 
-- Rename the environment overrides to the shared `NT_` prefix: `NT_KITTY`
-  (was `NTPICTURE_KITTY`) and `NT_TMUX` (was `NTPICTURE_TMUX_PASSTHROUGH`).
-  The test-only `NTPICTURE_REQUIRE_SANDBOX` is now `NT_REQUIRE_SANDBOX`. The
-  old names are no longer read.
+- **Breaking:** rename the environment overrides to the shared `NT_` prefix:
+  `NT_KITTY` (was `NTPICTURE_KITTY`) and `NT_TMUX` (was
+  `NTPICTURE_TMUX_PASSTHROUGH`). The test-only `NTPICTURE_REQUIRE_SANDBOX` is
+  now `NT_REQUIRE_SANDBOX`. The old names are no longer read, so programs and
+  tests that set them must switch.
 - Add `Render` and `Print`, which draw one image without a Bubble Tea program:
   Kitty graphics where the terminal supports them, half-block glyphs
   elsewhere. `RenderOptions` sets the size, fit, mode, background, cell size,
@@ -14,17 +15,21 @@
   The `print` example shows both. `MaxWidth` and `MaxHeight` bound a size
   derived from the aspect ratio. `Print` detects only when its writer is a
   terminal, so writing to a buffer or file never touches the terminal.
-  Glyph output is fitted in the cells' real proportions, so it keeps its
   Its size then comes from `RenderOptions` alone. `TmuxPassthrough` overrides
   the tmux wrapping. A background job is never probed, and Ctrl+C typed
   during detection still interrupts the program.
+  Glyph output is fitted in the cells' real proportions, so it keeps its
   shape when cells are not exactly twice as tall as wide.
-- Add `Probe`, the same detection with no I/O, for programs with their own
 - Fix a deadlock on first use of the `legacy` helpers when `NT_KITTY` (formerly
   `NTPICTURE_KITTY`) is set in the environment.
+- Add `Probe`, the same detection with no I/O, for programs with their own
   event loop: write `Query`, pass input to `Feed`, read `Result`. The
   `eventloop` example is a raw-mode viewer built on it; the browser demo site
   runs it beside its source.
+- Refresh dependencies: `nimbleterminal.dev/ntmediabox` and
+  `nimbleterminal.dev/ntconfine` v0.2.0, `golang.org/x/image` v0.48.0,
+  `golang.org/x/sys` v0.50.0, and `charm.land/lipgloss/v2` v2.1.0 in the
+  examples.
 
 ## v0.1.5 (2026-11-04)
 

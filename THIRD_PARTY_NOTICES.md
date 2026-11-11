@@ -89,7 +89,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## charm.land/lipgloss/v2 v2.0.6
+## charm.land/lipgloss/v2 v2.1.0
 
 ```
 MIT License
@@ -439,7 +439,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## github.com/xo/terminfo v1.3.0
+## github.com/xo/terminfo v1.3.1
 
 ```
 The MIT License (MIT)
@@ -465,7 +465,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## golang.org/x/image v0.47.0
+## golang.org/x/image v0.48.0
 
 ```
 Copyright 2009 The Go Authors.
@@ -497,7 +497,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## golang.org/x/sync v0.24.0
+## golang.org/x/sync v0.25.0
 
 ```
 Copyright 2009 The Go Authors.
@@ -529,7 +529,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## golang.org/x/sys v0.49.0
+## golang.org/x/sys v0.50.0
 
 ```
 Copyright 2009 The Go Authors.
@@ -595,7 +595,7 @@ The following files are under their respective licenses:
   * ./etc/booba.png remains **All Rights Reserved** by Neomantra Corp.  You may use it only in unmodified form and only as part of this project (e.g., in forks or distributions of the project).  You may **not** extract it for unrelated use, modify it, or redistribute it separately without explicit permission.
 ```
 
-## nimbleterminal.dev/ntconfine/pkg/confine v0.1.0
+## nimbleterminal.dev/ntconfine/pkg/confine v0.2.0
 
 ```
 MIT License
@@ -621,7 +621,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## nimbleterminal.dev/ntconfine v0.1.1
+## nimbleterminal.dev/ntconfine v0.2.0
 
 ```
 Copyright (c) 2026 Neomantra Corp. All rights reserved.
@@ -1325,7 +1325,7 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 ```
 
-## nimbleterminal.dev/ntmediabox/pkg/mediabox v0.1.0
+## nimbleterminal.dev/ntmediabox/pkg/mediabox v0.2.0
 
 ```
 MIT License
@@ -1351,7 +1351,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## nimbleterminal.dev/ntmediabox v0.1.0
+## nimbleterminal.dev/ntmediabox v0.2.0
 
 ```
 Copyright (c) 2026 Neomantra Corp. All rights reserved.

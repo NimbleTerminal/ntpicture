@@ -5,12 +5,12 @@ go 1.26.8
 require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.0
 	github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
 	nimbleterminal.dev/booba v0.12.1
-	nimbleterminal.dev/ntpicture v0.1.4
+	nimbleterminal.dev/ntpicture v0.2.0
 )
 
 require (
@@ -24,10 +24,10 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/xo/terminfo v1.3.0 // indirect
-	golang.org/x/image v0.47.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	github.com/xo/terminfo v1.3.1 // indirect
+	golang.org/x/image v0.48.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 )
 
 replace nimbleterminal.dev/ntpicture => ..
