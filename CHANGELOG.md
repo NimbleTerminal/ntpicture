@@ -19,6 +19,14 @@
 - Add `Probe`, the same detection with no I/O, for programs with their own
   event loop: write `Query`, pass input to `Feed`, read `Result`. The
   `eventloop` example is a raw-mode viewer built on it.
+- Add `TerminalState.DisplayScale`, the display's device pixels per point, for
+  hosts that lay out in points or CSS pixels. Explicit sessions take it from
+  `TerminalOptions.DisplayScale`, then the `NT_DISPLAY_SCALE` environment
+  variable, then the terminal's `OSC 1337 ; ReportCellSize` reply (or
+  `devicePixelRatio` in the browser). It stays 0 when unknown and does not
+  change rendering.
+- Explicit sessions now send the `OSC 1337 ; ReportCellSize` query from `Init`
+  unless the scale is already set.
 
 ## v0.1.5 (2026-11-04)
 

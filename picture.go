@@ -905,7 +905,7 @@ func (p *Picture) scheduleWithAborted(aborted *pictureJob) tea.Cmd {
 func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	if p.opts.HostGeometry {
 		switch msg.(type) {
-		case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg, TerminalSessionMsg, KittyCapabilityMsg:
+		case uv.CellSizeEvent, uv.KittyGraphicsEvent, uv.UnknownOscEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg, TerminalSessionMsg, KittyCapabilityMsg:
 			return nil
 		}
 	}
@@ -913,6 +913,12 @@ func (p *Picture) Update(msg tea.Msg) tea.Cmd {
 	terminal := false
 	switch v := msg.(type) {
 	case uv.CellSizeEvent, uv.KittyGraphicsEvent, terminalSessionTick, terminalFeatureTick, kittyProbeTickMsg:
+		terminal = true
+	case uv.UnknownOscEvent:
+		// Hosts forward every message; only a display-scale reply is ours.
+		if _, ok := parseDisplayScaleReply(v); !ok {
+			return nil
+		}
 		terminal = true
 	case TerminalSessionMsg:
 		if v.Session != sess {

@@ -113,6 +113,10 @@ replacement:
 and shared-memory/tmux transport once per terminal connection. Pictures without
 `Options.Session` own a private one; sharing a session across pictures means one
 probe. `NT_KITTY` and `NT_TMUX` override detection.
+`TerminalState.DisplayScale` (device pixels per point) comes from
+`TerminalOptions`, `NT_DISPLAY_SCALE`, an `OSC 1337 ; ReportCellSize` reply, or
+the browser's `devicePixelRatio`; it is reported, never inferred, and never
+changes rendering (`display_scale.go`).
 The root package has no `init()` environment side effects; keep it that way.
 
 Rendering pipeline:

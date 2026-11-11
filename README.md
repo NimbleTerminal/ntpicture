@@ -267,6 +267,27 @@ If the host already knows the terminal's capabilities, call
 `SetKittyCapability`; these skip probing. `ToggleMode()` switches between glyphs
 and Kitty when Kitty is supported.
 
+### Display scale
+
+`session.Snapshot().DisplayScale` is the display's device pixels per point: 2
+on a Retina display, and 0 when nobody has stated it. Hosts that lay out
+content in points or CSS pixels can use it as their device pixel ratio.
+ntpicture never guesses it from the cell size and never changes its own
+rendering because of it; cell dimensions are already device pixels.
+
+An explicit session takes the value from the first of these that is set:
+
+1. `TerminalOptions.DisplayScale`.
+2. The `NT_DISPLAY_SCALE` environment variable, a plain decimal such as `2`
+   or `1.5`.
+3. The terminal's answer to iTerm2's `OSC 1337 ; ReportCellSize` query, or
+   `devicePixelRatio` in the browser.
+
+Values outside 0.5 to 8 are ignored. Most terminals do not answer the query,
+so expect 0 unless the variable is set. A change arrives as a
+`TerminalSessionMsg`. Pictures created without `Options.Session` do not
+detect the display scale.
+
 With `AutoMode`, pictures use glyphs until the terminal confirms Kitty support.
 Explicitly disabling Kitty skips its probes. Close a shared session on shutdown
 after closing its pictures and running their cleanup commands.
