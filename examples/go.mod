@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
-	nimbleterminal.dev/booba v0.12.1
+	nimbleterminal.dev/booba v0.13.0
 	nimbleterminal.dev/ntpicture v0.2.0
 )
 
