@@ -3,7 +3,7 @@ module nimbleterminal.dev/ntpicture
 go 1.26.8
 
 require (
-	charm.land/bubbletea/v2 v2.1.1
+	charm.land/bubbletea/v2 v2.1.2
 	github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
 	golang.org/x/image v0.48.0
 	nimbleterminal.dev/ntmediabox v0.2.0
